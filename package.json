@@ -1,97 +1,98 @@
 {
-	"name": "@c9up/aurora",
-	"version": "0.1.0",
-	"description": "Aurora — reactive UI runtime for the Ream framework. Tagged-template DOM, signal-based state, isomorphic SSR + hydration, zero build step.",
-	"license": "MIT",
-	"type": "module",
-	"main": "./src/index.ts",
-	"types": "./src/index.ts",
-	"exports": {
-		".": {
-			"types": "./src/index.ts",
-			"import": "./src/index.ts"
-		},
-		"./provider": {
-			"types": "./src/AuroraProvider.ts",
-			"import": "./src/AuroraProvider.ts"
-		},
-		"./services/main": {
-			"types": "./src/services/main.ts",
-			"import": "./src/services/main.ts"
-		},
-		"./relay": {
-			"types": "./src/relay.ts",
-			"import": "./src/relay.ts"
-		},
-		"./ssr": {
-			"types": "./src/ssr.ts",
-			"import": "./src/ssr.ts"
-		},
-		"./hydrate": {
-			"types": "./src/hydrate.ts",
-			"import": "./src/hydrate.ts"
-		}
-	},
-	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
-		"typecheck": "tsc --noEmit",
-		"test": "vitest run",
-		"lint": "biome check src/",
-		"test:coverage": "vitest run --coverage"
-	},
-	"peerDependencies": {
-		"@c9up/ream": "^0.1.0"
-	},
-	"peerDependenciesMeta": {
-		"@c9up/ream": {
-			"optional": true
-		}
-	},
-	"devDependencies": {
-		"@types/node": "^22.19.15",
-		"happy-dom": "^15.11.7",
-		"typescript": "^6.0.2",
-		"vitest": "^4.1.2"
-	},
-	"files": [
-		"LICENSE",
-		"README.md",
-		"dist",
-		"src"
-	],
-	"publishConfig": {
-		"main": "./dist/index.js",
-		"types": "./dist/index.d.ts",
-		"exports": {
-			".": {
-				"types": "./dist/index.d.ts",
-				"import": "./dist/index.js"
-			},
-			"./provider": {
-				"types": "./dist/AuroraProvider.d.ts",
-				"import": "./dist/AuroraProvider.js"
-			},
-			"./services/main": {
-				"types": "./dist/services/main.d.ts",
-				"import": "./dist/services/main.js"
-			},
-			"./relay": {
-				"types": "./dist/relay.d.ts",
-				"import": "./dist/relay.js"
-			},
-			"./ssr": {
-				"types": "./dist/ssr.d.ts",
-				"import": "./dist/ssr.js"
-			},
-			"./hydrate": {
-				"types": "./dist/hydrate.d.ts",
-				"import": "./dist/hydrate.js"
-			}
-		},
-		"access": "public"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/C9up/aurora.git"
-	}
+  "name": "@c9up/aurora",
+  "version": "0.1.0",
+  "description": "Aurora — reactive UI runtime for the Ream framework. Tagged-template DOM, signal-based state, isomorphic SSR + hydration, zero build step.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./provider": {
+      "types": "./src/AuroraProvider.ts",
+      "import": "./src/AuroraProvider.ts"
+    },
+    "./services/main": {
+      "types": "./src/services/main.ts",
+      "import": "./src/services/main.ts"
+    },
+    "./relay": {
+      "types": "./src/relay.ts",
+      "import": "./src/relay.ts"
+    },
+    "./ssr": {
+      "types": "./src/ssr.ts",
+      "import": "./src/ssr.ts"
+    },
+    "./hydrate": {
+      "types": "./src/hydrate.ts",
+      "import": "./src/hydrate.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "biome check src/",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "@c9up/ream": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@c9up/ream": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "happy-dom": "^15.11.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "@c9up/ream": "^0.1.0"
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./provider": {
+        "types": "./dist/AuroraProvider.d.ts",
+        "import": "./dist/AuroraProvider.js"
+      },
+      "./services/main": {
+        "types": "./dist/services/main.d.ts",
+        "import": "./dist/services/main.js"
+      },
+      "./relay": {
+        "types": "./dist/relay.d.ts",
+        "import": "./dist/relay.js"
+      },
+      "./ssr": {
+        "types": "./dist/ssr.d.ts",
+        "import": "./dist/ssr.js"
+      },
+      "./hydrate": {
+        "types": "./dist/hydrate.d.ts",
+        "import": "./dist/hydrate.js"
+      }
+    },
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/C9up/aurora.git"
+  }
 }

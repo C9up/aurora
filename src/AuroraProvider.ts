@@ -11,13 +11,17 @@
  *     pages: { root: new URL('../resources/pages', import.meta.url).pathname },
  *   }
  *
- * The duck-typed `AuroraAppContext` keeps this provider usable in any
- * framework with a container — non-Ream hosts get the singleton bindings
- * and skip the route auto-registration silently.
+ * The provider is typed against the framework's real `AppContext`
+ * (`import type`, erased at runtime) — `@c9up/ream` stays an optional runtime
+ * peer, so non-Ream hosts get the singleton bindings and skip the route
+ * auto-registration silently. The asset SERVER (`AssetsHttpContext`) stays a
+ * deliberate cross-framework duck-type so the static handlers run under Ream,
+ * AdonisJS, or anything else.
  */
 
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AppContext } from "@c9up/ream";
 import { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
 import { auroraRoute } from "./route.js";
 import type {
@@ -28,19 +32,12 @@ import type {
 import { _setAurora } from "./services/main.js";
 import { renderToString } from "./ssr.js";
 
-interface AuroraContainer {
-	singleton(token: unknown, factory: () => unknown): void;
-	resolve<T = unknown>(token: unknown): T;
-}
-interface AuroraConfigStore {
-	get<T = unknown>(key: string): T | undefined;
-}
-export interface AuroraAppContext {
-	container: AuroraContainer;
-	config: AuroraConfigStore;
-}
-
-interface ReamRouter {
+/**
+ * Aurora's view of the host router: typed to take aurora's cross-framework
+ * `AssetsHttpContext` handler (what `adaptHandler` produces) so the static
+ * asset routes mount on whatever framework provides the router.
+ */
+interface AuroraHostRouter {
 	get(
 		path: string,
 		handler: (ctx: AssetsHttpContext) => Promise<void> | void,
@@ -48,7 +45,7 @@ interface ReamRouter {
 }
 
 export default class AuroraProvider {
-	constructor(protected app: AuroraAppContext) {}
+	constructor(protected app: AppContext) {}
 
 	register(): void {
 		this.app.container.singleton(AuroraManager, () => {
@@ -89,7 +86,7 @@ export default class AuroraProvider {
 		// standalone-buildable). Resolved to the host router only at runtime
 		// when aurora actually runs inside Ream.
 		const routerSpecifier = "@c9up/ream/services/router";
-		let routerMod: { default: ReamRouter };
+		let routerMod: { default: AuroraHostRouter };
 		try {
 			routerMod = await import(routerSpecifier);
 		} catch (err) {

@@ -14,7 +14,7 @@
  * Everything else MUST propagate so real bugs surface.
  */
 import { describe, expect, it } from "vitest";
-import type { AuroraAppContext } from "../../src/AuroraProvider.js";
+import type { AppContext } from "@c9up/ream";
 import AuroraProvider from "../../src/AuroraProvider.js";
 
 function bypass<T>(v: unknown): T {
@@ -23,7 +23,7 @@ function bypass<T>(v: unknown): T {
 
 function buildApp(opts?: {
 	auroraConfig?: { pages?: { root?: string } };
-}): AuroraAppContext {
+}): AppContext {
 	const bindings = new Map<unknown, () => unknown>();
 	const cache = new Map<unknown, unknown>();
 	return {
