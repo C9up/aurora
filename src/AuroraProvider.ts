@@ -84,11 +84,14 @@ export default class AuroraProvider {
 		// crash, factory bug) propagates so real regressions surface
 		// with a stack instead of "the asset routes just stopped
 		// mounting".
+		// Variable specifier so tsc does not statically resolve the optional
+		// `@c9up/ream` peer at build time (keeps aurora agnostic /
+		// standalone-buildable). Resolved to the host router only at runtime
+		// when aurora actually runs inside Ream.
+		const routerSpecifier = "@c9up/ream/services/router";
 		let routerMod: { default: ReamRouter };
 		try {
-			routerMod = (await import("@c9up/ream/services/router")) as {
-				default: ReamRouter;
-			};
+			routerMod = await import(routerSpecifier);
 		} catch (err) {
 			if (isModuleNotFound(err)) return;
 			throw err;
