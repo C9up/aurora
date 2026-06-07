@@ -37,11 +37,11 @@ import {
  * Only reached on LEGACY markup that predates SSR boundary markers
  * (the markered path keeps the subtree reactive — no warning).
  */
-let _nestedReactiveWarned = false;
+let nestedReactiveWarned = false;
 
 /** @internal Reset the warn-once flag (tests). */
-export function _resetHydrateWarnings(): void {
-	_nestedReactiveWarned = false;
+export function resetHydrateWarnings(): void {
+	nestedReactiveWarned = false;
 }
 
 // Boundary-marker comment payloads (kept in sync with ssr.ts).
@@ -403,8 +403,8 @@ function hydrateTextSlot(
 			// hydrate once and warn that the subtree won't stay reactive.
 			// Fresh SSR always emits markers, so this path is dead for
 			// matched server/client builds.
-			if (!_nestedReactiveWarned && typeof console !== "undefined") {
-				_nestedReactiveWarned = true;
+			if (!nestedReactiveWarned && typeof console !== "undefined") {
+				nestedReactiveWarned = true;
 				console.warn(
 					"[aurora] a reactive expression hydrated to a nested template but " +
 						"the SSR markup has no boundary markers — the subtree will not update " +

@@ -117,8 +117,8 @@ describe("aurora > hydrate > reactive nested template (boundary-marker swap)", (
 	let warnSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(async () => {
-		const { _resetHydrateWarnings } = await import("../../src/hydrate.js");
-		_resetHydrateWarnings();
+		const { resetHydrateWarnings } = await import("../../src/hydrate.js");
+		resetHydrateWarnings();
 		warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 	});
 

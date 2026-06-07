@@ -52,10 +52,10 @@ function buildApp(opts?: {
 }
 
 async function setReamRouter(router: unknown): Promise<void> {
-	const mod = bypass<{ _setRouter: (r: unknown) => void }>(
+	const mod = bypass<{ setRouter: (r: unknown) => void }>(
 		await import("@c9up/ream/services/router"),
 	);
-	mod._setRouter(router);
+	mod.setRouter(router);
 }
 
 describe("AuroraProvider > start() narrow-catch", () => {
@@ -110,7 +110,7 @@ describe("AuroraProvider > start() narrow-catch", () => {
 
 	it("silently returns when the router proxy throws 'Router accessed before initialization'", async () => {
 		// The exact ream proxy message Ignitor produces before
-		// `_setRouter`. AuroraProvider treats this as a legitimate
+		// `setRouter`. AuroraProvider treats this as a legitimate
 		// "boot-ordering" path — provider mounts pre-Ignitor are
 		// expected to no-op, not crash.
 		await setReamRouter({

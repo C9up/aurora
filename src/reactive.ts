@@ -117,7 +117,7 @@ export function signal<T>(
 
 /**
  * Test-only registry mapping a signal accessor to its backing node, so
- * `_observerCount` can assert the observer Set doesn't leak. A WeakMap
+ * `observerCount` can assert the observer Set doesn't leak. A WeakMap
  * keeps it off the public accessor surface and never retains a disposed
  * signal.
  */
@@ -131,7 +131,7 @@ const signalNodes = new WeakMap<
  * read inside `untrack()` must NOT add an entry to a signal's observer
  * Set. Returns -1 for a value that isn't a tracked signal.
  */
-export function _observerCount(sig: object): number {
+export function observerCount(sig: object): number {
 	const node = signalNodes.get(sig);
 	return node ? node.observers.size : -1;
 }

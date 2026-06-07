@@ -3,7 +3,7 @@
  * so aurora's tests run standalone — without the optional `@c9up/ream` peer.
  *
  * Mirrors the slice AuroraProvider.start() touches: a `default` router whose
- * `.get()` delegates to whatever `_setRouter` last installed. Tests drive
+ * `.get()` delegates to whatever `setRouter` last installed. Tests drive
  * behaviour (slug collisions, proxy-uninit, success) through that injected
  * router; aurora's runtime contract is unchanged.
  */
@@ -13,7 +13,7 @@ interface InjectableRouter {
 
 let current: InjectableRouter | undefined;
 
-export function _setRouter(router: InjectableRouter): void {
+export function setRouter(router: InjectableRouter): void {
 	current = router;
 }
 

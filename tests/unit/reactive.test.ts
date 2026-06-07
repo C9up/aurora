@@ -222,7 +222,7 @@ describe("aurora > reactive > untrack", () => {
 	});
 
 	it("does not leak dead observers onto the signal across repeated reads", async () => {
-		const { _observerCount } = await import("../../src/reactive.js");
+		const { observerCount } = await import("../../src/reactive.js");
 		const s = signal(0);
 		// Many untrack reads — each used to push a dummy observer that was
 		// add()-ed to the signal's observer Set and never removed.
@@ -231,11 +231,11 @@ describe("aurora > reactive > untrack", () => {
 		}
 		// Reading outside any effect registers nothing either. The Set
 		// must stay empty — no accumulation.
-		expect(_observerCount(s)).toBe(0);
+		expect(observerCount(s)).toBe(0);
 	});
 
 	it("untrack read inside a live effect registers neither the effect nor a dummy", async () => {
-		const { _observerCount } = await import("../../src/reactive.js");
+		const { observerCount } = await import("../../src/reactive.js");
 		const tracked = signal(1);
 		const ignored = signal(1);
 		effect(() => {
@@ -243,8 +243,8 @@ describe("aurora > reactive > untrack", () => {
 			untrack(() => ignored());
 		});
 		// `tracked` has the effect as an observer; `ignored` has none.
-		expect(_observerCount(tracked)).toBe(1);
-		expect(_observerCount(ignored)).toBe(0);
+		expect(observerCount(tracked)).toBe(1);
+		expect(observerCount(ignored)).toBe(0);
 	});
 });
 

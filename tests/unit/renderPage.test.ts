@@ -16,10 +16,10 @@ function makeCtx(): {
 } {
 	let body = "";
 	const headers = new Map<string, string>();
-	let _statusCode = 200;
+	let statusCode = 200;
 	const response: RenderResponse = {
 		status(code: number) {
-			_statusCode = code;
+			statusCode = code;
 			return response;
 		},
 		header(name: string, value: string) {

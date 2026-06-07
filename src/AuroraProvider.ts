@@ -25,7 +25,7 @@ import type {
 	AssetsRequest,
 	AssetsResponse,
 } from "./server/serveAssets.js";
-import { _setAurora } from "./services/main.js";
+import { setAurora } from "./services/main.js";
 import { renderToString } from "./ssr.js";
 
 interface AuroraContainer {
@@ -55,7 +55,7 @@ export default class AuroraProvider {
 			const raw = this.app.config.get<AuroraManagerConfig>("aurora");
 			const config = this.resolveConfig(raw);
 			const manager = new AuroraManager(config);
-			_setAurora(manager);
+			setAurora(manager);
 			return manager;
 		});
 		this.app.container.singleton("aurora", () =>
@@ -69,17 +69,17 @@ export default class AuroraProvider {
 	}
 
 	async boot(): Promise<void> {
-		// Force-resolve so `_setAurora` runs even if the app never
+		// Force-resolve so `setAurora` runs even if the app never
 		// touches the singleton from a preload.
 		const manager = this.app.container.resolve<AuroraManager>(AuroraManager);
-		_setAurora(manager);
+		setAurora(manager);
 	}
 
 	async start(): Promise<void> {
 		// Asset routes are registered in `start()` — after preloads —
 		// so apps can swap aurora's pages root in a preload if they
 		// wanted to. Non-Ream hosts (no `@c9up/ream/services/router`)
-		// AND pre-`_setRouter` boots (router proxy uninit) both
+		// AND pre-`setRouter` boots (router proxy uninit) both
 		// silent-return; ANY other error (slug collision, AuroraManager
 		// crash, factory bug) propagates so real regressions surface
 		// with a stack instead of "the asset routes just stopped
