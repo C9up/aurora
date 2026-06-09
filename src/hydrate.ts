@@ -422,12 +422,26 @@ function hydrateTextSlot(
 			}
 			return;
 		}
-		const textNode =
+		let textNode =
 			commentMarker.nodeType === 3 /* TEXT */
 				? (commentMarker as Text)
 				: commentMarker.previousSibling?.nodeType === 3
 					? (commentMarker.previousSibling as Text)
 					: null;
+		if (
+			!textNode &&
+			commentMarker.nodeType === 8 /* Comment */ &&
+			commentMarker.parentNode
+		) {
+			// Empty SSR text slot: a `<!---->` placeholder holds the position
+			// (see ssr.ts). Materialize the reactive text node there — node
+			// count stays 1, so sibling slot paths remain aligned.
+			const fresh = (commentMarker.ownerDocument ?? document).createTextNode(
+				"",
+			);
+			commentMarker.parentNode.replaceChild(fresh, commentMarker);
+			textNode = fresh;
+		}
 		if (!textNode) return;
 		const dispose = effect(() => {
 			const v = fn();

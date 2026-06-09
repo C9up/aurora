@@ -1,7 +1,8 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { html, Pages, renderToString } from "../../src/index.js";
+import { html, renderToString } from "../../src/index.js";
+import { Pages } from "../../src/server.js";
 
 const FIXTURES = resolve(
 	dirname(fileURLToPath(import.meta.url)),

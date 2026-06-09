@@ -1,8 +1,8 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { AssetsHttpContext, AssetsResponse } from "../../src/index.js";
-import { serveAssets } from "../../src/index.js";
+import type { AssetsHttpContext, AssetsResponse } from "../../src/server.js";
+import { serveAssets } from "../../src/server.js";
 
 const FIXTURES_ROOT = resolve(
 	dirname(fileURLToPath(import.meta.url)),

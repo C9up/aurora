@@ -1,13 +1,12 @@
-// ─── Inertia-shape server surface ─────────────────────────────────
-export { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
+// ─── Client surface (node-free — safe to bundle for the browser) ──────
+//
+// Server-only exports (AuroraManager, Pages, renderPage, serveAssets) that pull
+// node:fs / node:path / node:url live in `@c9up/aurora/server`. Keeping them off
+// this barrel is what lets a browser bundle import the client primitives without
+// the bundler dragging Node built-ins through the import graph.
 export { component, onMount, onUnmount } from "./component.js";
 export { html, isTemplateResult } from "./html.js";
 export { hydrate } from "./hydrate.js";
-export {
-	type PageFactory,
-	Pages,
-	type PagesConfig,
-} from "./Pages.js";
 export {
 	batch,
 	effect,
@@ -26,18 +25,5 @@ export {
 	type AuroraRouteConfig,
 	auroraRoute,
 } from "./route.js";
-export {
-	type RenderHttpContext,
-	type RenderPageOptions,
-	type RenderResponse,
-	renderPage,
-} from "./server/renderPage.js";
-export {
-	type AssetsHttpContext,
-	type AssetsRequest,
-	type AssetsResponse,
-	type ServeAssetsOptions,
-	serveAssets,
-} from "./server/serveAssets.js";
 export { renderToString } from "./ssr.js";
 export type { TemplateResult } from "./types.js";

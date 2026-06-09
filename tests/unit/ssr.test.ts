@@ -11,10 +11,13 @@ describe("aurora > ssr > primitives", () => {
 		expect(renderToString(html`<p>count: ${42}</p>`)).toBe("<p>count: 42</p>");
 	});
 
-	it("skips null / undefined / false", () => {
-		expect(renderToString(html`<p>a${null}b${undefined}c${false}d</p>`)).toBe(
-			"<p>abcd</p>",
-		);
+	it("renders null / undefined / false as an empty-text placeholder (hydration alignment)", () => {
+		// Empty text slots emit a `<!---->` placeholder so the path-based
+		// hydration of sibling slots stays aligned (lit-html / Solid do the
+		// same). The value never leaks as the literal "null"/"false"/"undefined".
+		const out = renderToString(html`<p>a${null}b${undefined}c${false}d</p>`);
+		expect(out).toBe("<p>a<!---->b<!---->c<!---->d</p>");
+		expect(out).not.toMatch(/null|undefined|false/);
 	});
 
 	it("escapes HTML entities in text", () => {

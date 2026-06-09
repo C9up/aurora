@@ -236,3 +236,47 @@ describe("aurora > hydrate > reactive nested template (boundary-marker swap)", (
 		void swapped;
 	});
 });
+
+describe("aurora > hydrate > empty text slots (alignment regression)", () => {
+	it("hydrates an empty reactive text slot and updates it after a signal change", () => {
+		const v = signal("");
+		const factory = () => html`<p>${() => v()}</p>`;
+		const ssr = renderToString(factory());
+		// The empty slot emits a placeholder so its position survives.
+		expect(ssr).toContain("<!---->");
+		container.innerHTML = ssr;
+
+		hydrate(container, factory);
+		const p = container.querySelector("p") as HTMLParagraphElement;
+		expect(p.textContent).toBe("");
+		v("hello");
+		expect(p.textContent).toBe("hello");
+	});
+
+	it("keeps a sibling binding wired when a leading text slot renders empty", () => {
+		const err = signal("");
+		let clicks = 0;
+		const factory = () =>
+			html`<div><p>${() => err()}</p><button @click="${() => clicks++}">go</button></div>`;
+		container.innerHTML = renderToString(factory());
+
+		hydrate(container, factory);
+		// The empty <p> slot must not desync the sibling button's @click.
+		const btn = container.querySelector("button") as HTMLButtonElement;
+		btn.click();
+		expect(clicks).toBe(1);
+		// …and the empty slot itself is now reactive.
+		err("oops");
+		expect(container.querySelector("p")?.textContent).toBe("oops");
+	});
+
+	it("does not warn 'slot not found' for an empty text slot", () => {
+		const v = signal("");
+		const factory = () => html`<p>${() => v()}</p>`;
+		container.innerHTML = renderToString(factory());
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		hydrate(container, factory);
+		expect(warn).not.toHaveBeenCalled();
+		warn.mockRestore();
+	});
+});

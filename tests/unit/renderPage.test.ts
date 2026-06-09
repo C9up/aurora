@@ -1,8 +1,9 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { RenderHttpContext, RenderResponse } from "../../src/index.js";
-import { html, Pages, renderPage } from "../../src/index.js";
+import { html } from "../../src/index.js";
+import type { RenderHttpContext, RenderResponse } from "../../src/server.js";
+import { Pages, renderPage } from "../../src/server.js";
 
 const FIXTURES = resolve(
 	dirname(fileURLToPath(import.meta.url)),

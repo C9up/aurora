@@ -78,8 +78,17 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				out += `<!--${SLOT_START}-->`;
 				out += stringifyValue(value, false);
 				out += `<!--${SLOT_END}-->`;
+			} else if (inAttr) {
+				out += stringifyValue(value, true);
 			} else {
-				out += stringifyValue(value, inAttr);
+				// Text-region scalar slot. An empty result (e.g. `cond ? x : ''`)
+				// would emit NO node and desync the path-based hydration of the
+				// following sibling slots (their @input/@submit bindings break).
+				// Emit an empty-comment placeholder so the position is preserved
+				// — lit-html / Solid do the same; hydration materializes the text
+				// node there.
+				const text = stringifyValue(value, false);
+				out += text === "" ? "<!---->" : text;
 			}
 		}
 	}
