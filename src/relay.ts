@@ -27,14 +27,12 @@ interface RelayState {
 	sse: EventSource | null;
 	uid: string | null;
 	channels: Map<string, Set<(event: unknown) => void>>;
-	pending: Array<() => void>;
 }
 
 const STATE: RelayState = {
 	sse: null,
 	uid: null,
 	channels: new Map(),
-	pending: [],
 };
 
 export interface RelayOptions {
@@ -87,15 +85,15 @@ const CLIENT: RelayClient = {
 		const adapted = handler as (event: unknown) => void;
 		handlers.add(adapted);
 
-		// Subscribe over POST as soon as we have a uid. If the SSE is
-		// still mid-handshake, queue the call and flush on `connected`.
-		const doSubscribe = () => {
+		// Subscribe over POST as soon as we have a uid. Before the first uid (or
+		// during an auto-reconnect) the channel already lives in STATE.channels
+		// and is (re-)subscribed by the `connected` handler — so the server,
+		// which assigns a fresh uid per connection, always learns every channel.
+		if (STATE.uid) {
 			postSubscribe(channel).catch((err: unknown) => {
 				console.warn(`[aurora/relay] subscribe to ${channel} failed:`, err);
 			});
-		};
-		if (STATE.uid) doSubscribe();
-		else STATE.pending.push(doSubscribe);
+		}
 
 		// Detacher — only removes the local listener. The server-side
 		// subscription stays open; closing it would interrupt other
@@ -112,7 +110,6 @@ const CLIENT: RelayClient = {
 		}
 		STATE.uid = null;
 		STATE.channels.clear();
-		STATE.pending.length = 0;
 	},
 };
 
@@ -124,8 +121,19 @@ function open(): void {
 		const data = safeJson<{ uid?: string }>((ev as MessageEvent).data);
 		if (data && typeof data.uid === "string") {
 			STATE.uid = data.uid;
-			const queue = STATE.pending.splice(0);
-			for (const fn of queue) fn();
+			// Re-apply EVERY active subscription on each (re)connect. The server
+			// assigns a fresh uid per connection and has no memory of prior
+			// subscriptions, so both the first connect AND browser auto-reconnects
+			// must re-POST every live channel — otherwise the client silently
+			// stops receiving after a reconnect.
+			for (const channel of STATE.channels.keys()) {
+				postSubscribe(channel).catch((err: unknown) => {
+					console.warn(
+						`[aurora/relay] re-subscribe to ${channel} failed:`,
+						err,
+					);
+				});
+			}
 		}
 	});
 
