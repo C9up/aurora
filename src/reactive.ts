@@ -65,6 +65,28 @@ function activeObserver(): Effect | undefined {
 }
 
 /**
+ * Ambient disposal owner. A non-reactive scope (e.g. a component's setup
+ * run) registers an array here so effects/memos created during its
+ * execution push their disposer into it and are torn down when the scope
+ * ends. `undefined` at top level — no scope, no auto-disposal.
+ */
+let currentOwner: Array<() => void> | undefined;
+
+/**
+ * @internal Swap the ambient owner, returning the previous one so the
+ * caller can restore it. `component()` uses this to own the effects and
+ * memos a setup function creates, so they dispose at unmount instead of
+ * keeping their signal subscriptions alive forever.
+ */
+export function setOwner(
+	owner: Array<() => void> | undefined,
+): Array<() => void> | undefined {
+	const prev = currentOwner;
+	currentOwner = owner;
+	return prev;
+}
+
+/**
  * Create a writable signal seeded with `initial`. Reads register the
  * current observer; writes notify every observer that previously read.
  *
@@ -178,7 +200,13 @@ export function effect(fn: EffectCallback): () => void {
 		},
 	};
 	eff.run();
-	return () => eff.dispose();
+	const dispose = () => eff.dispose();
+	// Register with the ambient owner (e.g. a component's setup scope) so the
+	// effect is torn down when that scope ends. `memo()` builds on this — its
+	// internal recompute effect inherits the same ownership, which is what
+	// stops a memo created in component setup from leaking after unmount.
+	currentOwner?.push(dispose);
+	return dispose;
 }
 
 /**

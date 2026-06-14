@@ -19,6 +19,7 @@
  * actually moves on screen.
  */
 
+import { setOwner } from "./reactive.js";
 import type { Disposer } from "./render.js";
 import type { EffectCallback, TemplateResult } from "./types.js";
 
@@ -63,10 +64,16 @@ export function component<P = Record<string, never>>(
 			mountHooks: [],
 		};
 		contextStack.push(ctx);
+		// Own the reactive scope of setup: effects/memos created here register
+		// their disposer into ctx.cleanups and tear down at unmount, instead of
+		// leaking their signal subscriptions. Restored after setup so the outer
+		// scope (or none) resumes. Save/restore handles nested component() calls.
+		const prevOwner = setOwner(ctx.cleanups);
 		try {
 			const result = setup((props ?? ({} as P)) as P);
 			return wrapWithLifecycle(result, ctx);
 		} finally {
+			setOwner(prevOwner);
 			contextStack.pop();
 		}
 	};

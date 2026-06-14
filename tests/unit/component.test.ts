@@ -9,6 +9,7 @@ import {
 	render,
 	signal,
 } from "../../src/index.js";
+import { observerCount } from "../../src/reactive.js";
 
 let container: HTMLElement;
 
@@ -130,6 +131,34 @@ describe("aurora > component > lifecycle", () => {
 		expect(cleanup).toHaveBeenCalledTimes(0);
 		dispose();
 		expect(cleanup).toHaveBeenCalledTimes(1);
+	});
+
+	it("disposes a memo created in setup when the component unmounts (no leak)", () => {
+		const src = signal(1);
+		const C = component(() => {
+			const doubled = memo(() => src() * 2);
+			return html`<p>${doubled}</p>`;
+		});
+		const dispose = render(C(), container);
+		expect(observerCount(src)).toBeGreaterThan(0);
+		dispose();
+		// The memo's recompute effect must detach from `src` at unmount — its
+		// disposer was discarded before the owner fix, leaking subscriptions.
+		expect(observerCount(src)).toBe(0);
+	});
+
+	it("disposes an effect created in setup when the component unmounts", () => {
+		const src = signal(0);
+		const C = component(() => {
+			effect(() => {
+				src(); // track
+			});
+			return html`<p>x</p>`;
+		});
+		const dispose = render(C(), container);
+		expect(observerCount(src)).toBeGreaterThan(0);
+		dispose();
+		expect(observerCount(src)).toBe(0);
 	});
 
 	it("onMount called outside a component throws a clear error", () => {
