@@ -24,7 +24,7 @@ providers: [
 
 ## Entry points
 
-- `@c9up/aurora` — main API
+- `@c9up/aurora` — main API: reactive primitives (`signal`/`effect`/`html`/`component`/`hydrate`) plus the client toolkit — `WebStorage`/`persistedSignal`, reactive browser signals (`prefersDark`/`online`/`windowSize`/…), SPA navigation (`navigate`/`queryParam`), `cookie`/`clipboard`/`share`, and the `HttpClient` fetch wrapper
 - `@c9up/aurora/provider` — Ream IoC provider
 - `@c9up/aurora/services/main` — container service accessor
 - `@c9up/aurora/relay` — realtime adapter
