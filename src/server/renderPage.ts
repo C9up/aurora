@@ -90,7 +90,7 @@ export async function renderPage<P>(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<script type="importmap">${JSON.stringify({ imports: importmap })}</script>
+<script type="importmap">${escapeJsonForScript({ imports: importmap })}</script>
 ${options.headExtra ?? ""}
 </head>
 <body>

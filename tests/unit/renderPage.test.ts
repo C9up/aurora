@@ -120,4 +120,29 @@ describe("aurora > renderPage", () => {
 		expect(dataBlock).not.toContain("</script>");
 		expect(dataBlock).toContain("<\\/script");
 	});
+
+	it("escapes </script> sequences embedded in the importmap (XSS guard)", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register(
+			"Plain",
+			(props: { x: string }) => html`<span>${props.x}</span>`,
+		);
+		const { ctx, getBody } = makeCtx();
+		await renderPage(
+			ctx,
+			pages,
+			"Plain",
+			{ x: "ok" },
+			{
+				// A "</script>" in a developer-supplied importmap value used to break
+				// out of the element — the importmap went through raw JSON.stringify
+				// while the page-data block was escaped (audit 2026-06-13).
+				importmap: { evil: '/x.js"></script><script>alert(1)</script>' },
+			},
+		);
+		const out = getBody();
+		const mapBlock =
+			out.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1] ?? "";
+		expect(mapBlock).toContain("<\\/script");
+	});
 });
