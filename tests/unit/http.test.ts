@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HttpClient, HttpError, http } from "../../src/http.js";
+import {
+	HttpClient,
+	HttpError,
+	http,
+	isAbortError,
+	isHttpError,
+} from "../../src/http.js";
 
 interface Call {
 	url: string;
@@ -199,5 +205,98 @@ describe("aurora > http > HttpClient", () => {
 		const client = new HttpClient().setHeader("X-App", "ream");
 		await client.get("/x", { headers: { "X-App": "override" } });
 		expect(new Headers(calls[0].init.headers).get("x-app")).toBe("override");
+	});
+});
+
+describe("aurora > http > error handling (attempt / isHttpError)", () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("attempt() resolves ok:true with data on a 2xx", async () => {
+		stubFetch(() => json({ id: 1 }));
+		const api = new HttpClient();
+		const r = await api.attempt(api.get<{ id: number }>("/x"));
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.data).toEqual({ id: 1 });
+	});
+
+	it("attempt() resolves ok:false with the HttpError on a non-2xx", async () => {
+		stubFetch(() => json({ error: "bad" }, 422));
+		const api = new HttpClient();
+		const r = await api.attempt(api.post("/x", {}));
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error).toBeInstanceOf(HttpError);
+			expect(r.error.status).toBe(422);
+			expect(r.error.data).toEqual({ error: "bad" });
+		}
+	});
+
+	it("attempt() rethrows a non-HTTP transport error", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+		);
+		const api = new HttpClient();
+		await expect(api.attempt(api.get("/x"))).rejects.toBeInstanceOf(TypeError);
+	});
+
+	it("isHttpError narrows", () => {
+		const err = new HttpError(new Response(null, { status: 500 }), null);
+		expect(isHttpError(err)).toBe(true);
+		expect(isHttpError(new Error("x"))).toBe(false);
+		expect(isHttpError(null)).toBe(false);
+	});
+});
+
+describe("aurora > http > abort & timeout", () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("forwards a per-request abort signal to fetch", async () => {
+		const calls = stubFetch(() => json({}));
+		const controller = new AbortController();
+		await new HttpClient().get("/x", { signal: controller.signal });
+		expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+	});
+
+	it("attaches an abort signal when a timeout is configured", async () => {
+		const calls = stubFetch(() => json({}));
+		await new HttpClient({ timeout: 5000 }).get("/x");
+		expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+	});
+
+	it("sends no signal when neither timeout nor signal is given", async () => {
+		const calls = stubFetch(() => json({}));
+		await new HttpClient().get("/x");
+		expect(calls[0].init.signal).toBeUndefined();
+	});
+
+	it("a request aborted via its signal rejects with an abort error", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				(_url: string, init: RequestInit = {}) =>
+					new Promise((_resolve, reject) => {
+						init.signal?.addEventListener("abort", () =>
+							reject(
+								Object.assign(new Error("aborted"), { name: "AbortError" }),
+							),
+						);
+					}),
+			),
+		);
+		const api = new HttpClient();
+		const controller = new AbortController();
+		const pending = api.get("/x", { signal: controller.signal });
+		controller.abort();
+		await expect(pending).rejects.toSatisfy(isAbortError);
+	});
+
+	it("isAbortError recognizes AbortError and TimeoutError only", () => {
+		const abort = Object.assign(new Error("a"), { name: "AbortError" });
+		const timeout = Object.assign(new Error("t"), { name: "TimeoutError" });
+		expect(isAbortError(abort)).toBe(true);
+		expect(isAbortError(timeout)).toBe(true);
+		expect(isAbortError(new Error("other"))).toBe(false);
+		expect(isAbortError(null)).toBe(false);
 	});
 });

@@ -29,6 +29,12 @@ export interface HttpClientOptions {
 	token?: string | null | (() => string | null | undefined);
 	/** Default `credentials` mode (e.g. `"include"` to send cookies). */
 	credentials?: RequestCredentials;
+	/**
+	 * Default timeout in ms — the request is aborted (rejecting with a
+	 * `TimeoutError`) if it doesn't settle in time. Combined with a per-request
+	 * `signal`, whichever fires first wins.
+	 */
+	timeout?: number;
 }
 
 export interface HttpRequestOptions<T = unknown> {
@@ -38,8 +44,10 @@ export interface HttpRequestOptions<T = unknown> {
 	headers?: Record<string, string>;
 	/** Per-request bearer token override (`null` to force-omit). */
 	token?: string | null;
-	/** Abort signal. */
+	/** Abort signal — abort it to cancel the request (e.g. on unmount / new keystroke). */
 	signal?: AbortSignal;
+	/** Per-request timeout in ms (overrides the client default). Aborts with a `TimeoutError`. */
+	timeout?: number;
 	/** `credentials` mode for this request. */
 	credentials?: RequestCredentials;
 	/**
@@ -64,6 +72,35 @@ export class HttpError extends Error {
 		this.data = data;
 	}
 }
+
+/** Type guard for {@link HttpError} — clean `catch` narrowing without a cast. */
+export function isHttpError(value: unknown): value is HttpError {
+	return value instanceof HttpError;
+}
+
+/**
+ * Whether `value` is an aborted/timed-out request error — an `AbortError`
+ * (cancelled via a `signal`) or a `TimeoutError` (the `timeout` option fired).
+ * Use it to silently ignore cancellations (e.g. a superseded search request).
+ */
+export function isAbortError(value: unknown): boolean {
+	const name =
+		value instanceof Error
+			? value.name
+			: typeof DOMException !== "undefined" && value instanceof DOMException
+				? value.name
+				: undefined;
+	return name === "AbortError" || name === "TimeoutError";
+}
+
+/**
+ * Outcome of a non-throwing request via {@link HttpClient.attempt}: a
+ * discriminated union a form submit can branch on (`if (r.ok)`) instead of
+ * wrapping every call in try/catch.
+ */
+export type HttpResult<T> =
+	| { ok: true; data: T; error: null }
+	| { ok: false; data: null; error: HttpError };
 
 /** Whether `body` should be JSON-encoded (vs. passed to `fetch` untouched). */
 function shouldJsonEncode(body: unknown): boolean {
@@ -94,6 +131,27 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
 	return false;
 }
 
+/** Merge abort signals into one (whichever fires first wins). `undefined` if none. */
+function combineSignals(
+	signals: ReadonlyArray<AbortSignal | undefined>,
+): AbortSignal | undefined {
+	const present = signals.filter((s): s is AbortSignal => s !== undefined);
+	if (present.length <= 1) return present[0];
+	if (typeof AbortSignal.any === "function") return AbortSignal.any(present);
+	// Fallback for runtimes without AbortSignal.any.
+	const controller = new AbortController();
+	for (const signal of present) {
+		if (signal.aborted) {
+			controller.abort(signal.reason);
+			break;
+		}
+		signal.addEventListener("abort", () => controller.abort(signal.reason), {
+			once: true,
+		});
+	}
+	return controller.signal;
+}
+
 /** Parse a response by content-type; `null` for empty / no-content bodies. */
 async function parseBody(response: Response): Promise<unknown> {
 	if (response.status === 204 || response.status === 205) return null;
@@ -109,12 +167,14 @@ export class HttpClient {
 	readonly #headers: Record<string, string>;
 	readonly #token?: string | null | (() => string | null | undefined);
 	readonly #credentials?: RequestCredentials;
+	readonly #timeout?: number;
 
 	constructor(options: HttpClientOptions = {}) {
 		this.#baseURL = options.baseURL ?? "";
 		this.#headers = { ...options.headers };
 		this.#token = options.token;
 		this.#credentials = options.credentials;
+		this.#timeout = options.timeout;
 	}
 
 	/** Set a default header for every subsequent request (case-insensitive replace). Chainable. */
@@ -192,6 +252,30 @@ export class HttpClient {
 		return this.#send(method, url, body, options);
 	}
 
+	/**
+	 * Run a request without throwing on a non-2xx response: returns a
+	 * discriminated {@link HttpResult} so a form submit can branch
+	 * (`if (r.ok) … else r.error.data`) instead of wrapping each call in
+	 * try/catch. Genuine transport failures (offline, DNS) still reject —
+	 * they're exceptional, not an HTTP error.
+	 *
+	 * ```js
+	 * const r = await api.attempt(api.post('/auth/login', creds))
+	 * if (r.ok) user(r.data)
+	 * else fieldErrors(r.error.data)   // HttpError.data = parsed 4xx body
+	 * ```
+	 */
+	async attempt<T>(request: Promise<T>): Promise<HttpResult<T>> {
+		try {
+			return { ok: true, data: await request, error: null };
+		} catch (error) {
+			if (error instanceof HttpError) {
+				return { ok: false, data: null, error };
+			}
+			throw error;
+		}
+	}
+
 	/** Derive a new client with merged defaults (e.g. a scope that adds a token). */
 	extend(options: HttpClientOptions): HttpClient {
 		return new HttpClient({
@@ -199,6 +283,7 @@ export class HttpClient {
 			headers: { ...this.#headers, ...options.headers },
 			token: options.token ?? this.#token,
 			credentials: options.credentials ?? this.#credentials,
+			timeout: options.timeout ?? this.#timeout,
 		});
 	}
 
@@ -250,11 +335,17 @@ export class HttpClient {
 			}
 		}
 
+		const timeout = options.timeout ?? this.#timeout;
+		const signal = combineSignals([
+			options.signal,
+			timeout !== undefined ? AbortSignal.timeout(timeout) : undefined,
+		]);
+
 		return fetch(this.#buildUrl(url, options.query), {
 			method,
 			headers,
 			body: payload,
-			signal: options.signal,
+			signal,
 			credentials: options.credentials ?? this.#credentials,
 		});
 	}

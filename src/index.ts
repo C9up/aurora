@@ -36,8 +36,18 @@ export {
 } from "./browser.js";
 export { component, onMount, onUnmount } from "./component.js";
 export { html, isTemplateResult } from "./html.js";
-export type { HttpClientOptions, HttpRequestOptions } from "./http.js";
-export { HttpClient, HttpError, http } from "./http.js";
+export type {
+	HttpClientOptions,
+	HttpRequestOptions,
+	HttpResult,
+} from "./http.js";
+export {
+	HttpClient,
+	HttpError,
+	http,
+	isAbortError,
+	isHttpError,
+} from "./http.js";
 export { hydrate } from "./hydrate.js";
 export {
 	batch,
