@@ -34,7 +34,18 @@ export {
 	WebStorage,
 	windowSize,
 } from "./browser.js";
+export type { Command } from "./command.js";
+export { command } from "./command.js";
 export { component, onMount, onUnmount } from "./component.js";
+export type {
+	FieldErrors,
+	Form,
+	FormField,
+	FormOptions,
+	FormSchema,
+	FormValidate,
+} from "./form.js";
+export { form } from "./form.js";
 export { html, isTemplateResult } from "./html.js";
 export type {
 	HttpClientOptions,
