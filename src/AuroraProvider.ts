@@ -31,6 +31,7 @@ import { renderToString } from "./ssr.js";
 interface AuroraContainer {
 	singleton(token: unknown, factory: () => unknown): void;
 	resolve<T = unknown>(token: unknown): T;
+	has(token: unknown): boolean;
 }
 interface AuroraConfigStore {
 	get<T = unknown>(key: string): T | undefined;
@@ -76,40 +77,22 @@ export default class AuroraProvider {
 	}
 
 	async start(): Promise<void> {
-		// Asset routes are registered in `start()` — after preloads —
-		// so apps can swap aurora's pages root in a preload if they
-		// wanted to. Non-Ream hosts (no `@c9up/ream/services/router`)
-		// AND pre-`setRouter` boots (router proxy uninit) both
-		// silent-return; ANY other error (slug collision, AuroraManager
-		// crash, factory bug) propagates so real regressions surface
-		// with a stack instead of "the asset routes just stopped
-		// mounting".
-		// Variable specifier so tsc does not statically resolve the optional
-		// `@c9up/ream` peer at build time (keeps aurora agnostic /
-		// standalone-buildable). Resolved to the host router only at runtime
-		// when aurora actually runs inside Ream.
-		const routerSpecifier = "@c9up/ream/services/router";
-		let routerMod: { default: ReamRouter };
-		try {
-			routerMod = await import(routerSpecifier);
-		} catch (err) {
-			if (isModuleNotFound(err)) return;
-			throw err;
-		}
+		// Asset routes are registered in `start()` — after preloads — so apps can
+		// swap aurora's pages root in a preload if they wanted to.
+		//
+		// Resolve the host router from the container, where Ream registers it as
+		// `'router'` (Ignitor). Reading it from the container — instead of
+		// importing `@c9up/ream/services/router` — keeps aurora runtime-agnostic:
+		// a non-Ream host simply never registers `'router'`, so aurora silently
+		// skips its asset routes. The container yields the real Router instance
+		// (registered before any provider's `start()`), so route-registration
+		// failures (slug collision, AuroraManager crash) propagate with a stack
+		// instead of being misread as "the asset routes just stopped mounting".
+		if (!this.app.container.has("router")) return;
+		const router = this.app.container.resolve<ReamRouter>("router");
 		const manager = this.app.container.resolve<AuroraManager>(AuroraManager);
-		try {
-			routerMod.default.get(
-				"/_assets/aurora/*",
-				adaptHandler(manager.auroraAssetsHandler()),
-			);
-			routerMod.default.get(
-				"/_assets/pages/*",
-				adaptHandler(manager.pageAssetsHandler()),
-			);
-		} catch (err) {
-			if (isRouterProxyUninit(err)) return;
-			throw err;
-		}
+		router.get("/_assets/aurora/*", adaptHandler(manager.auroraAssetsHandler()));
+		router.get("/_assets/pages/*", adaptHandler(manager.pageAssetsHandler()));
 	}
 
 	async ready(): Promise<void> {}
@@ -169,19 +152,4 @@ function adaptHandler(
 	response: AssetsResponse;
 }) => Promise<void> {
 	return (ctx) => handler(ctx);
-}
-
-/** Node's ERR_MODULE_NOT_FOUND surfaces on an Error subclass with `code`. */
-function isModuleNotFound(err: unknown): boolean {
-	if (err === null || typeof err !== "object" || !("code" in err)) return false;
-	const { code } = err;
-	return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND";
-}
-
-/** Ream's router proxy throws this exact string before Ignitor wires it. */
-function isRouterProxyUninit(err: unknown): boolean {
-	return (
-		err instanceof Error &&
-		err.message.includes("Router accessed before initialization")
-	);
 }
