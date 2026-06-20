@@ -85,4 +85,9 @@ export {
 	mountLiveSession,
 	type SlotPatch,
 } from "./live.js";
+export {
+	createLiveRegistry,
+	type LiveRegistry,
+	type LiveSessionHandle,
+} from "./liveRegistry.js";
 export type { TemplateResult } from "./types.js";
