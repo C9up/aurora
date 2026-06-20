@@ -27,12 +27,15 @@ interface RelayState {
 	sse: EventSource | null;
 	uid: string | null;
 	channels: Map<string, Set<(event: unknown) => void>>;
+	/** Channels we've already wired an SSE listener for on the current sse. */
+	attached: Set<string>;
 }
 
 const STATE: RelayState = {
 	sse: null,
 	uid: null,
 	channels: new Map(),
+	attached: new Set(),
 };
 
 export interface RelayOptions {
@@ -85,6 +88,11 @@ const CLIENT: RelayClient = {
 		const adapted = handler as (event: unknown) => void;
 		handlers.add(adapted);
 
+		// Wire the SSE listener for this channel's NAMED events — the relay
+		// broadcasts `event: <channel>`, so a per-channel addEventListener (not
+		// the default `onmessage`) is what actually receives the payload.
+		if (STATE.sse) attachChannel(STATE.sse, channel);
+
 		// Subscribe over POST as soon as we have a uid. Before the first uid (or
 		// during an auto-reconnect) the channel already lives in STATE.channels
 		// and is (re-)subscribed by the `connected` handler — so the server,
@@ -110,15 +118,17 @@ const CLIENT: RelayClient = {
 		}
 		STATE.uid = null;
 		STATE.channels.clear();
+		STATE.attached.clear();
 	},
 };
 
 function open(): void {
 	const sse = new EventSource(CONFIG.sseUrl);
 	STATE.sse = sse;
+	STATE.attached = new Set();
 
 	sse.addEventListener("connected", (ev) => {
-		const data = safeJson<{ uid?: string }>((ev as MessageEvent).data);
+		const data = safeJson<{ uid?: string }>(messageData(ev));
 		if (data && typeof data.uid === "string") {
 			STATE.uid = data.uid;
 			// Re-apply EVERY active subscription on each (re)connect. The server
@@ -137,21 +147,40 @@ function open(): void {
 		}
 	});
 
-	sse.onmessage = (ev) => {
-		const data = safeJson<{ channel?: string; [key: string]: unknown }>(
-			ev.data,
-		);
-		if (!data || typeof data.channel !== "string") return;
-		const handlers = STATE.channels.get(data.channel);
+	// Re-attach channel listeners — a close()+reopen builds a fresh EventSource
+	// that has lost the listeners wired by earlier subscribe() calls.
+	for (const channel of STATE.channels.keys()) attachChannel(sse, channel);
+}
+
+/**
+ * Wire one SSE listener for a channel's named broadcast events. The relay sends
+ * `event: <channel>\ndata: <JSON payload>`, so each channel is its own named
+ * event — `onmessage` (default/unnamed only) never sees them. The handler
+ * receives the broadcast payload verbatim (the value passed to
+ * `relay.broadcast(channel, payload)`).
+ */
+function attachChannel(sse: EventSource, channel: string): void {
+	if (STATE.attached.has(channel)) return;
+	STATE.attached.add(channel);
+	sse.addEventListener(channel, (ev) => {
+		const payload = safeJson<unknown>(messageData(ev));
+		if (payload === null) return;
+		const handlers = STATE.channels.get(channel);
 		if (!handlers) return;
 		for (const handler of handlers) {
 			try {
-				handler(data);
+				handler(payload);
 			} catch (err) {
-				console.warn(`[aurora/relay] listener for ${data.channel} threw:`, err);
+				console.warn(`[aurora/relay] listener for ${channel} threw:`, err);
 			}
 		}
-	};
+	});
+}
+
+/** Read an SSE event's string `data` without an unsafe DOM cast. */
+function messageData(ev: Event): string | null {
+	if ("data" in ev && typeof ev.data === "string") return ev.data;
+	return null;
 }
 
 async function postSubscribe(channel: string): Promise<void> {

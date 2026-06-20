@@ -23,6 +23,11 @@ class FakeEventSource {
 	emitConnected(uid: string): void {
 		this.listeners.get("connected")?.({ data: JSON.stringify({ uid }) });
 	}
+
+	/** Fire a named-channel broadcast — the relay's `event: <channel>` frame. */
+	emit(channel: string, payload: unknown): void {
+		this.listeners.get(channel)?.({ data: JSON.stringify(payload) });
+	}
 }
 
 const flush = (): Promise<void> =>
@@ -60,5 +65,28 @@ describe("aurora/relay", () => {
 		// Pre-fix: only 1 subscribe (first connect); the reconnect re-POSTs nothing.
 		expect(forChannel).toHaveLength(2);
 		expect(forChannel[1]?.uid).toBe("uid-2");
+	});
+
+	it("delivers a channel's NAMED broadcast payload verbatim to its handler", async () => {
+		vi.stubGlobal("EventSource", FakeEventSource);
+		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
+
+		const received: unknown[] = [];
+		const client = relay();
+		client.subscribe<Array<{ slot: number; value: string }>>(
+			"live/abc",
+			(patch) => received.push(patch),
+		);
+
+		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+		if (!es) throw new Error("expected an EventSource to be opened");
+		es.emitConnected("uid-1");
+		await flush();
+
+		// The relay broadcasts `event: live/abc` (a NAMED event), not the default
+		// `message` — so onmessage-based dispatch would miss it entirely.
+		es.emit("live/abc", [{ slot: 0, value: "1" }]);
+
+		expect(received).toEqual([[{ slot: 0, value: "1" }]]);
 	});
 });
