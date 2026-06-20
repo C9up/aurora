@@ -101,4 +101,9 @@ export {
 	type LiveMount,
 	type LiveRouter,
 } from "./liveRouter.js";
+export {
+	liveClient,
+	type LiveClientOptions,
+	type LiveClientTransport,
+} from "./liveClient.js";
 export type { TemplateResult } from "./types.js";
