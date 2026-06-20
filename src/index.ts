@@ -90,4 +90,10 @@ export {
 	type LiveRegistry,
 	type LiveSessionHandle,
 } from "./liveRegistry.js";
+export {
+	connectPatches,
+	type LiveStore,
+	liveStore,
+	type RelayBroadcaster,
+} from "./liveBroadcast.js";
 export type { TemplateResult } from "./types.js";
