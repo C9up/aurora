@@ -102,8 +102,18 @@ export {
 	type LiveRouter,
 } from "./liveRouter.js";
 export {
+	buildLiveTransport,
 	liveClient,
 	type LiveClientOptions,
 	type LiveClientTransport,
+	type LiveHttpPoster,
+	type RelaySubscribeClient,
 } from "./liveClient.js";
+export {
+	DEFAULT_LIVE_EVENT_PATH,
+	type LiveHttpContext,
+	type LiveHttpRouter,
+	wireLiveEvents,
+	type WireLiveEventsOptions,
+} from "./liveServer.js";
 export type { TemplateResult } from "./types.js";

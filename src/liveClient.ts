@@ -77,3 +77,39 @@ export function liveClient(opts: LiveClientOptions): () => void {
 		disposeHydrate();
 	};
 }
+
+/** The relay client slice the transport needs (`@c9up/aurora/relay` satisfies it). */
+export interface RelaySubscribeClient {
+	subscribe<E>(channel: string, handler: (event: E) => void): () => void;
+}
+
+/** The HTTP client slice the transport needs (aurora's `HttpClient` satisfies it). */
+export interface LiveHttpPoster {
+	post(url: string, body: unknown): unknown;
+}
+
+/**
+ * Build a {@link LiveClientTransport} from a relay client (SSE down) + an HTTP
+ * client (events up). `path` must match the server's `wireLiveEvents` route
+ * (default `/_live/event`). Keeps `liveClient` itself transport-agnostic.
+ *
+ * @example
+ *   import { relay } from '@c9up/aurora/relay'
+ *   import { HttpClient, buildLiveTransport, liveClient } from '@c9up/aurora'
+ *   const transport = buildLiveTransport(relay(), new HttpClient())
+ *   liveClient({ container, factory, mount, transport })
+ */
+export function buildLiveTransport(
+	relayClient: RelaySubscribeClient,
+	http: LiveHttpPoster,
+	options: { path?: string } = {},
+): LiveClientTransport {
+	const path = options.path ?? "/_live/event";
+	return {
+		subscribe: (channel, handler) =>
+			relayClient.subscribe<SlotPatch[]>(channel, handler),
+		post: (id, event, payload) => {
+			void http.post(path, { id, event, payload });
+		},
+	};
+}
