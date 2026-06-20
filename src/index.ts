@@ -79,4 +79,10 @@ export {
 	auroraRoute,
 } from "./route.js";
 export { renderToString } from "./ssr.js";
+export {
+	type LiveComponentDefinition,
+	type LiveSession,
+	mountLiveSession,
+	type SlotPatch,
+} from "./live.js";
 export type { TemplateResult } from "./types.js";
