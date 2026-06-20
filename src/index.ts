@@ -96,4 +96,9 @@ export {
 	liveStore,
 	type RelayBroadcaster,
 } from "./liveBroadcast.js";
+export {
+	createLiveRouter,
+	type LiveMount,
+	type LiveRouter,
+} from "./liveRouter.js";
 export type { TemplateResult } from "./types.js";
