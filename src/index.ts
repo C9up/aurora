@@ -61,6 +61,43 @@ export {
 } from "./http.js";
 export { hydrate } from "./hydrate.js";
 export {
+	type LiveComponentDefinition,
+	type LiveSession,
+	mountLiveSession,
+	type SlotPatch,
+} from "./live.js";
+export {
+	connectPatches,
+	type LiveStore,
+	liveStore,
+	type RelayBroadcaster,
+} from "./liveBroadcast.js";
+export {
+	buildLiveTransport,
+	type LiveClientOptions,
+	type LiveClientTransport,
+	type LiveHttpPoster,
+	liveClient,
+	type RelaySubscribeClient,
+} from "./liveClient.js";
+export {
+	createLiveRegistry,
+	type LiveRegistry,
+	type LiveSessionHandle,
+} from "./liveRegistry.js";
+export {
+	createLiveRouter,
+	type LiveMount,
+	type LiveRouter,
+} from "./liveRouter.js";
+export {
+	DEFAULT_LIVE_EVENT_PATH,
+	type LiveHttpContext,
+	type LiveHttpRouter,
+	type WireLiveEventsOptions,
+	wireLiveEvents,
+} from "./liveServer.js";
+export {
 	batch,
 	effect,
 	isSignal,
@@ -78,42 +115,14 @@ export {
 	type AuroraRouteConfig,
 	auroraRoute,
 } from "./route.js";
+export {
+	createRpcClient,
+	isRpcError,
+	type RpcCall,
+	type RpcClient,
+	type RpcClientOptions,
+	RpcError,
+	type RpcResult,
+} from "./rpc.js";
 export { renderToString } from "./ssr.js";
-export {
-	type LiveComponentDefinition,
-	type LiveSession,
-	mountLiveSession,
-	type SlotPatch,
-} from "./live.js";
-export {
-	createLiveRegistry,
-	type LiveRegistry,
-	type LiveSessionHandle,
-} from "./liveRegistry.js";
-export {
-	connectPatches,
-	type LiveStore,
-	liveStore,
-	type RelayBroadcaster,
-} from "./liveBroadcast.js";
-export {
-	createLiveRouter,
-	type LiveMount,
-	type LiveRouter,
-} from "./liveRouter.js";
-export {
-	buildLiveTransport,
-	liveClient,
-	type LiveClientOptions,
-	type LiveClientTransport,
-	type LiveHttpPoster,
-	type RelaySubscribeClient,
-} from "./liveClient.js";
-export {
-	DEFAULT_LIVE_EVENT_PATH,
-	type LiveHttpContext,
-	type LiveHttpRouter,
-	wireLiveEvents,
-	type WireLiveEventsOptions,
-} from "./liveServer.js";
 export type { TemplateResult } from "./types.js";
