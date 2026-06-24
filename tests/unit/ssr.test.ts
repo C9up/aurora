@@ -6,25 +6,33 @@ describe("aurora > ssr > primitives", () => {
 		expect(renderToString(html`<p>hello</p>`)).toBe("<p>hello</p>");
 	});
 
-	it("inlines primitive text slots", () => {
-		expect(renderToString(html`<p>${"world"}</p>`)).toBe("<p>world</p>");
-		expect(renderToString(html`<p>count: ${42}</p>`)).toBe("<p>count: 42</p>");
+	it("wraps primitive text slots in boundary markers", () => {
+		expect(renderToString(html`<p>${"world"}</p>`)).toBe(
+			"<p><!--$-->world<!--/$--></p>",
+		);
+		expect(renderToString(html`<p>count: ${42}</p>`)).toBe(
+			"<p>count: <!--$-->42<!--/$--></p>",
+		);
 	});
 
-	it("renders null / undefined / false as an empty-text placeholder (hydration alignment)", () => {
-		// Empty text slots emit a `<!---->` placeholder so the path-based
-		// hydration of sibling slots stays aligned (lit-html / Solid do the
-		// same). The value never leaks as the literal "null"/"false"/"undefined".
+	it("renders null / undefined / false as an empty marked slot (hydration alignment)", () => {
+		// Every text slot is wrapped in a `<!--$-->…<!--/$-->` pair so sibling
+		// paths stay aligned; an empty value just leaves the pair empty. The value
+		// never leaks as the literal "null"/"false"/"undefined".
 		const out = renderToString(html`<p>a${null}b${undefined}c${false}d</p>`);
-		expect(out).toBe("<p>a<!---->b<!---->c<!---->d</p>");
+		expect(out).toBe(
+			"<p>a<!--$--><!--/$-->b<!--$--><!--/$-->c<!--$--><!--/$-->d</p>",
+		);
 		expect(out).not.toMatch(/null|undefined|false/);
 	});
 
 	it("escapes HTML entities in text", () => {
 		expect(renderToString(html`<p>${"<script>"}</p>`)).toBe(
-			"<p>&lt;script&gt;</p>",
+			"<p><!--$-->&lt;script&gt;<!--/$--></p>",
 		);
-		expect(renderToString(html`<p>${"a & b"}</p>`)).toBe("<p>a &amp; b</p>");
+		expect(renderToString(html`<p>${"a & b"}</p>`)).toBe(
+			"<p><!--$-->a &amp; b<!--/$--></p>",
+		);
 	});
 
 	it("escapes attribute special chars", () => {
@@ -74,12 +82,16 @@ describe("aurora > ssr > primitives", () => {
 describe("aurora > ssr > reactive snapshots", () => {
 	it("evaluates signals once for the snapshot", () => {
 		const count = signal(7);
-		expect(renderToString(html`<p>${count}</p>`)).toBe("<p>7</p>");
+		expect(renderToString(html`<p>${count}</p>`)).toBe(
+			"<p><!--$-->7<!--/$--></p>",
+		);
 	});
 
 	it("evaluates an arrow-function slot eagerly", () => {
 		const n = signal(3);
-		expect(renderToString(html`<p>${() => n() * 2}</p>`)).toBe("<p>6</p>");
+		expect(renderToString(html`<p>${() => n() * 2}</p>`)).toBe(
+			"<p><!--$-->6<!--/$--></p>",
+		);
 	});
 
 	it("ignores event handlers (no @click in SSR markup)", () => {
@@ -105,7 +117,7 @@ describe("aurora > ssr > arrays + nested templates + components", () => {
 	it("flattens arrays of TemplateResults", () => {
 		const items = [html`<li>a</li>`, html`<li>b</li>`];
 		expect(renderToString(html`<ul>${items}</ul>`)).toBe(
-			"<ul><li>a</li><li>b</li></ul>",
+			"<ul><!--$--><li>a</li><li>b</li><!--/$--></ul>",
 		);
 	});
 
@@ -115,7 +127,7 @@ describe("aurora > ssr > arrays + nested templates + components", () => {
 		// reactive structured slot) so hydration can locate its node range and
 		// keep the following sibling slot paths aligned.
 		expect(renderToString(html`<p>${inner}</p>`)).toBe(
-			"<p><!--$--><em>x</em><!--/$--></p>",
+			"<p><!--$--><em><!--$-->x<!--/$--></em><!--/$--></p>",
 		);
 	});
 
@@ -126,7 +138,9 @@ describe("aurora > ssr > arrays + nested templates + components", () => {
 		const out = renderToString(
 			html`<ul>${[Item({ label: "x" }), Item({ label: "y" })]}</ul>`,
 		);
-		expect(out).toBe("<ul><li>x</li><li>y</li></ul>");
+		expect(out).toBe(
+			"<ul><!--$--><li><!--$-->x<!--/$--></li><li><!--$-->y<!--/$--></li><!--/$--></ul>",
+		);
 	});
 
 	it("components with signal() state SSR their initial value", () => {
@@ -134,6 +148,8 @@ describe("aurora > ssr > arrays + nested templates + components", () => {
 			const n = signal(42);
 			return html`<output>${n}</output>`;
 		});
-		expect(renderToString(Counter())).toBe("<output>42</output>");
+		expect(renderToString(Counter())).toBe(
+			"<output><!--$-->42<!--/$--></output>",
+		);
 	});
 });

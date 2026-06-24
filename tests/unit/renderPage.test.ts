@@ -53,7 +53,7 @@ describe("aurora > renderPage", () => {
 		expect(out).toMatch(/<!doctype html>/i);
 		// SSR body was injected inside the aurora-root div.
 		expect(out).toContain(
-			'<div id="aurora-root"><p data-name="World">Hello, World!</p></div>',
+			'<div id="aurora-root"><p data-name="World">Hello, <!--$-->World<!--/$-->!</p></div>',
 		);
 		// Importmap maps @c9up/aurora to the default mount.
 		expect(out).toContain('<script type="importmap">');
@@ -65,11 +65,33 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('"name":"Hello"');
 		expect(out).toContain('"props":{"name":"World"}');
 		// Hydration script imports aurora + the page and calls hydrate.
-		expect(out).toContain("import { hydrate } from '@c9up/aurora'");
+		expect(out).toContain(
+			"import { hydrate, setRouteManifest } from '@c9up/aurora'",
+		);
 		expect(out).toContain('import Page from "/_assets/pages/Hello.js"');
 		expect(out).toContain(
 			"hydrate(document.getElementById(data.rootId), () => Page(data.props))",
 		);
+		// No routes passed → an empty manifest is still wired (no urlFor use).
+		expect(out).toContain('"routes":{}');
+	});
+
+	it("injects the named-route manifest for the isomorphic urlFor()", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = makeCtx();
+		await renderPage(
+			ctx,
+			pages,
+			"Hello",
+			{ name: "World" },
+			{ routes: { "users.show": "/users/:id", "auth.login": "/login" } },
+		);
+		const out = getBody();
+		// Manifest serialized into the page-data blob…
+		expect(out).toContain('"users.show":"/users/:id"');
+		expect(out).toContain('"auth.login":"/login"');
+		// …and the bootstrap re-installs it before hydrating.
+		expect(out).toContain("setRouteManifest(data.routes ?? {})");
 	});
 
 	it("honors a custom importmap override + headExtra + rootId", async () => {

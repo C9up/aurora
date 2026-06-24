@@ -118,6 +118,19 @@ export function mount(
 			}
 			continue;
 		}
+		// Type guard: an attr/bool/prop/event slot needs an Element. On a
+		// structural desync the path can land on an EXISTING node of the wrong
+		// type (Text/Comment) — casting it to Element and calling setAttribute
+		// would throw "setAttribute is not a function". Degrade like the null
+		// case (skip the binding) instead of crashing the whole render.
+		if (slot.kind !== "text" && node.nodeType !== 1) {
+			if (typeof console !== "undefined") {
+				console.warn(
+					`[aurora] render: slot ${i} (${slot.kind}) path ${slot.path.join(".")} resolved to a non-element node — skipping binding`,
+				);
+			}
+			continue;
+		}
 		if (slot.kind === "attr" && slot.staticParts !== undefined) {
 			collectMultiAttr(slot, node as Element, result.values[i], multiGroups);
 		} else {

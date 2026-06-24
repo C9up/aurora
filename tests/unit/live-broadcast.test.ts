@@ -22,7 +22,9 @@ function fakeRelay() {
 			sent.push({ channel, data });
 			return 1;
 		},
-	} satisfies RelayBroadcaster & { sent: Array<{ channel: string; data: unknown }> };
+	} satisfies RelayBroadcaster & {
+		sent: Array<{ channel: string; data: unknown }>;
+	};
 }
 
 describe("aurora > live broadcast", () => {
@@ -61,7 +63,9 @@ describe("aurora > live broadcast", () => {
 		);
 
 		expect(store.channel).toBe("room/42");
-		expect(store.renderToString()).toContain("1 online");
+		expect(store.renderToString().replace(/<!--\/?\$-->/g, "")).toContain(
+			"1 online",
+		);
 
 		store.dispatch("join"); // shared mutation, server-side
 		// Exactly ONE broadcast — not one-per-client. Relay fans it out to all
@@ -69,7 +73,9 @@ describe("aurora > live broadcast", () => {
 		expect(relay.sent).toEqual([
 			{ channel: "room/42", data: [{ slot: 0, value: "2" }] },
 		]);
-		expect(store.renderToString()).toContain("2 online");
+		expect(store.renderToString().replace(/<!--\/?\$-->/g, "")).toContain(
+			"2 online",
+		);
 		store.dispose();
 	});
 

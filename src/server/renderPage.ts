@@ -25,6 +25,7 @@
 
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
+import { setRouteManifest } from "../url.js";
 
 /**
  * Structural slice of the host framework's response. Same shape
@@ -62,6 +63,14 @@ export interface RenderPageOptions {
 	 * targets.
 	 */
 	rootId?: string;
+	/**
+	 * Named-route manifest (`name → path-pattern`) for the isomorphic
+	 * `urlFor()` helper — build it with Ream's `router.namedManifest()`. It is
+	 * installed server-side before the page renders AND serialized into the page
+	 * so the hydrate bootstrap re-installs it, making `urlFor` work identically
+	 * in SSR and the browser. Omit if the app doesn't use `urlFor`.
+	 */
+	routes?: Record<string, string>;
 }
 
 export async function renderPage<P>(
@@ -71,6 +80,10 @@ export async function renderPage<P>(
 	props: P,
 	options: RenderPageOptions = {},
 ): Promise<void> {
+	// Install the route manifest BEFORE rendering so a page calling `urlFor`
+	// during SSR resolves against the same map the client will get.
+	if (options.routes) setRouteManifest(options.routes);
+
 	const factory = await pages.resolve(name);
 	// The factory must be invoked the SAME way client-side for hydrate
 	// to find matching slots — `Page(props)` is the contract.
@@ -100,11 +113,13 @@ ${options.headExtra ?? ""}
 		props,
 		url: pageUrl,
 		rootId,
+		routes: options.routes ?? {},
 	})}</script>
 <script type="module">
-import { hydrate } from '@c9up/aurora'
+import { hydrate, setRouteManifest } from '@c9up/aurora'
 import Page from ${JSON.stringify(pageUrl)}
 const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
+setRouteManifest(data.routes ?? {})
 hydrate(document.getElementById(data.rootId), () => Page(data.props))
 </script>
 </body>

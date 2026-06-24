@@ -102,6 +102,39 @@ describe("aurora > hydrate > mismatch surfacing", () => {
 		).toBe(true);
 	});
 
+	it("skips an attr-slot binding (no crash) when its path lands on a non-element", () => {
+		// Reactive class attr on the root <input>. Diverging SSR markup puts a
+		// Text node where the <input> is expected, so the attr path resolves to a
+		// Text node. Before the type guard this threw "setAttribute is not a
+		// function" inside the binding effect; now it warns and skips (fail-soft).
+		const Wrap = component(() => html`<input class="${signal("on")}" />`);
+		container.innerHTML = "stray text node";
+
+		expect(() => hydrate(container, Wrap)).not.toThrow();
+		expect(warnSpy).toHaveBeenCalled();
+		const messages = warnSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+		expect(messages.some((m: string) => m.includes("non-element node"))).toBe(
+			true,
+		);
+	});
+
+	it("[ROOT] text interpolation adjacent to static text keeps the following attr binding aligned", () => {
+		// `Hello ${x}!` — the client template splits this into 3 nodes (text,
+		// slot-comment, text) but SSR inlines the value, so the browser MERGES
+		// the adjacent text nodes into one. The node count drops, shifting the
+		// path of the following <span>'s class slot → the binding desyncs.
+		const cls = signal("on");
+		const factory = () =>
+			html`<div>Hello ${"World"}!<span class="${cls}">x</span></div>`;
+		container.innerHTML = renderToString(factory());
+		expect(container.querySelector("span")?.getAttribute("class")).toBe("on");
+
+		hydrate(container, factory);
+		cls("off");
+		// The class binding must still target the <span>.
+		expect(container.querySelector("span")?.getAttribute("class")).toBe("off");
+	});
+
 	it("does NOT warn on a matching SSR roundtrip", () => {
 		const Wrap = component(() => {
 			const v = signal(1);
@@ -242,8 +275,9 @@ describe("aurora > hydrate > empty text slots (alignment regression)", () => {
 		const v = signal("");
 		const factory = () => html`<p>${() => v()}</p>`;
 		const ssr = renderToString(factory());
-		// The empty slot emits a placeholder so its position survives.
-		expect(ssr).toContain("<!---->");
+		// The empty slot still emits its boundary-marker pair so its position
+		// survives (hydration materializes the text node inside the range).
+		expect(ssr).toContain("<!--$--><!--/$-->");
 		container.innerHTML = ssr;
 
 		hydrate(container, factory);

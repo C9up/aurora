@@ -23,7 +23,9 @@ describe("aurora > live registry", () => {
 
 		const { id, session } = reg.mount("Counter", "alice");
 		expect(typeof id).toBe("string");
-		expect(session.renderToString()).toContain("Count: 0");
+		expect(session.renderToString().replace(/<!--\/?\$-->/g, "")).toContain(
+			"Count: 0",
+		);
 		expect(reg.size()).toBe(1);
 		reg.disposeAll();
 	});

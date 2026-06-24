@@ -17,7 +17,10 @@ describe("aurora > live components (core)", () => {
 		const session = mountLiveSession(() => ({
 			view: html`<button>Count: ${signal(0)}</button>`,
 		}));
-		expect(session.renderToString()).toContain("Count: 0");
+		// Strip the SSR text-slot markers to assert the rendered text content.
+		expect(session.renderToString().replace(/<!--\/?\$-->/g, "")).toContain(
+			"Count: 0",
+		);
 		session.dispose();
 	});
 
@@ -107,7 +110,9 @@ describe("aurora > live components (core)", () => {
 		}));
 		const fullBytes = Buffer.byteLength(session.renderToString());
 		session.dispatch("inc");
-		const patchBytes = Buffer.byteLength(JSON.stringify(session.drainPatches()));
+		const patchBytes = Buffer.byteLength(
+			JSON.stringify(session.drainPatches()),
+		);
 		expect(patchBytes).toBeLessThan(fullBytes * 0.15);
 		session.dispose();
 	});

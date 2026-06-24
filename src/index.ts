@@ -34,6 +34,7 @@ export {
 	WebStorage,
 	windowSize,
 } from "./browser.js";
+export { type ClassValue, clsx, cn, twMerge } from "./cn.js";
 export type { Command } from "./command.js";
 export { command } from "./command.js";
 export { component, onMount, onUnmount } from "./component.js";
@@ -126,3 +127,4 @@ export {
 } from "./rpc.js";
 export { renderToString } from "./ssr.js";
 export type { TemplateResult } from "./types.js";
+export { getRouteManifest, setRouteManifest, urlFor } from "./url.js";

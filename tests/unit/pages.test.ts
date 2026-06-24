@@ -18,14 +18,14 @@ describe("aurora > Pages > resolve", () => {
 		);
 		const factory = await pages.resolve("Greeting");
 		const out = renderToString(await factory({ name: "Hugo" }));
-		expect(out).toBe("<span>Hugo</span>");
+		expect(out).toBe("<span><!--$-->Hugo<!--/$--></span>");
 	});
 
 	it("imports a page from disk when no explicit registration exists", async () => {
 		const pages = new Pages({ root: FIXTURES });
 		const factory = await pages.resolve("Hello");
 		const out = renderToString(await factory({ name: "World" }));
-		expect(out).toBe('<p data-name="World">Hello, World!</p>');
+		expect(out).toBe('<p data-name="World">Hello, <!--$-->World<!--/$-->!</p>');
 	});
 
 	it("throws when the page module lacks a default export function", async () => {

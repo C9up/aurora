@@ -376,6 +376,19 @@ function hydrateSlot(
 	mountHooks: Array<EffectCallback>,
 	markerCursor: MarkerCursor,
 ): void {
+	// Type guard: an attr/bool/prop/event slot needs an Element. On a SSR↔client
+	// structural desync the path can resolve to an EXISTING node of the wrong
+	// type (Text/Comment); casting it to Element and calling setAttribute would
+	// throw "setAttribute is not a function". Skip the binding (fail-soft) rather
+	// than crash hydration. Text slots accept text/comment/element, so they pass.
+	if (slot.kind !== "text" && node.nodeType !== 1) {
+		if (typeof console !== "undefined") {
+			console.warn(
+				`[aurora] hydrate: slot (${slot.kind}) path ${slot.path.join(".")} resolved to a non-element node — skipping binding`,
+			);
+		}
+		return;
+	}
 	switch (slot.kind) {
 		case "text":
 			hydrateTextSlot(node, value, cleanups, mountHooks, markerCursor);
@@ -405,6 +418,24 @@ function hydrateSlot(
  * existing text node in place. For nested TemplateResults, we
  * recursively hydrate against the captured sibling range.
  */
+/**
+ * First text node inside a marker pair's range, or a fresh empty one inserted
+ * before the end marker (when the SSR value was empty → no text node yet).
+ */
+function reactiveTextNode(pair: MarkerPair): Text {
+	for (
+		let n = pair.start.nextSibling;
+		n !== null && n !== pair.end;
+		n = n.nextSibling
+	) {
+		if (n.nodeType === 3 /* TEXT */) return n as Text;
+	}
+	const doc = pair.end.ownerDocument ?? document;
+	const fresh = doc.createTextNode("");
+	pair.end.parentNode?.insertBefore(fresh, pair.end);
+	return fresh;
+}
+
 function hydrateTextSlot(
 	commentMarker: Node,
 	value: unknown,
@@ -412,14 +443,82 @@ function hydrateTextSlot(
 	mountHooks: Array<EffectCallback>,
 	markerCursor: MarkerCursor,
 ): void {
-	// The path lands on the comment marker that EXISTS in the parsed
-	// template but not in SSR output. Hydration walks the live siblings
-	// to find the text node that holds the SSR value.
-	// Strategy: the comment was located at child index N inside its
-	// parent; SSR wrote the value as the immediately-preceding text
-	// node (or nothing for null/false). Live node here is whatever the
-	// path resolution returned — often a text node, sometimes an
-	// element (for nested templates). We rebind in-place.
+	// Every text slot is SSR-wrapped in a <!--$-->…<!--/$--> pair, and its path
+	// resolves (via collapseMarkerRanges) to the start marker. Consume the
+	// matching pair in document order and bind within its range.
+	const pair = markerCursor.pairs[markerCursor.i];
+	if (pair === undefined) {
+		// Legacy markup without per-slot markers (mismatched older SSR build).
+		legacyHydrateTextSlot(
+			commentMarker,
+			value,
+			cleanups,
+			mountHooks,
+			markerCursor,
+		);
+		return;
+	}
+	markerCursor.i += 1;
+
+	const reactiveFn =
+		isSignal(value) || typeof value === "function"
+			? (value as () => unknown)
+			: null;
+	const current = reactiveFn ? reactiveFn() : value;
+
+	// Structured value (nested template / array): reactive → swap on change;
+	// direct → adopt the SSR range once (inner bindings wired against it).
+	if (isTemplateResult(current) || Array.isArray(current)) {
+		if (reactiveFn) {
+			hydrateReactiveStructured(
+				reactiveFn,
+				pair,
+				cleanups,
+				mountHooks,
+				markerCursor,
+			);
+			return;
+		}
+		const range: ChildNode[] = [];
+		for (
+			let n = pair.start.nextSibling;
+			n !== null && n !== pair.end;
+			n = n.nextSibling
+		) {
+			range.push(n as ChildNode);
+		}
+		if (isTemplateResult(current)) {
+			hydrateTemplateResult(current, range, cleanups, mountHooks, markerCursor);
+		}
+		// A direct (non-reactive) array is static SSR markup; per-item reactive
+		// bindings aren't individually re-hydrated (use `${() => arr.map(…)}`).
+		return;
+	}
+
+	// Scalar: a reactive scalar updates the range's text node on change; a static
+	// scalar is already rendered between the markers (nothing to wire).
+	if (reactiveFn) {
+		const textNode = reactiveTextNode(pair);
+		const dispose = effect(() => {
+			const v = reactiveFn();
+			textNode.data = v == null || v === false ? "" : String(v);
+		});
+		cleanups.push(dispose);
+	}
+}
+
+/**
+ * Pre-marker fallback — best-effort hydration when the SSR markup carries no
+ * per-slot boundary markers (a mismatched older SSR build). Current builds wrap
+ * every text slot, so this path is dead for matched server/client versions.
+ */
+function legacyHydrateTextSlot(
+	commentMarker: Node,
+	value: unknown,
+	cleanups: Disposer[],
+	mountHooks: Array<EffectCallback>,
+	markerCursor: MarkerCursor,
+): void {
 	if (isSignal(value) || typeof value === "function") {
 		const fn = value as () => unknown;
 		// First, evaluate eagerly to detect a structured value (nested

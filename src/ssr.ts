@@ -66,41 +66,23 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		if (i < values.length && !skipValue) {
 			const value = values[i];
 			const inAttr = isInsideAttribute(out);
-			if (!inAttr && isReactiveStructuredSlot(value)) {
-				// Reactive text slot whose value is a nested template /
-				// array — wrap the rendered content in boundary markers so
-				// hydration can locate the exact node range and SWAP it when
-				// the signal changes client-side. Without these markers a
-				// nested-template slot hydrates once and then goes stale
-				// (no way to find where the subtree starts/ends). Scalar
-				// reactive slots (`${signal}` → text) are NOT wrapped: their
-				// hydration updates the text node in place, no range needed.
-				out += `<!--${SLOT_START}-->`;
-				out += stringifyValue(value, false);
-				out += `<!--${SLOT_END}-->`;
-			} else if (!inAttr && isTemplateResult(value)) {
-				// DIRECT (non-reactive) nested template — component composition,
-				// e.g. `${Layout({ children })}` or `${table}`. It renders to a
-				// node RANGE just like a reactive structured slot, so it needs the
-				// SAME boundary markers: the client template counts every slot as
-				// ONE comment node, so without a markable range a multi-node child
-				// shifts the childNode indices of every FOLLOWING sibling slot →
-				// dead bindings / "slot path not found". Hydration collapses the
-				// marked range back to one node so sibling paths stay aligned.
-				out += `<!--${SLOT_START}-->`;
-				out += stringifyValue(value, false);
-				out += `<!--${SLOT_END}-->`;
-			} else if (inAttr) {
+			if (inAttr) {
 				out += stringifyValue(value, true);
 			} else {
-				// Text-region scalar slot. An empty result (e.g. `cond ? x : ''`)
-				// would emit NO node and desync the path-based hydration of the
-				// following sibling slots (their @input/@submit bindings break).
-				// Emit an empty-comment placeholder so the position is preserved
-				// — lit-html / Solid do the same; hydration materializes the text
-				// node there.
-				const text = stringifyValue(value, false);
-				out += text === "" ? "<!---->" : text;
+				// Text-region slot — ALWAYS wrap in boundary markers so the SSR
+				// node structure matches the client template, which keeps exactly
+				// ONE comment node per slot. An inlined value otherwise MERGES
+				// with adjacent static text or sibling values when the browser
+				// parses the SSR HTML (`<p>Hello ${x}!</p>` → ONE text node, not
+				// three), dropping the node count and desyncing the slot AND every
+				// following sibling binding (text, attr, event). Hydration
+				// collapses each `<!--$-->…<!--/$-->` range back to one node
+				// (collapseMarkerRanges) so paths align exactly; the range also
+				// anchors scalar text updates and nested-template swaps. Same
+				// part-marker approach as lit-html / Solid.
+				out += `<!--${SLOT_START}-->`;
+				out += stringifyValue(value, false);
+				out += `<!--${SLOT_END}-->`;
 			}
 		}
 	}
@@ -110,27 +92,6 @@ function stringifyTemplateResult(result: TemplateResult): string {
 /** Boundary-marker comment payloads (kept in sync with hydrate.ts). */
 const SLOT_START = "$";
 const SLOT_END = "/$";
-
-/**
- * True when `value` is a reactive expression (signal / function) whose
- * current evaluation is a structured node payload (a nested
- * TemplateResult, or an array). These are the slots that can SWAP their
- * subtree on a client-side change and therefore need boundary markers
- * for hydration to find the range. A reactive slot resolving to a
- * scalar (string / number) is updated in place and needs no markers.
- */
-function isReactiveStructuredSlot(value: unknown): boolean {
-	if (!isSignal(value) && typeof value !== "function") return false;
-	let evaluated: unknown;
-	try {
-		evaluated = isSignal(value)
-			? (value as () => unknown)()
-			: (value as () => unknown)();
-	} catch {
-		return false;
-	}
-	return isTemplateResult(evaluated) || Array.isArray(evaluated);
-}
 
 /**
  * Returns true if the position at the end of `htmlSoFar` lives inside

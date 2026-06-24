@@ -19,7 +19,9 @@ function fakeRelay() {
 			sent.push({ channel, data });
 			return 1;
 		},
-	} satisfies RelayBroadcaster & { sent: Array<{ channel: string; data: unknown }> };
+	} satisfies RelayBroadcaster & {
+		sent: Array<{ channel: string; data: unknown }>;
+	};
 }
 
 function setup() {
@@ -39,7 +41,7 @@ describe("aurora > live router", () => {
 	it("mount returns the initial render + a per-session channel", () => {
 		const { router } = setup();
 		const m = router.mount("Counter", "alice");
-		expect(m.html).toContain("Count: 0");
+		expect(m.html.replace(/<!--\/?\$-->/g, "")).toContain("Count: 0");
 		expect(m.channel).toBe(`live/${m.id}`);
 		expect(router.channelFor(m.id)).toBe(m.channel);
 	});
