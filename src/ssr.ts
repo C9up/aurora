@@ -78,6 +78,18 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				out += `<!--${SLOT_START}-->`;
 				out += stringifyValue(value, false);
 				out += `<!--${SLOT_END}-->`;
+			} else if (!inAttr && isTemplateResult(value)) {
+				// DIRECT (non-reactive) nested template — component composition,
+				// e.g. `${Layout({ children })}` or `${table}`. It renders to a
+				// node RANGE just like a reactive structured slot, so it needs the
+				// SAME boundary markers: the client template counts every slot as
+				// ONE comment node, so without a markable range a multi-node child
+				// shifts the childNode indices of every FOLLOWING sibling slot →
+				// dead bindings / "slot path not found". Hydration collapses the
+				// marked range back to one node so sibling paths stay aligned.
+				out += `<!--${SLOT_START}-->`;
+				out += stringifyValue(value, false);
+				out += `<!--${SLOT_END}-->`;
 			} else if (inAttr) {
 				out += stringifyValue(value, true);
 			} else {

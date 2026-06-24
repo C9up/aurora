@@ -107,6 +107,17 @@ export function mount(
 	for (let i = 0; i < tpl.slots.length; i++) {
 		const slot = tpl.slots[i];
 		const node = resolvePath(fragment, slot.path);
+		if (node === null) {
+			// Path didn't resolve — skip this binding rather than crash (see
+			// resolvePath). Degrades to a dead binding; the surrounding render
+			// (and any command driving it) survives.
+			if (typeof console !== "undefined") {
+				console.warn(
+					`[aurora] render: slot ${i} (${slot.kind}) path ${slot.path.join(".")} did not resolve — skipping binding`,
+				);
+			}
+			continue;
+		}
 		if (slot.kind === "attr" && slot.staticParts !== undefined) {
 			collectMultiAttr(slot, node as Element, result.values[i], multiGroups);
 		} else {
@@ -124,9 +135,20 @@ export function mount(
 	return fragment;
 }
 
-function resolvePath(root: ParentNode, path: NodePath): Node {
+function resolvePath(root: ParentNode, path: NodePath): Node | null {
 	let node: Node = root;
-	for (const i of path) node = node.childNodes[i];
+	for (const i of path) {
+		const next = node.childNodes[i];
+		// Fail-soft: a path step that runs off the live child list means the
+		// tree diverged from the parsed template (a hydration desync). Return
+		// null so the caller skips the binding instead of dereferencing
+		// `undefined.childNodes` and crashing the whole render — which, when the
+		// render runs inside a command's onSuccess, used to masquerade as a
+		// task failure (and on a guarded page, a logout). Mirrors
+		// `resolvePathLive` in hydrate.ts.
+		if (next === undefined) return null;
+		node = next;
+	}
 	return node;
 }
 

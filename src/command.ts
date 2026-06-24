@@ -91,14 +91,32 @@ class CommandRunner<TArgs extends unknown[], TData>
 		this.#loading(true);
 		this.#error(null);
 		try {
-			const result = await this.#task(...args);
+			let result: TData;
+			try {
+				result = await this.#task(...args);
+			} catch (error) {
+				if (id !== this.#runId) return; // superseded — drop
+				this.#error(error);
+				for (const handler of this.#onFail) handler(error);
+				return;
+			}
 			if (id !== this.#runId) return; // superseded by a newer run — drop
 			this.#data(result);
-			for (const handler of this.#onSuccess) handler(result);
-		} catch (error) {
-			if (id !== this.#runId) return; // superseded — drop
-			this.#error(error);
-			for (const handler of this.#onFail) handler(error);
+			// onSuccess runs OUTSIDE the task's failure boundary: success is
+			// decided by the task, never by the callback. A throw here (e.g. a
+			// render error after the data lands) is a handler bug — surfacing it
+			// as a task failure would route to onFail, which on a guarded page
+			// masquerades as a logout. Report it, but never reclassify it.
+			try {
+				for (const handler of this.#onSuccess) handler(result);
+			} catch (handlerError) {
+				if (typeof console !== "undefined") {
+					console.error(
+						"[aurora] a command onSuccess handler threw — not treated as a task failure:",
+						handlerError,
+					);
+				}
+			}
 		} finally {
 			if (id === this.#runId) {
 				this.#loading(false);

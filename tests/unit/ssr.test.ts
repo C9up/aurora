@@ -109,9 +109,14 @@ describe("aurora > ssr > arrays + nested templates + components", () => {
 		);
 	});
 
-	it("recurses into nested TemplateResults", () => {
+	it("recurses into nested TemplateResults (wrapped in boundary markers)", () => {
 		const inner = html`<em>${"x"}</em>`;
-		expect(renderToString(html`<p>${inner}</p>`)).toBe("<p><em>x</em></p>");
+		// A DIRECT nested template is wrapped in `<!--$-->…<!--/$-->` (like a
+		// reactive structured slot) so hydration can locate its node range and
+		// keep the following sibling slot paths aligned.
+		expect(renderToString(html`<p>${inner}</p>`)).toBe(
+			"<p><!--$--><em>x</em><!--/$--></p>",
+		);
 	});
 
 	it("renders components by invoking them", () => {

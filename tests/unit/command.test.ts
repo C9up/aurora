@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { command } from "../../src/command.js";
 
 /** A promise plus its resolve/reject, for deterministic ordering in tests. */
@@ -26,6 +26,30 @@ describe("aurora > command", () => {
 		expect(cmd.data()).toBe(6);
 		expect(cmd.error()).toBeNull();
 		expect(seen).toEqual([6]);
+	});
+
+	it("an error thrown inside onSuccess is NOT treated as a task failure", async () => {
+		// The task SUCCEEDED — the failure is in the success handler (e.g. a
+		// render error after the data lands). Routing it to onFail is the
+		// reclassification bug: on a guarded page onFail → onAuthFail → logout.
+		// Success/failure is decided by the task, never by the success callback.
+		const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		let failed = false;
+		const cmd = command(async () => "ok")
+			.onSuccess(() => {
+				throw new Error("render boom");
+			})
+			.onFail(() => {
+				failed = true;
+			});
+
+		await cmd.run();
+
+		expect(failed).toBe(false); // success-callback error must not route to onFail
+		expect(cmd.error()).toBeNull(); // nor pollute the error signal
+		expect(cmd.data()).toBe("ok"); // the task itself succeeded
+		expect(cmd.loading()).toBe(false); // and the run still settles
+		errSpy.mockRestore();
 	});
 
 	it("run() failure: sets error, fires onFail, never throws", async () => {

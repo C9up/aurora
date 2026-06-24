@@ -280,3 +280,53 @@ describe("aurora > hydrate > empty text slots (alignment regression)", () => {
 		warn.mockRestore();
 	});
 });
+
+describe("aurora > hydrate > direct (non-reactive) nested-template slots", () => {
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(async () => {
+		const { resetHydrateWarnings } = await import("../../src/hydrate.js");
+		resetHydrateWarnings();
+		warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		warnSpy.mockRestore();
+	});
+
+	it("SSR wraps a DIRECT multi-node nested template in boundary markers", () => {
+		// `${child}` is a plain TemplateResult interpolation — component
+		// composition (`html`${Layout({…})}``), NOT `${() => …}`. It must get the
+		// same boundary markers a reactive structured slot gets, so its node range
+		// stays locatable and the following slot paths don't shift.
+		const factory = () => {
+			const child = html`<p>a</p><p>b</p>`;
+			return html`<section>${child}</section>`;
+		};
+		const ssr = renderToString(factory());
+		expect(ssr).toContain("<!--$-->");
+		expect(ssr).toContain("<!--/$-->");
+		expect(ssr).toContain("<p>a</p><p>b</p>");
+	});
+
+	it("keeps a sibling binding wired after a DIRECT multi-node nested template", () => {
+		// The bug: the direct child expands to 2 nodes but (pre-fix) carries no
+		// markers, while the client template counts it as 1 comment → the
+		// button's @click path shifts onto the wrong node → dead listener, and
+		// a re-render later hits the unguarded resolvePath crash.
+		let clicks = 0;
+		const factory = () => {
+			const child = html`<p>a</p><p>b</p>`;
+			return html`<section>${child}<button @click="${() => clicks++}">go</button></section>`;
+		};
+		container.innerHTML = renderToString(factory());
+		expect(container.querySelectorAll("p").length).toBe(2);
+		expect(container.querySelector("button")?.textContent).toBe("go");
+
+		hydrate(container, factory);
+		expect(warnSpy).not.toHaveBeenCalled();
+		const btn = container.querySelector("button") as HTMLButtonElement;
+		btn.click();
+		expect(clicks).toBe(1); // listener wired to the RIGHT node, not a shifted one
+	});
+});

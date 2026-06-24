@@ -320,15 +320,50 @@ function hydrateTemplateResult(
  * Text-slot paths point to a comment marker that doesn't exist in
  * hydration markup — we tolerate the miss and return null.
  */
+/**
+ * Collapse each top-level `<!--$-->…<!--/$-->` range in `nodes` to a SINGLE
+ * entry (its start marker), dropping the in-range content + end marker from the
+ * count. SSR expands a structured slot (reactive OR a direct nested template)
+ * to a node RANGE, but the parsed client template counts every slot as exactly
+ * ONE comment node — so without this collapse the extra range nodes shift the
+ * childNode index of every FOLLOWING sibling slot (dead bindings / "slot path
+ * not found"). Nested ranges (depth > 0) are skipped wholesale: they belong to
+ * the outer slot's content and are hydrated when we recurse into it.
+ */
+function collapseMarkerRanges(nodes: ChildNode[]): ChildNode[] {
+	const out: ChildNode[] = [];
+	let depth = 0;
+	for (const n of nodes) {
+		if (n.nodeType === 8 /* Comment */) {
+			const data = (n as Comment).data;
+			if (data === SLOT_START) {
+				if (depth === 0) out.push(n); // the whole range counts as one node
+				depth += 1;
+				continue;
+			}
+			if (data === SLOT_END) {
+				if (depth > 0) depth -= 1;
+				continue;
+			}
+		}
+		if (depth === 0) out.push(n);
+	}
+	return out;
+}
+
 function resolvePathLive(
 	_root: ParentNode,
 	path: NodePath,
 	rootNodes: ChildNode[],
 ): Node | null {
 	if (path.length === 0) return null;
-	let node: Node | null = rootNodes[path[0]] ?? null;
+	// Collapse marker ranges at EVERY level so the live child list matches the
+	// parsed template's one-node-per-slot shape (see collapseMarkerRanges).
+	let children = collapseMarkerRanges(rootNodes);
+	let node: Node | null = children[path[0]] ?? null;
 	for (let i = 1; node && i < path.length; i++) {
-		node = node.childNodes[path[i]] ?? null;
+		children = collapseMarkerRanges(Array.from(node.childNodes));
+		node = children[path[i]] ?? null;
 	}
 	return node;
 }
@@ -451,6 +486,27 @@ function hydrateTextSlot(
 		return;
 	}
 	if (isTemplateResult(value)) {
+		// DIRECT nested template (component composition, `${Layout({…})}`). SSR
+		// wrapped it in a boundary-marker pair (same scheme as a reactive
+		// structured slot). Consume the pair in document order and hydrate the
+		// nested template against its captured range — wiring inner bindings to
+		// the SSR nodes and keeping the marker cursor aligned.
+		const pair = markerCursor.pairs[markerCursor.i];
+		if (pair !== undefined) {
+			markerCursor.i += 1;
+			const range: ChildNode[] = [];
+			for (
+				let n = pair.start.nextSibling;
+				n !== null && n !== pair.end;
+				n = n.nextSibling
+			) {
+				range.push(n as ChildNode);
+			}
+			hydrateTemplateResult(value, range, cleanups, mountHooks, markerCursor);
+			return;
+		}
+		// Legacy markup without markers (older SSR build): best-effort against
+		// the single resolved node.
 		hydrateTemplateResult(
 			value,
 			[commentMarker as ChildNode],
