@@ -5,6 +5,7 @@
 // this barrel is what lets a browser bundle import the client primitives without
 // the bundler dragging Node built-ins through the import graph.
 export type {
+	CookieCodec,
 	CookieOptions,
 	PersistedSignalOptions,
 	ShareData,
@@ -14,10 +15,15 @@ export type {
 } from "./browser.js";
 export {
 	back,
+	booleanCookie,
 	clipboard,
 	cookie,
+	cookieSignal,
+	cookieState,
 	forward,
+	getCookieStore,
 	hash,
+	jsonCookie,
 	mediaQuery,
 	navigate,
 	online,
@@ -28,6 +34,7 @@ export {
 	reload,
 	replace,
 	session,
+	setCookieStore,
 	share,
 	storage,
 	visibility,

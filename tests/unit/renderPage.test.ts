@@ -1,8 +1,8 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AuroraManager } from "../../src/AuroraManager.js";
-import { html } from "../../src/index.js";
+import { booleanCookie, cookieState, html } from "../../src/index.js";
 import type { RenderHttpContext, RenderResponse } from "../../src/server.js";
 import { Pages, renderPage } from "../../src/server.js";
 
@@ -179,5 +179,57 @@ describe("aurora > renderPage", () => {
 		const mapBlock =
 			out.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1] ?? "";
 		expect(mapBlock).toContain("<\\/script");
+	});
+
+	it("seeds allowlisted request cookies so a page renders the right UI state in SSR", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		// Mirrors fluveo's sidebar: a cookie-backed boolean drives the width class.
+		pages.register("Sidebar", () => {
+			const collapsed = cookieState("sidebar", false, booleanCookie);
+			return html`<aside class="${() => (collapsed() ? "w-16" : "w-60")}"></aside>`;
+		});
+		const { ctx, getBody } = makeCtx();
+		// A request that exposes only the cookies it was sent.
+		const jar: Record<string, string> = { sidebar: "1", session: "secret" };
+		ctx.request = { cookie: (name: string) => jar[name] ?? null };
+
+		// Real SSR has no `document`; without this happy-dom's `document.cookie`
+		// (empty) would shadow the seed and the test wouldn't exercise the path.
+		vi.stubGlobal("document", undefined);
+		try {
+			await renderPage(ctx, pages, "Sidebar", {}, { cookies: ["sidebar"] });
+		} finally {
+			vi.unstubAllGlobals();
+		}
+		// SSR rendered the COLLAPSED width because the cookie was seeded — no flash.
+		expect(getBody()).toContain('class="w-16"');
+	});
+
+	it("reads ONLY the allowlisted cookies (no session/leak) and never serializes them", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register("Probe", () => {
+			const collapsed = cookieState("sidebar", false, booleanCookie);
+			return html`<aside class="${() => (collapsed() ? "w-16" : "w-60")}"></aside>`;
+		});
+		const { ctx, getBody } = makeCtx();
+		const jar: Record<string, string> = { sidebar: "1", session: "secret" };
+		ctx.request = { cookie: (name: string) => jar[name] ?? null };
+
+		await renderPage(ctx, pages, "Probe", {}, { cookies: ["sidebar"] });
+		const out = getBody();
+		// The session cookie must NEVER appear in the HTML…
+		expect(out).not.toContain("secret");
+		// …and cookies are not serialized into the page-data blob at all.
+		expect(out).not.toContain('"cookies"');
+	});
+
+	it("tolerates a request without cookie support (no allowlist match throws)", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register("Plain2", () => html`<span>ok</span>`);
+		const { ctx, getBody } = makeCtx(); // ctx.request === {}
+		await expect(
+			renderPage(ctx, pages, "Plain2", {}, { cookies: ["sidebar"] }),
+		).resolves.toBeUndefined();
+		expect(getBody()).toContain("<span>ok</span>");
 	});
 });

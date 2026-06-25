@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	back,
+	booleanCookie,
 	clipboard,
 	cookie,
+	cookieSignal,
+	cookieState,
 	forward,
+	getCookieStore,
 	hash,
+	jsonCookie,
 	mediaQuery,
 	navigate,
 	online,
@@ -14,6 +19,7 @@ import {
 	reload,
 	replace,
 	session,
+	setCookieStore,
 	share,
 	storage,
 	visibility,
@@ -391,6 +397,87 @@ describe("aurora > browser > cookie", () => {
 			cookie.remove("x");
 		}).not.toThrow();
 		vi.unstubAllGlobals();
+	});
+});
+
+describe("aurora > browser > SSR cookie seed", () => {
+	afterEach(() => {
+		setCookieStore({});
+		vi.unstubAllGlobals();
+	});
+
+	it("cookie.get reads the seed during SSR (no document)", () => {
+		vi.stubGlobal("document", undefined);
+		setCookieStore({ sidebar: "1", theme: "dark" });
+		expect(cookie.get("sidebar")).toBe("1");
+		expect(cookie.get("theme")).toBe("dark");
+		expect(cookie.get("absent")).toBeNull();
+	});
+
+	it("getCookieStore returns a copy of the seed", () => {
+		setCookieStore({ a: "1" });
+		const snap = getCookieStore();
+		snap.a = "mutated";
+		expect(getCookieStore().a).toBe("1");
+	});
+});
+
+describe("aurora > browser > cookieSignal / cookieState", () => {
+	afterEach(() => {
+		// Restore a real `document` FIRST — a prior test may have stubbed it to
+		// `undefined` (SSR), and the cookie cleanup below needs the real one.
+		vi.unstubAllGlobals();
+		for (const part of document.cookie.split("; ")) {
+			const name = part.split("=")[0];
+			if (name) cookie.remove(name);
+		}
+		setCookieStore({});
+	});
+
+	it("seeds from the cookie and persists string writes (browser)", () => {
+		cookie.set("locale", "fr");
+		const locale = cookieSignal("locale", "en");
+		expect(locale()).toBe("fr");
+		locale("de");
+		expect(locale()).toBe("de");
+		expect(cookie.get("locale")).toBe("de");
+	});
+
+	it("falls back to the initial value when the cookie is absent", () => {
+		const locale = cookieSignal("locale", "en");
+		expect(locale()).toBe("en");
+	});
+
+	it("seeds a cookieSignal from the SSR seed (no document)", () => {
+		vi.stubGlobal("document", undefined);
+		setCookieStore({ theme: "dark" });
+		expect(cookieSignal("theme", "light")()).toBe("dark");
+	});
+
+	it("booleanCookie round-trips through a signal", () => {
+		cookie.set("collapsed", "1");
+		const collapsed = cookieState("collapsed", false, booleanCookie);
+		expect(collapsed()).toBe(true);
+		collapsed(false);
+		expect(collapsed()).toBe(false);
+		expect(cookie.get("collapsed")).toBe("0");
+	});
+
+	it("jsonCookie round-trips an object and falls back when malformed", () => {
+		const prefs = cookieState(
+			"prefs",
+			{ open: true },
+			jsonCookie({ open: true }),
+		);
+		prefs({ open: false });
+		expect(cookie.get("prefs")).toBe('{"open":false}');
+		// A tampered cookie parses to the fallback instead of throwing.
+		cookie.set("prefs", "{not json");
+		expect(
+			cookieState("prefs", { open: true }, jsonCookie({ open: true }))(),
+		).toEqual({
+			open: true,
+		});
 	});
 });
 

@@ -23,6 +23,7 @@
  *   </body>
  */
 
+import { setCookieStore } from "../browser.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
 import { setRouteManifest } from "../url.js";
@@ -71,6 +72,46 @@ export interface RenderPageOptions {
 	 * in SSR and the browser. Omit if the app doesn't use `urlFor`.
 	 */
 	routes?: Record<string, string>;
+	/**
+	 * Allowlist of cookie names to seed into the SSR cookie store so a page can
+	 * read them during render via aurora's `cookieSignal` / `cookie.get` — the
+	 * server then renders the SAME UI state the browser will (no hydration flash
+	 * of the default, e.g. a sidebar animating open→collapsed on every load).
+	 *
+	 * Only the NAMED cookies are read (from `ctx.request`); they are NOT
+	 * serialized into the page — the browser reads them from `document.cookie`.
+	 * NEVER list a session / signed / encrypted / `httpOnly` cookie here: those
+	 * must stay server-only. Use plain, JS-readable cookies for UI state.
+	 */
+	cookies?: string[];
+}
+
+/** A request that can read a cookie by name — the structural slice we need. */
+interface CookieReadableRequest {
+	cookie(name: string): string | null;
+}
+
+function isCookieReadable(request: unknown): request is CookieReadableRequest {
+	return (
+		typeof request === "object" &&
+		request !== null &&
+		"cookie" in request &&
+		typeof request.cookie === "function"
+	);
+}
+
+/** Read the allowlisted cookies off the request into a `name → value` seed. */
+function readRequestCookies(
+	request: unknown,
+	names: string[],
+): Record<string, string> {
+	if (!isCookieReadable(request)) return {};
+	const seed: Record<string, string> = {};
+	for (const name of names) {
+		const value = request.cookie(name);
+		if (value !== null) seed[name] = value;
+	}
+	return seed;
 }
 
 export async function renderPage<P>(
@@ -83,6 +124,13 @@ export async function renderPage<P>(
 	// Install the route manifest BEFORE rendering so a page calling `urlFor`
 	// during SSR resolves against the same map the client will get.
 	if (options.routes) setRouteManifest(options.routes);
+
+	// Seed the request's UI cookies so the page reads the SAME state server-side
+	// that the browser will after hydration. Set synchronously right before the
+	// (synchronous) render — read cookie signals at the top of the page.
+	setCookieStore(
+		options.cookies ? readRequestCookies(ctx.request, options.cookies) : {},
+	);
 
 	const factory = await pages.resolve(name);
 	// The factory must be invoked the SAME way client-side for hydrate

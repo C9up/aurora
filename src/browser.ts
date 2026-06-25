@@ -385,13 +385,44 @@ export interface CookieOptions {
 }
 
 /**
+ * SSR seed of the request's cookies — a `name → value` map installed by
+ * `renderPage` (server-side) before a page renders, so {@link cookie.get} and
+ * {@link cookieSignal} can read the SAME values during SSR that the browser
+ * will read from `document.cookie` after hydration. Without it the server has
+ * no view of the request cookies and renders default UI state → a flash /
+ * mismatch on hydration (the classic collapsed-sidebar flicker).
+ *
+ * Module-global by necessity (the page factory reads it ambiently). It is set
+ * synchronously immediately before the synchronous render, so read your cookie
+ * signals at the TOP of a page (before any `await`) to avoid a cross-request
+ * race under concurrent async page factories. In the browser it is unused —
+ * {@link cookie.get} reads `document.cookie` directly there.
+ */
+let cookieSeed: Record<string, string> = {};
+
+/**
+ * Install the SSR cookie seed (`name → value`). Called by `renderPage` from its
+ * `cookies` allowlist; the hydrate bootstrap does NOT call it (the browser reads
+ * `document.cookie`). Replaces any previous seed.
+ */
+export function setCookieStore(values: Record<string, string>): void {
+	cookieSeed = { ...values };
+}
+
+/** The currently-installed SSR cookie seed (mainly for tests/introspection). */
+export function getCookieStore(): Record<string, string> {
+	return { ...cookieSeed };
+}
+
+/**
  * SSR-safe cookie accessor — the one store {@link WebStorage} can't cover, for
- * values the server also reads. Reads return `null` during SSR; writes are a
- * no-op. Names and values are URL-encoded.
+ * values the server also reads. In the browser reads/writes hit
+ * `document.cookie`; during SSR reads come from the {@link setCookieStore} seed
+ * and writes are a no-op. Names and values are URL-encoded.
  */
 export const cookie = {
 	get(name: string): string | null {
-		if (typeof document === "undefined") return null;
+		if (typeof document === "undefined") return cookieSeed[name] ?? null;
 		const prefix = `${encodeURIComponent(name)}=`;
 		for (const part of document.cookie.split("; ")) {
 			if (part.startsWith(prefix)) {
@@ -421,6 +452,91 @@ export const cookie = {
 		this.set(name, "", { ...options, maxAge: 0, expires: new Date(0) });
 	},
 };
+
+/**
+ * Maps a typed value to and from the string a cookie stores. Pass one to
+ * {@link cookieState} for non-string state (booleans, enums, JSON).
+ */
+export interface CookieCodec<T> {
+	/** Parse the raw cookie string into `T`. */
+	parse(raw: string): T;
+	/** Serialize `T` into the raw cookie string. */
+	serialize(value: T): string;
+}
+
+/** Codec for a boolean cookie, stored as `"1"` / `"0"`. */
+export const booleanCookie: CookieCodec<boolean> = {
+	parse: (raw) => raw === "1" || raw === "true",
+	serialize: (value) => (value ? "1" : "0"),
+};
+
+/**
+ * Codec for a JSON-serializable value. A parse failure (malformed cookie) is
+ * surfaced by returning `fallback`, so a tampered cookie never throws mid-render.
+ */
+export function jsonCookie<T>(fallback: T): CookieCodec<T> {
+	return {
+		parse: (raw) => {
+			try {
+				return JSON.parse(raw);
+			} catch {
+				return fallback;
+			}
+		},
+		serialize: (value) => JSON.stringify(value),
+	};
+}
+
+/**
+ * A {@link Signal} backed by a cookie — the isomorphic counterpart to
+ * {@link persistedSignal}. It is seeded from the cookie (the
+ * {@link setCookieStore} request seed during SSR, `document.cookie` in the
+ * browser) and persists every change back to the cookie via a reactive
+ * `effect`. Because the same seed is visible on both sides, a page renders the
+ * SAME markup server- and client-side — no hydration mismatch, no flash of the
+ * default state (e.g. a sidebar that animates open→collapsed on every load).
+ *
+ * Use {@link cookieSignal} for string state; pass a {@link CookieCodec} here for
+ * booleans/enums/JSON (e.g. {@link booleanCookie}). Created inside a component's
+ * setup, the persistence effect is disposed with it.
+ *
+ * Read it at the TOP of a page (before any `await`) so the SSR seed is current —
+ * see {@link setCookieStore}.
+ */
+export function cookieState<T>(
+	name: string,
+	initial: T,
+	codec: CookieCodec<T>,
+	options: CookieOptions = {},
+): Signal<T> {
+	const raw = cookie.get(name);
+	const sig = signal<T>(raw === null ? initial : codec.parse(raw));
+
+	// Mirror every change back to the cookie. Runs once immediately (a no-op
+	// write during SSR, where `cookie.set` bails) then on each change.
+	effect(() => {
+		cookie.set(name, codec.serialize(sig()), options);
+	});
+
+	return sig;
+}
+
+const stringCookie: CookieCodec<string> = {
+	parse: (raw) => raw,
+	serialize: (value) => value,
+};
+
+/**
+ * A {@link Signal} backed by a string cookie — {@link cookieState} with an
+ * identity codec, for the common case where the value is already a string.
+ */
+export function cookieSignal(
+	name: string,
+	initial: string,
+	options: CookieOptions = {},
+): Signal<string> {
+	return cookieState(name, initial, stringCookie, options);
+}
 
 // ─── Clipboard & Web Share ───────────────────────────────────────────
 
