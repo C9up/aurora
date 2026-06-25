@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 coverage/
 .DS_Store
+
+# vitest browser-mode artifacts
+.vitest-attachments/
+tests/browser/__screenshots__/

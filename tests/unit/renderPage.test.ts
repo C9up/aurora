@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { AuroraManager } from "../../src/AuroraManager.js";
 import { html } from "../../src/index.js";
 import type { RenderHttpContext, RenderResponse } from "../../src/server.js";
 import { Pages, renderPage } from "../../src/server.js";
@@ -92,6 +93,18 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('"auth.login":"/login"');
 		// …and the bootstrap re-installs it before hydrating.
 		expect(out).toContain("setRouteManifest(data.routes ?? {})");
+	});
+
+	it("AuroraManager.render points the importmap + page URL at the configured assetsPrefix", async () => {
+		const manager = new AuroraManager({
+			pages: { root: FIXTURES },
+			assetsPrefix: "/assets",
+		});
+		const { ctx, getBody } = makeCtx();
+		await manager.render(ctx, "Hello", { name: "World" });
+		const out = getBody();
+		expect(out).toContain('"@c9up/aurora":"/assets/aurora/index.js"');
+		expect(out).toContain('import Page from "/assets/pages/Hello.js"');
 	});
 
 	it("honors a custom importmap override + headExtra + rootId", async () => {

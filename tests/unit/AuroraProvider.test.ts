@@ -11,6 +11,7 @@
  *     "the asset routes are gone".
  */
 import { describe, expect, it } from "vitest";
+import { AuroraManager } from "../../src/AuroraManager.js";
 import type { AuroraAppContext } from "../../src/AuroraProvider.js";
 import AuroraProvider from "../../src/AuroraProvider.js";
 
@@ -19,7 +20,7 @@ function bypass<T>(v: unknown): T {
 }
 
 function buildApp(opts?: {
-	auroraConfig?: { pages?: { root?: string } };
+	auroraConfig?: { pages?: { root?: string }; assetsPrefix?: string };
 	/** When set, registered under the `'router'` token (mirrors Ignitor). */
 	router?: unknown;
 }): AuroraAppContext {
@@ -125,5 +126,54 @@ describe("AuroraProvider > start() router resolution", () => {
 		await provider.boot();
 		await provider.start();
 		expect(captured).toEqual(["/_assets/aurora/*", "/_assets/pages/*"]);
+	});
+
+	it("derives both asset mounts from a custom assetsPrefix (no underscore)", async () => {
+		const captured: string[] = [];
+		const app = buildApp({
+			auroraConfig: {
+				pages: { root: "/tmp/aurora-test-pages" },
+				assetsPrefix: "/assets",
+			},
+			router: {
+				get(path: string) {
+					captured.push(path);
+					return {};
+				},
+			},
+		});
+		const provider = new AuroraProvider(app);
+		provider.register();
+		await provider.boot();
+		await provider.start();
+		expect(captured).toEqual(["/assets/aurora/*", "/assets/pages/*"]);
+	});
+});
+
+describe("AuroraManager — asset prefix derivation", () => {
+	it("defaults to /_assets and derives the aurora/pages paths", () => {
+		const m = new AuroraManager({ pages: { root: "/tmp/x" } });
+		expect(m.auroraAssetPath).toBe("/_assets/aurora");
+		expect(m.pageAssetPath).toBe("/_assets/pages");
+		expect(m.pages.urlFor("Hello")).toBe("/_assets/pages/Hello.js");
+	});
+
+	it("derives everything from a custom assetsPrefix (trailing slash trimmed)", () => {
+		const m = new AuroraManager({
+			pages: { root: "/tmp/x" },
+			assetsPrefix: "/assets/",
+		});
+		expect(m.auroraAssetPath).toBe("/assets/aurora");
+		expect(m.pageAssetPath).toBe("/assets/pages");
+		expect(m.pages.urlFor("Hello")).toBe("/assets/pages/Hello.js");
+	});
+
+	it("an explicit pages.urlPrefix still wins over assetsPrefix", () => {
+		const m = new AuroraManager({
+			pages: { root: "/tmp/x", urlPrefix: "/custom/pages" },
+			assetsPrefix: "/assets",
+		});
+		expect(m.pages.urlFor("Hello")).toBe("/custom/pages/Hello.js");
+		expect(m.auroraAssetPath).toBe("/assets/aurora");
 	});
 });

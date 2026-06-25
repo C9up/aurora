@@ -91,8 +91,16 @@ export default class AuroraProvider {
 		if (!this.app.container.has("router")) return;
 		const router = this.app.container.resolve<ReamRouter>("router");
 		const manager = this.app.container.resolve<AuroraManager>(AuroraManager);
-		router.get("/_assets/aurora/*", adaptHandler(manager.auroraAssetsHandler()));
-		router.get("/_assets/pages/*", adaptHandler(manager.pageAssetsHandler()));
+		// Mount paths derive from the configured `assetsPrefix` (default
+		// `/_assets`) — set `config.aurora.assetsPrefix` to change the scheme.
+		router.get(
+			`${manager.auroraAssetPath}/*`,
+			adaptHandler(manager.auroraAssetsHandler()),
+		);
+		router.get(
+			`${manager.pageAssetPath}/*`,
+			adaptHandler(manager.pageAssetsHandler()),
+		);
 	}
 
 	async ready(): Promise<void> {}

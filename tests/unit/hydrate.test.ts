@@ -135,6 +135,23 @@ describe("aurora > hydrate > mismatch surfacing", () => {
 		expect(container.querySelector("span")?.getAttribute("class")).toBe("off");
 	});
 
+	it("a non-empty reactive list keeps a following text-slot binding aligned", () => {
+		// The reactive array is rendered at SSR; each item has its own text-slot
+		// marker pair. Hydration must consume those pairs (recurse into items) or
+		// the cursor desyncs and the following `${tail}` binds the wrong range.
+		const items = signal([{ name: "Alice" }, { name: "Bob" }]);
+		const tail = signal("hello");
+		const factory = () =>
+			html`<div><ul>${() => items().map((it) => html`<li>${it.name}</li>`)}</ul><p>${tail}</p></div>`;
+		container.innerHTML = renderToString(factory());
+		hydrate(container, factory);
+
+		expect(warnSpy).not.toHaveBeenCalled();
+		tail("changed");
+		expect(container.querySelector("p")?.textContent).toBe("changed");
+		expect(container.querySelector("li")?.textContent).toBe("Alice");
+	});
+
 	it("does NOT warn on a matching SSR roundtrip", () => {
 		const Wrap = component(() => {
 			const v = signal(1);

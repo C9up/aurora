@@ -1,6 +1,6 @@
 {
 	"name": "@c9up/aurora",
-	"version": "0.1.14",
+	"version": "0.1.15",
 	"description": "Aurora — reactive UI runtime for the Ream framework. Tagged-template DOM, signal-based state, isomorphic SSR + hydration, zero build step.",
 	"license": "MIT",
 	"type": "module",
@@ -41,7 +41,8 @@
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"lint": "biome check src/",
-		"test:coverage": "vitest run --coverage"
+		"test:coverage": "vitest run --coverage",
+		"test:browser": "vitest run -c vitest.browser.config.ts"
 	},
 	"peerDependencies": {
 		"@c9up/ream": "^0.1.0"
@@ -53,7 +54,10 @@
 	},
 	"devDependencies": {
 		"@types/node": "^22.19.15",
+		"@vitest/browser": "4.1.6",
+		"@vitest/browser-playwright": "^4.1.9",
 		"happy-dom": "^15.11.7",
+		"playwright": "^1.61.1",
 		"typescript": "^6.0.2",
 		"vitest": "^4.1.2"
 	},

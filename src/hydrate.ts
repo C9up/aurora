@@ -174,10 +174,21 @@ function hydrateReactiveStructured(
 		if (firstRun) {
 			firstRun = false;
 			// Reuse SSR markup: hydrate reactive bindings INSIDE the nested
-			// template against the captured nodes. Inner boundary markers
-			// are consumed from the same cursor (document order).
+			// value against the captured nodes. Inner boundary markers are
+			// consumed from the same cursor (document order) — for an ARRAY this
+			// MUST recurse into every item, else the items' marker pairs go
+			// unconsumed and the cursor desyncs, wiring slots AFTER the list to
+			// the wrong range (SSR list "present but not painted").
 			if (isTemplateResult(next)) {
 				hydrateTemplateResult(
+					next,
+					currentNodes,
+					localCleanups,
+					mountHooks,
+					markerCursor,
+				);
+			} else if (Array.isArray(next)) {
+				hydrateArrayItems(
 					next,
 					currentNodes,
 					localCleanups,
@@ -211,6 +222,67 @@ function hydrateReactiveStructured(
 		for (const d of localCleanups) d();
 		localCleanups = [];
 	});
+}
+
+/**
+ * Top-level live (SSR) node count a value contributes inside an array slot: a
+ * TemplateResult contributes its template's root-node count, a nested array the
+ * sum of its items, a non-empty scalar one text node, null/undefined/false none.
+ * Used to slice the array's range per item during hydration.
+ */
+function liveNodeCount(value: unknown): number {
+	if (value === null || value === undefined || value === false) return 0;
+	if (isTemplateResult(value)) {
+		return getTemplate(value.strings).element.content.childNodes.length;
+	}
+	if (Array.isArray(value)) {
+		let n = 0;
+		for (const v of value) n += liveNodeCount(v);
+		return n;
+	}
+	return 1; // scalar → one inlined text node
+}
+
+/**
+ * Hydrate the items of a reactive array against the SSR nodes inside its marker
+ * range. Each item is hydrated against its own slice of the (marker-collapsed)
+ * range, IN ORDER, so every item's inner marker pairs are consumed in document
+ * order and the global cursor stays aligned for slots AFTER the list. Item
+ * templates need a stable top-level node count (the common
+ * `arr.map(x => html`<li>…</li>`)` shape — single root, no surrounding
+ * whitespace); bare adjacent scalar items can merge in the browser, so use
+ * template items for hydrated lists.
+ */
+function hydrateArrayItems(
+	items: unknown[],
+	rangeNodes: ChildNode[],
+	cleanups: Disposer[],
+	mountHooks: Array<EffectCallback>,
+	markerCursor: MarkerCursor,
+): void {
+	const nodes = collapseMarkerRanges(rangeNodes);
+	let offset = 0;
+	for (const item of items) {
+		const count = liveNodeCount(item);
+		if (isTemplateResult(item)) {
+			hydrateTemplateResult(
+				item,
+				nodes.slice(offset, offset + count),
+				cleanups,
+				mountHooks,
+				markerCursor,
+			);
+		} else if (Array.isArray(item)) {
+			hydrateArrayItems(
+				item,
+				nodes.slice(offset, offset + count),
+				cleanups,
+				mountHooks,
+				markerCursor,
+			);
+		}
+		offset += count;
+	}
 }
 
 /**
@@ -489,9 +561,12 @@ function hydrateTextSlot(
 		}
 		if (isTemplateResult(current)) {
 			hydrateTemplateResult(current, range, cleanups, mountHooks, markerCursor);
+		} else if (Array.isArray(current)) {
+			// Direct (non-reactive) array — hydrate each item so its inner marker
+			// pairs are consumed and the cursor stays aligned (same as a reactive
+			// array's first run).
+			hydrateArrayItems(current, range, cleanups, mountHooks, markerCursor);
 		}
-		// A direct (non-reactive) array is static SSR markup; per-item reactive
-		// bindings aren't individually re-hydrated (use `${() => arr.map(…)}`).
 		return;
 	}
 

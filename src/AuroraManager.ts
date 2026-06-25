@@ -30,6 +30,15 @@ export interface AuroraManagerConfig {
 	 * Override only if you want to serve a custom build.
 	 */
 	auroraDistRoot?: string;
+	/**
+	 * URL prefix the asset routes mount under. The aurora runtime is served
+	 * from `<assetsPrefix>/aurora/*` and the app's pages from
+	 * `<assetsPrefix>/pages/*`, and the SSR importmap + page URLs derive from
+	 * it. Default `/_assets` (the leading underscore namespaces framework
+	 * assets away from app routes, Next.js `/_next` style). Set e.g. `/assets`
+	 * for an underscore-free scheme. An explicit `pages.urlPrefix` still wins.
+	 */
+	assetsPrefix?: string;
 }
 
 const DEFAULT_AURORA_DIST = resolvePath(
@@ -37,17 +46,40 @@ const DEFAULT_AURORA_DIST = resolvePath(
 	"../dist",
 );
 
+/** Normalize an asset prefix: ensure a leading slash, drop trailing slashes. */
+function normalizePrefix(prefix: string): string {
+	const withLead = prefix.startsWith("/") ? prefix : `/${prefix}`;
+	return withLead.replace(/\/+$/, "") || "/";
+}
+
 export class AuroraManager {
 	readonly pages: Pages;
 	readonly auroraDistRoot: string;
+	/** Resolved asset prefix (default `/_assets`). */
+	readonly assetsPrefix: string;
+	/** Mount path for the aurora runtime — `<assetsPrefix>/aurora`. */
+	readonly auroraAssetPath: string;
+	/** Mount path for the app's pages — `<assetsPrefix>/pages`. */
+	readonly pageAssetPath: string;
 
 	constructor(config: AuroraManagerConfig) {
-		this.pages = new Pages(config.pages);
+		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/_assets");
+		this.auroraAssetPath = `${this.assetsPrefix}/aurora`;
+		this.pageAssetPath = `${this.assetsPrefix}/pages`;
+		// Pages serve their compiled JS from the same prefix unless the app
+		// pins an explicit urlPrefix.
+		this.pages = new Pages({
+			...config.pages,
+			urlPrefix: config.pages.urlPrefix ?? this.pageAssetPath,
+		});
 		this.auroraDistRoot = config.auroraDistRoot ?? DEFAULT_AURORA_DIST;
 	}
 
 	/**
-	 * SSR + hydrate + ship the document.
+	 * SSR + hydrate + ship the document. The importmap default points
+	 * `@c9up/aurora` at this manager's `assetsPrefix`; a caller's
+	 * `options.importmap` still overrides (e.g. to remap to an app-curated
+	 * browser entry).
 	 */
 	render(
 		ctx: RenderHttpContext,
@@ -55,7 +87,13 @@ export class AuroraManager {
 		props: unknown,
 		options?: RenderPageOptions,
 	): Promise<void> {
-		return renderPage(ctx, this.pages, name, props, options);
+		return renderPage(ctx, this.pages, name, props, {
+			...options,
+			importmap: {
+				"@c9up/aurora": `${this.auroraAssetPath}/index.js`,
+				...options?.importmap,
+			},
+		});
 	}
 
 	/**
