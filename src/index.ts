@@ -123,16 +123,6 @@ export {
 	type AuroraRouteConfig,
 	auroraRoute,
 } from "./route.js";
-export {
-	createRpcClient,
-	isRpcError,
-	type RpcCall,
-	type RpcCallOptions,
-	type RpcClient,
-	type RpcClientOptions,
-	RpcError,
-	type RpcResult,
-} from "./rpc.js";
 export { renderToString } from "./ssr.js";
 export type { TemplateResult } from "./types.js";
 export { getRouteManifest, setRouteManifest, urlFor } from "./url.js";
