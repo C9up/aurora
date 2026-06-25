@@ -152,6 +152,22 @@ describe("aurora > hydrate > mismatch surfacing", () => {
 		expect(container.querySelector("li")?.textContent).toBe("Alice");
 	});
 
+	it("a reactive slot scalar at SSR but a template later renders the template (not [object Object])", () => {
+		// At SSR `show` is false → the slot is an empty SCALAR. If hydration locks
+		// it to the scalar text-node path, a later template value gets String()'d
+		// to "[object Object]" instead of rendered. The reactive path must handle
+		// the scalar→template switch.
+		const show = signal(false);
+		const factory = () =>
+			html`<div>${() => (show() ? html`<b>hi</b>` : "")}</div>`;
+		container.innerHTML = renderToString(factory());
+		hydrate(container, factory);
+
+		show(true);
+		expect(container.querySelector("b")?.textContent).toBe("hi");
+		expect(container.textContent).not.toContain("[object Object]");
+	});
+
 	it("does NOT warn on a matching SSR roundtrip", () => {
 		const Wrap = component(() => {
 			const v = signal(1);

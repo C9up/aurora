@@ -481,33 +481,11 @@ function hydrateSlot(
 }
 
 /**
- * Hydrate a text slot. SSR inlined the value as a text node (or skipped
- * it for null/false/undefined). We locate the **first text node sibling
- * preceding the path's terminal index** — that's where SSR wrote the
- * value — and wire an effect that overwrites its `data` on changes.
- *
- * For reactive values (signals/functions), the effect updates the
- * existing text node in place. For nested TemplateResults, we
- * recursively hydrate against the captured sibling range.
+ * Hydrate a text slot against its SSR boundary-marker pair. A reactive slot
+ * (signal/function) always goes through the swap-capable structured path so a
+ * value that changes type (scalar ↔ template ↔ array) re-renders correctly; a
+ * direct template/array adopts its SSR range once; a static scalar is left as-is.
  */
-/**
- * First text node inside a marker pair's range, or a fresh empty one inserted
- * before the end marker (when the SSR value was empty → no text node yet).
- */
-function reactiveTextNode(pair: MarkerPair): Text {
-	for (
-		let n = pair.start.nextSibling;
-		n !== null && n !== pair.end;
-		n = n.nextSibling
-	) {
-		if (n.nodeType === 3 /* TEXT */) return n as Text;
-	}
-	const doc = pair.end.ownerDocument ?? document;
-	const fresh = doc.createTextNode("");
-	pair.end.parentNode?.insertBefore(fresh, pair.end);
-	return fresh;
-}
-
 function hydrateTextSlot(
 	commentMarker: Node,
 	value: unknown,
@@ -536,21 +514,26 @@ function hydrateTextSlot(
 		isSignal(value) || typeof value === "function"
 			? (value as () => unknown)
 			: null;
-	const current = reactiveFn ? reactiveFn() : value;
 
-	// Structured value (nested template / array): reactive → swap on change;
-	// direct → adopt the SSR range once (inner bindings wired against it).
-	if (isTemplateResult(current) || Array.isArray(current)) {
-		if (reactiveFn) {
-			hydrateReactiveStructured(
-				reactiveFn,
-				pair,
-				cleanups,
-				mountHooks,
-				markerCursor,
-			);
-			return;
-		}
+	// Reactive slot — its value TYPE can change across renders (scalar ↔ template
+	// ↔ array), e.g. `${() => collapsed() ? '' : html`<span>…</span>`}`. Always
+	// use the swap-capable structured path: its effect re-renders the value
+	// (whatever type) into the marker range via renderValueToNodes. Locking a
+	// reactive slot to a scalar text-node effect (based on its FIRST value) would
+	// String() a later template/array into "[object Object]".
+	if (reactiveFn) {
+		hydrateReactiveStructured(
+			reactiveFn,
+			pair,
+			cleanups,
+			mountHooks,
+			markerCursor,
+		);
+		return;
+	}
+
+	// Non-reactive (direct) value — adopt the SSR range once.
+	if (isTemplateResult(value) || Array.isArray(value)) {
 		const range: ChildNode[] = [];
 		for (
 			let n = pair.start.nextSibling;
@@ -559,27 +542,15 @@ function hydrateTextSlot(
 		) {
 			range.push(n as ChildNode);
 		}
-		if (isTemplateResult(current)) {
-			hydrateTemplateResult(current, range, cleanups, mountHooks, markerCursor);
-		} else if (Array.isArray(current)) {
-			// Direct (non-reactive) array — hydrate each item so its inner marker
-			// pairs are consumed and the cursor stays aligned (same as a reactive
-			// array's first run).
-			hydrateArrayItems(current, range, cleanups, mountHooks, markerCursor);
+		if (isTemplateResult(value)) {
+			hydrateTemplateResult(value, range, cleanups, mountHooks, markerCursor);
+		} else if (Array.isArray(value)) {
+			// Direct array — hydrate each item so its inner marker pairs are
+			// consumed and the cursor stays aligned.
+			hydrateArrayItems(value, range, cleanups, mountHooks, markerCursor);
 		}
-		return;
 	}
-
-	// Scalar: a reactive scalar updates the range's text node on change; a static
-	// scalar is already rendered between the markers (nothing to wire).
-	if (reactiveFn) {
-		const textNode = reactiveTextNode(pair);
-		const dispose = effect(() => {
-			const v = reactiveFn();
-			textNode.data = v == null || v === false ? "" : String(v);
-		});
-		cleanups.push(dispose);
-	}
+	// else: static scalar — already rendered between the markers.
 }
 
 /**
