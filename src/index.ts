@@ -127,6 +127,7 @@ export {
 	createRpcClient,
 	isRpcError,
 	type RpcCall,
+	type RpcCallOptions,
 	type RpcClient,
 	type RpcClientOptions,
 	RpcError,

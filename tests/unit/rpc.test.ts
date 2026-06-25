@@ -76,13 +76,29 @@ describe("aurora/rpc > createRpcClient", () => {
 		}));
 		const rpc = createRpcClient();
 
-		const out = await rpc.call("m", undefined, (data) => {
-			if (typeof data !== "object" || data === null || !("n" in data)) {
-				throw new Error("bad shape");
-			}
-			return { n: Number(data.n) + 1 };
+		const out = await rpc.call("m", undefined, {
+			parse: (data) => {
+				if (typeof data !== "object" || data === null || !("n" in data)) {
+					throw new Error("bad shape");
+				}
+				return { n: Number(data.n) + 1 };
+			},
 		});
 		expect(out).toEqual({ n: 42 });
+	});
+
+	it("forwards an abort signal to the underlying request", async () => {
+		const fetchMock = stubFetch<RpcReq>((req) => ({
+			jsonrpc: "2.0",
+			result: "ok",
+			id: req.id,
+		}));
+		const rpc = createRpcClient();
+		const ac = new AbortController();
+
+		await rpc.call("ping", undefined, { signal: ac.signal });
+		// HttpClient may wrap the signal (timeout combine), so assert one is passed.
+		expect(fetchMock.mock.calls[0][1].signal).toBeDefined();
 	});
 
 	it("honours a custom url + injected HttpClient headers", async () => {

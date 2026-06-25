@@ -4,9 +4,10 @@
  * client builds on aurora's {@link HttpClient}, inheriting its base URL, auth
  * headers, and timeouts.
  *
- *   const rpc = createRpcClient()                          // POST /rpc, same-origin
- *   const result = await rpc.call('task.validate', { id }) // typed via call<T>()
- *   const user = await rpc.call('user.find', { id }, isUser) // validated, cast-free
+ *   const rpc = createRpcClient()                              // POST /rpc, same-origin
+ *   const result = await rpc.call('task.validate', { id })     // typed via call<T>()
+ *   const user = await rpc.call('user.find', { id }, { parse: isUser }) // validated, cast-free
+ *   await rpc.call('slow.op', p, { signal: ac.signal })        // abortable
  *
  * Pairs with aurora's `command()` for reactive calls:
  *   const validate = command((p) => rpc.call('task.validate', p))
@@ -46,6 +47,17 @@ export interface RpcCall<T = unknown> {
 	parse?: (data: unknown) => T;
 }
 
+/** Per-call options for {@link RpcClient.call}. */
+export interface RpcCallOptions<T = unknown> {
+	/**
+	 * Validate the result at runtime, returning the typed value — skips the
+	 * unchecked `T` assertion (the cast-free escape hatch).
+	 */
+	parse?: (data: unknown) => T;
+	/** Abort signal — abort it to cancel the request (e.g. on unmount / new keystroke). */
+	signal?: AbortSignal;
+}
+
 /** A settled batch entry — the result, or the JSON-RPC error for that call. */
 export type RpcResult<T = unknown> =
 	| { ok: true; value: T }
@@ -54,16 +66,23 @@ export type RpcResult<T = unknown> =
 export interface RpcClient {
 	/**
 	 * Call one method. Returns the result, or throws {@link RpcError} on a
-	 * JSON-RPC error. Pass `parse` to validate the result at runtime (and skip
-	 * the unchecked `T` assertion).
+	 * JSON-RPC error. The `jsonrpc`/`id` envelope is handled internally. Pass
+	 * `options.parse` to validate the result at runtime (skips the unchecked `T`
+	 * assertion) and `options.signal` to make the call abortable.
 	 */
 	call<T = unknown>(
 		method: string,
 		params?: unknown,
-		parse?: (data: unknown) => T,
+		options?: RpcCallOptions<T>,
 	): Promise<T>;
-	/** Send a JSON-RPC batch. Returns one settled entry per call, in request order. */
-	batch(calls: RpcCall[]): Promise<RpcResult[]>;
+	/**
+	 * Send a JSON-RPC batch. Returns one settled entry per call, in request
+	 * order. `options.signal` aborts the whole batch (it is one HTTP request).
+	 */
+	batch(
+		calls: RpcCall[],
+		options?: { signal?: AbortSignal },
+	): Promise<RpcResult[]>;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -91,15 +110,14 @@ export function createRpcClient(options: RpcClientOptions = {}): RpcClient {
 		async call<T>(
 			method: string,
 			params?: unknown,
-			parse?: (data: unknown) => T,
+			options?: RpcCallOptions<T>,
 		): Promise<T> {
 			const id = ++nextId;
-			const res = await http.post<unknown>(url, {
-				jsonrpc: "2.0",
-				method,
-				params,
-				id,
-			});
+			const res = await http.post<unknown>(
+				url,
+				{ jsonrpc: "2.0", method, params, id },
+				{ signal: options?.signal },
+			);
 			if (!isObject(res)) {
 				throw new RpcError(
 					-32603,
@@ -109,10 +127,13 @@ export function createRpcClient(options: RpcClientOptions = {}): RpcClient {
 			if (res.error !== undefined) throw toRpcError(res.error);
 			// Result boundary — the same unchecked `T` assertion HttpClient uses,
 			// with `parse` as the cast-free, runtime-validated escape hatch.
-			return parse ? parse(res.result) : (res.result as T);
+			return options?.parse ? options.parse(res.result) : (res.result as T);
 		},
 
-		async batch(calls: RpcCall[]): Promise<RpcResult[]> {
+		async batch(
+			calls: RpcCall[],
+			options?: { signal?: AbortSignal },
+		): Promise<RpcResult[]> {
 			if (calls.length === 0) return [];
 			const requests = calls.map((c, index) => ({
 				jsonrpc: "2.0",
@@ -120,7 +141,9 @@ export function createRpcClient(options: RpcClientOptions = {}): RpcClient {
 				params: c.params,
 				id: index, // index = request position; responses are matched back by id
 			}));
-			const res = await http.post<unknown>(url, requests);
+			const res = await http.post<unknown>(url, requests, {
+				signal: options?.signal,
+			});
 			if (!Array.isArray(res)) {
 				throw new RpcError(-32603, "Malformed JSON-RPC batch response");
 			}
