@@ -44,6 +44,9 @@
 		"test:coverage": "vitest run --coverage",
 		"test:browser": "vitest run -c vitest.browser.config.ts"
 	},
+	"dependencies": {
+		"@c9up/comet": "workspace:*"
+	},
 	"peerDependencies": {
 		"@c9up/ream": "^0.1.0"
 	},
