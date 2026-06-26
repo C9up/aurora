@@ -6,6 +6,10 @@
 // `@c9up/aurora/server`; the client `.` entry stays node-free.
 
 export { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
+export {
+	type AuroraRequestRenderer,
+	auroraContext,
+} from "./middleware.js";
 export { type PageFactory, Pages, type PagesConfig } from "./Pages.js";
 export {
 	type RenderHttpContext,

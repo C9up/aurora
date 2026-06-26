@@ -50,6 +50,19 @@ export interface AuroraManagerConfig {
 	 * for an underscore-free scheme. An explicit `pages.urlPrefix` still wins.
 	 */
 	assetsPrefix?: string;
+	/**
+	 * App-level importmap overrides, configured ONCE here (the AdonisJS model:
+	 * config lives in `config/aurora.ts`, controllers stay thin and never hand-write
+	 * importmaps). Merged over aurora's auto defaults (`@c9up/aurora`,
+	 * `@c9up/aurora/rpc`, `@c9up/comet`) on every `render()`. Use to point a bare
+	 * specifier at a curated browser entry, e.g.
+	 * `{ '@c9up/aurora': '/_assets/pages/browser/aurora.js' }`. A per-call
+	 * `render(..., { importmap })` still wins over this.
+	 *
+	 * (Importmaps are aurora's no-bundler particularity — AdonisJS bundles via Vite
+	 * and has no importmap; we keep the config-driven shape to stay Adonis-idiomatic.)
+	 */
+	importmap?: Record<string, string>;
 }
 
 const DEFAULT_AURORA_DIST = resolvePath(
@@ -89,6 +102,8 @@ export class AuroraManager {
 	readonly cometAssetPath: string;
 	/** Resolved `@c9up/comet` dist dir, or `null` when comet isn't installed. */
 	readonly cometDistRoot: string | null;
+	/** App-level importmap overrides from `config/aurora.ts`, merged on render. */
+	readonly importmap: Record<string, string>;
 
 	constructor(config: AuroraManagerConfig) {
 		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/_assets");
@@ -96,6 +111,7 @@ export class AuroraManager {
 		this.pageAssetPath = `${this.assetsPrefix}/pages`;
 		this.cometAssetPath = `${this.assetsPrefix}/comet`;
 		this.cometDistRoot = config.cometDistRoot ?? resolveCometDist();
+		this.importmap = config.importmap ?? {};
 		// Pages serve their compiled JS from the same prefix unless the app
 		// pins an explicit urlPrefix.
 		this.pages = new Pages({
@@ -106,10 +122,11 @@ export class AuroraManager {
 	}
 
 	/**
-	 * SSR + hydrate + ship the document. The importmap default points
-	 * `@c9up/aurora` at this manager's `assetsPrefix`; a caller's
-	 * `options.importmap` still overrides (e.g. to remap to an app-curated
-	 * browser entry).
+	 * SSR + hydrate + ship the document. The importmap layers, last wins:
+	 * aurora's auto defaults (`@c9up/aurora`, `@c9up/aurora/rpc`, `@c9up/comet`)
+	 * < the config-level `importmap` (from `config/aurora.ts`) < a per-call
+	 * `options.importmap`. So a thin controller calls `render(ctx, name, props)`
+	 * with no importmap, and any curation lives once in config.
 	 */
 	render(
 		ctx: RenderHttpContext,
@@ -132,6 +149,9 @@ export class AuroraManager {
 				...(this.cometDistRoot
 					? { "@c9up/comet": `${this.cometAssetPath}/index.js` }
 					: {}),
+				// Config-level overrides (config/aurora.ts) — Adonis-style config-driven,
+				// so controllers never hand-write an importmap. A per-call override wins.
+				...this.importmap,
 				...options?.importmap,
 			},
 		});

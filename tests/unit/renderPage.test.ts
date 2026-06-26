@@ -121,6 +121,23 @@ describe("aurora > renderPage", () => {
 		expect(getBody()).toContain('"@c9up/aurora/rpc":"/_assets/aurora/rpc.js"');
 	});
 
+	it("merges a config-level importmap (Adonis config/aurora.ts model — thin controllers)", async () => {
+		// The app configures a curated browser entry ONCE in config; controllers
+		// then call render() with no importmap of their own.
+		const manager = new AuroraManager({
+			pages: { root: FIXTURES },
+			importmap: { "@c9up/aurora": "/_assets/pages/browser/aurora.js" },
+		});
+		const { ctx, getBody } = makeCtx();
+		await manager.render(ctx, "Hello", { name: "World" });
+		const out = getBody();
+		// config override wins for @c9up/aurora…
+		expect(out).toContain('"@c9up/aurora":"/_assets/pages/browser/aurora.js"');
+		// …while aurora's auto rpc + comet entries still come for free.
+		expect(out).toContain('"@c9up/aurora/rpc":"/_assets/aurora/rpc.js"');
+		expect(out).toContain('"@c9up/comet":"/_assets/comet/index.js"');
+	});
+
 	it("honors a custom importmap override + headExtra + rootId", async () => {
 		const pages = new Pages({ root: FIXTURES });
 		pages.register(
