@@ -121,7 +121,12 @@ export class AuroraManager {
 			...options,
 			importmap: {
 				"@c9up/aurora": `${this.auroraAssetPath}/index.js`,
-				// Auto-map @c9up/comet when installed so `@c9up/aurora/rpc`'s bare
+				// The browser-facing subpath (RPC client) needs an explicit entry —
+				// importmaps don't read package `exports`, and an extensionless bare
+				// specifier won't hit a trailing-slash prefix map. Served from the
+				// same aurora dist; harmless when a page never imports it.
+				"@c9up/aurora/rpc": `${this.auroraAssetPath}/rpc.js`,
+				// Auto-map @c9up/comet when installed so the rpc client's bare
 				// `import '@c9up/comet'` resolves in the no-bundler browser — no
 				// app-side importmap wiring. Omitted when comet isn't present.
 				...(this.cometDistRoot

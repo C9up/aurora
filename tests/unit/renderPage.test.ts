@@ -117,6 +117,8 @@ describe("aurora > renderPage", () => {
 		await manager.render(ctx, "Hello", { name: "World" });
 		// The RPC client's bare `import '@c9up/comet'` resolves with zero app wiring.
 		expect(getBody()).toContain('"@c9up/comet":"/_assets/comet/index.js"');
+		// …and the RPC subpath itself is importmapped (no app-side entry needed).
+		expect(getBody()).toContain('"@c9up/aurora/rpc":"/_assets/aurora/rpc.js"');
 	});
 
 	it("honors a custom importmap override + headExtra + rootId", async () => {
