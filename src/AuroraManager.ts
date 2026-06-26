@@ -20,7 +20,11 @@ import {
 	type RenderPageOptions,
 	renderPage,
 } from "./server/renderPage.js";
-import { type AssetsHttpContext, serveAssets } from "./server/serveAssets.js";
+import {
+	type AssetsHttpContext,
+	packageAssetDir,
+	serveAssets,
+} from "./server/serveAssets.js";
 
 export interface AuroraManagerConfig {
 	pages: PagesConfig;
@@ -30,6 +34,13 @@ export interface AuroraManagerConfig {
 	 * Override only if you want to serve a custom build.
 	 */
 	auroraDistRoot?: string;
+	/**
+	 * Filesystem path to `@c9up/comet`'s `dist/`. Defaults to the dist of the
+	 * installed (optional-peer) `@c9up/comet` — resolved automatically so the
+	 * RPC client's `import '@c9up/comet'` works in the no-bundler browser with
+	 * zero app wiring. Left unserved when comet isn't installed (no RPC).
+	 */
+	cometDistRoot?: string;
 	/**
 	 * URL prefix the asset routes mount under. The aurora runtime is served
 	 * from `<assetsPrefix>/aurora/*` and the app's pages from
@@ -46,6 +57,19 @@ const DEFAULT_AURORA_DIST = resolvePath(
 	"../dist",
 );
 
+/**
+ * Resolve `@c9up/comet`'s dist dir, or `null` when it isn't installed. comet is
+ * aurora's OPTIONAL peer (only present when the app uses RPC), so a missing one
+ * is expected — aurora then simply doesn't serve it or add it to the importmap.
+ */
+function resolveCometDist(): string | null {
+	try {
+		return packageAssetDir("@c9up/comet");
+	} catch {
+		return null;
+	}
+}
+
 /** Normalize an asset prefix: ensure a leading slash, drop trailing slashes. */
 function normalizePrefix(prefix: string): string {
 	const withLead = prefix.startsWith("/") ? prefix : `/${prefix}`;
@@ -61,11 +85,17 @@ export class AuroraManager {
 	readonly auroraAssetPath: string;
 	/** Mount path for the app's pages — `<assetsPrefix>/pages`. */
 	readonly pageAssetPath: string;
+	/** Mount path for the RPC client's `@c9up/comet` runtime — `<assetsPrefix>/comet`. */
+	readonly cometAssetPath: string;
+	/** Resolved `@c9up/comet` dist dir, or `null` when comet isn't installed. */
+	readonly cometDistRoot: string | null;
 
 	constructor(config: AuroraManagerConfig) {
 		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/_assets");
 		this.auroraAssetPath = `${this.assetsPrefix}/aurora`;
 		this.pageAssetPath = `${this.assetsPrefix}/pages`;
+		this.cometAssetPath = `${this.assetsPrefix}/comet`;
+		this.cometDistRoot = config.cometDistRoot ?? resolveCometDist();
 		// Pages serve their compiled JS from the same prefix unless the app
 		// pins an explicit urlPrefix.
 		this.pages = new Pages({
@@ -91,6 +121,12 @@ export class AuroraManager {
 			...options,
 			importmap: {
 				"@c9up/aurora": `${this.auroraAssetPath}/index.js`,
+				// Auto-map @c9up/comet when installed so `@c9up/aurora/rpc`'s bare
+				// `import '@c9up/comet'` resolves in the no-bundler browser — no
+				// app-side importmap wiring. Omitted when comet isn't present.
+				...(this.cometDistRoot
+					? { "@c9up/comet": `${this.cometAssetPath}/index.js` }
+					: {}),
 				...options?.importmap,
 			},
 		});
@@ -110,5 +146,16 @@ export class AuroraManager {
 	 */
 	pageAssetsHandler(): (ctx: AssetsHttpContext) => Promise<void> {
 		return serveAssets({ root: this.pages.root });
+	}
+
+	/**
+	 * Handler for `@c9up/comet`'s runtime (the RPC client). Mount on
+	 * `GET <cometAssetPath>/*`. Returns `null` when comet isn't installed —
+	 * the provider then skips the route (no RPC, nothing to serve).
+	 */
+	cometAssetsHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
+		return this.cometDistRoot
+			? serveAssets({ root: this.cometDistRoot })
+			: null;
 	}
 }

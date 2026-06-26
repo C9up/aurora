@@ -110,7 +110,7 @@ describe("AuroraProvider > start() router resolution", () => {
 		await expect(provider.start()).resolves.toBeUndefined();
 	});
 
-	it("registers both asset routes when everything is wired", async () => {
+	it("registers the asset routes (aurora + pages + comet) when everything is wired", async () => {
 		const captured: string[] = [];
 		const app = buildApp({
 			auroraConfig: { pages: { root: "/tmp/aurora-test-pages" } },
@@ -125,7 +125,11 @@ describe("AuroraProvider > start() router resolution", () => {
 		provider.register();
 		await provider.boot();
 		await provider.start();
-		expect(captured).toEqual(["/_assets/aurora/*", "/_assets/pages/*"]);
+		expect(captured).toEqual([
+			"/_assets/aurora/*",
+			"/_assets/pages/*",
+			"/_assets/comet/*",
+		]);
 	});
 
 	it("derives both asset mounts from a custom assetsPrefix (no underscore)", async () => {
@@ -146,7 +150,11 @@ describe("AuroraProvider > start() router resolution", () => {
 		provider.register();
 		await provider.boot();
 		await provider.start();
-		expect(captured).toEqual(["/assets/aurora/*", "/assets/pages/*"]);
+		expect(captured).toEqual([
+			"/assets/aurora/*",
+			"/assets/pages/*",
+			"/assets/comet/*",
+		]);
 	});
 });
 

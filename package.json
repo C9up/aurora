@@ -1,6 +1,6 @@
 {
 	"name": "@c9up/aurora",
-	"version": "0.1.17",
+	"version": "0.1.18",
 	"description": "Aurora — reactive UI runtime for the Ream framework. Tagged-template DOM, signal-based state, isomorphic SSR + hydration, zero build step.",
 	"license": "MIT",
 	"type": "module",

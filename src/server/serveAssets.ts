@@ -11,7 +11,22 @@
  */
 
 import { readFile, realpath } from "node:fs/promises";
-import { extname, join, resolve as resolvePath, sep } from "node:path";
+import { dirname, extname, join, resolve as resolvePath, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/**
+ * Absolute dist directory of an installed package — for mounting its pre-built
+ * ESM as browser assets (`serveAssets({ root: packageAssetDir('@c9up/x') })`).
+ *
+ * Uses `import.meta.resolve`, which honours the package's `exports` `import`
+ * condition — so it works for `@c9up/*` import-only packages where
+ * `createRequire().resolve()` throws `ERR_PACKAGE_PATH_NOT_EXPORTED` (their
+ * `exports` carry no `require` condition, and `main` is ignored once `exports`
+ * exists). Throws if the package isn't installed/resolvable.
+ */
+export function packageAssetDir(specifier: string): string {
+	return dirname(fileURLToPath(import.meta.resolve(specifier)));
+}
 
 const CONTENT_TYPES: Record<string, string> = {
 	".js": "text/javascript; charset=utf-8",

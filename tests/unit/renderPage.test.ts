@@ -107,6 +107,18 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('import Page from "/assets/pages/Hello.js"');
 	});
 
+	it("auto-wires @c9up/comet into the importmap + asset path when comet is installed", async () => {
+		const manager = new AuroraManager({ pages: { root: FIXTURES } });
+		// comet is a (dev) dependency in this workspace, so it resolves.
+		expect(manager.cometDistRoot).not.toBeNull();
+		expect(manager.cometAssetPath).toBe("/_assets/comet");
+		expect(manager.cometAssetsHandler()).not.toBeNull();
+		const { ctx, getBody } = makeCtx();
+		await manager.render(ctx, "Hello", { name: "World" });
+		// The RPC client's bare `import '@c9up/comet'` resolves with zero app wiring.
+		expect(getBody()).toContain('"@c9up/comet":"/_assets/comet/index.js"');
+	});
+
 	it("honors a custom importmap override + headExtra + rootId", async () => {
 		const pages = new Pages({ root: FIXTURES });
 		pages.register(

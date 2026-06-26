@@ -17,6 +17,7 @@ export {
 	type AssetsHttpContext,
 	type AssetsRequest,
 	type AssetsResponse,
+	packageAssetDir,
 	type ServeAssetsOptions,
 	serveAssets,
 } from "./server/serveAssets.js";

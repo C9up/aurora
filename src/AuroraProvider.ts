@@ -101,6 +101,13 @@ export default class AuroraProvider {
 			`${manager.pageAssetPath}/*`,
 			adaptHandler(manager.pageAssetsHandler()),
 		);
+		// Serve @c9up/comet's runtime so the RPC client's bare `import
+		// '@c9up/comet'` resolves in the browser. Skipped when comet isn't
+		// installed (optional peer — the app doesn't use RPC).
+		const cometHandler = manager.cometAssetsHandler();
+		if (cometHandler) {
+			router.get(`${manager.cometAssetPath}/*`, adaptHandler(cometHandler));
+		}
 	}
 
 	async ready(): Promise<void> {}
