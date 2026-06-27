@@ -78,7 +78,7 @@ describe("aurora > wireLiveEvents", () => {
 		const http = fakeRouter();
 		wireLiveEvents(http, router);
 
-		const handler = http.routes.get("/_live/event");
+		const handler = http.routes.get("/__live/event");
 		expect(handler).toBeDefined();
 
 		const mount = router.mount("Counter", "alice");
@@ -96,7 +96,7 @@ describe("aurora > wireLiveEvents", () => {
 		const http = fakeRouter();
 		wireLiveEvents(http, router);
 		const { ctx, res } = fakeCtx({ nope: true });
-		http.routes.get("/_live/event")?.(ctx);
+		http.routes.get("/__live/event")?.(ctx);
 		expect(res.status).toBe(400);
 	});
 
@@ -126,7 +126,7 @@ describe("aurora > buildLiveTransport", () => {
 		expect(subs).toEqual([{ channel: "live/abc" }]);
 
 		transport.post("abc", "increment", { x: 1 });
-		expect(http.post).toHaveBeenCalledWith("/_live/event", {
+		expect(http.post).toHaveBeenCalledWith("/__live/event", {
 			id: "abc",
 			event: "increment",
 			payload: { x: 1 },

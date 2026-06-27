@@ -2,8 +2,8 @@
  * `serveAssets` — generic static-file handler exposed by aurora so an
  * app can mount the runtime + the pages dist with a couple of routes:
  *
- *   router.get('/_assets/aurora/*', serveAssets({ root: auroraDistPath }))
- *   router.get('/_assets/pages/*',  serveAssets({ root: pagesPath }))
+ *   router.get('/__assets/aurora/*', serveAssets({ root: auroraDistPath }))
+ *   router.get('/__assets/pages/*',  serveAssets({ root: pagesPath }))
  *
  * The handler is framework-agnostic: it reads `ctx.request.param('*')`
  * and writes to `ctx.response`. Any context that satisfies

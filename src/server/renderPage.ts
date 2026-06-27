@@ -8,7 +8,7 @@
  *   <head>
  *     ...
  *     <script type="importmap">
- *       { "imports": { "@c9up/aurora": "/_assets/aurora/index.js" } }
+ *       { "imports": { "@c9up/aurora": "/__assets/aurora/index.js" } }
  *     </script>
  *   </head>
  *   <body>
@@ -16,7 +16,7 @@
  *     <script id="aurora-page-data" type="application/json">{…}</script>
  *     <script type="module">
  *       import { hydrate } from '@c9up/aurora'
- *       import Page from '/_assets/pages/ProjectPage.js'
+ *       import Page from '/__assets/pages/ProjectPage.js'
  *       const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
  *       hydrate(document.getElementById('aurora-root'), () => Page(data.props))
  *     </script>
@@ -45,7 +45,7 @@ export interface RenderHttpContext {
 export interface RenderPageOptions {
 	/**
 	 * Importmap entries injected into `<head>`. Defaults to mapping
-	 * `@c9up/aurora` to `/_assets/aurora/index.js`. Override to point
+	 * `@c9up/aurora` to `/__assets/aurora/index.js`. Override to point
 	 * at a different mount or to add app-side aliases.
 	 */
 	importmap?: Record<string, string>;
@@ -139,7 +139,7 @@ export async function renderPage<P>(
 	const body = renderToString(tree);
 
 	const importmap = {
-		"@c9up/aurora": "/_assets/aurora/index.js",
+		"@c9up/aurora": "/__assets/aurora/index.js",
 		...options.importmap,
 	};
 	const rootId = options.rootId ?? "aurora-root";

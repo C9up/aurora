@@ -58,7 +58,7 @@ describe("aurora > renderPage", () => {
 		);
 		// Importmap maps @c9up/aurora to the default mount.
 		expect(out).toContain('<script type="importmap">');
-		expect(out).toContain('"@c9up/aurora":"/_assets/aurora/index.js"');
+		expect(out).toContain('"@c9up/aurora":"/__assets/aurora/index.js"');
 		// Bootstrap blob carries the props for the client.
 		expect(out).toContain(
 			'<script id="aurora-page-data" type="application/json">',
@@ -69,7 +69,7 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain(
 			"import { hydrate, setRouteManifest } from '@c9up/aurora'",
 		);
-		expect(out).toContain('import Page from "/_assets/pages/Hello.js"');
+		expect(out).toContain('import Page from "/__assets/pages/Hello.js"');
 		expect(out).toContain(
 			"hydrate(document.getElementById(data.rootId), () => Page(data.props))",
 		);
@@ -111,14 +111,14 @@ describe("aurora > renderPage", () => {
 		const manager = new AuroraManager({ pages: { root: FIXTURES } });
 		// comet is a (dev) dependency in this workspace, so it resolves.
 		expect(manager.cometDistRoot).not.toBeNull();
-		expect(manager.cometAssetPath).toBe("/_assets/comet");
+		expect(manager.cometAssetPath).toBe("/__assets/comet");
 		expect(manager.cometAssetsHandler()).not.toBeNull();
 		const { ctx, getBody } = makeCtx();
 		await manager.render(ctx, "Hello", { name: "World" });
 		// The RPC client's bare `import '@c9up/comet'` resolves with zero app wiring.
-		expect(getBody()).toContain('"@c9up/comet":"/_assets/comet/index.js"');
+		expect(getBody()).toContain('"@c9up/comet":"/__assets/comet/index.js"');
 		// …and the RPC subpath itself is importmapped (no app-side entry needed).
-		expect(getBody()).toContain('"@c9up/aurora/rpc":"/_assets/aurora/rpc.js"');
+		expect(getBody()).toContain('"@c9up/aurora/rpc":"/__assets/aurora/rpc.js"');
 	});
 
 	it("merges a config-level importmap (Adonis config/aurora.ts model — thin controllers)", async () => {
@@ -126,16 +126,16 @@ describe("aurora > renderPage", () => {
 		// then call render() with no importmap of their own.
 		const manager = new AuroraManager({
 			pages: { root: FIXTURES },
-			importmap: { "@c9up/aurora": "/_assets/pages/browser/aurora.js" },
+			importmap: { "@c9up/aurora": "/__assets/pages/browser/aurora.js" },
 		});
 		const { ctx, getBody } = makeCtx();
 		await manager.render(ctx, "Hello", { name: "World" });
 		const out = getBody();
 		// config override wins for @c9up/aurora…
-		expect(out).toContain('"@c9up/aurora":"/_assets/pages/browser/aurora.js"');
+		expect(out).toContain('"@c9up/aurora":"/__assets/pages/browser/aurora.js"');
 		// …while aurora's auto rpc + comet entries still come for free.
-		expect(out).toContain('"@c9up/aurora/rpc":"/_assets/aurora/rpc.js"');
-		expect(out).toContain('"@c9up/comet":"/_assets/comet/index.js"');
+		expect(out).toContain('"@c9up/aurora/rpc":"/__assets/aurora/rpc.js"');
+		expect(out).toContain('"@c9up/comet":"/__assets/comet/index.js"');
 	});
 
 	it("honors a custom importmap override + headExtra + rootId", async () => {
@@ -162,7 +162,7 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain("<title>Boom</title>");
 		expect(out).toContain('"preact-signals":"/cdn/preact-signals.js"');
 		// Default aurora entry survives alongside the custom mapping.
-		expect(out).toContain('"@c9up/aurora":"/_assets/aurora/index.js"');
+		expect(out).toContain('"@c9up/aurora":"/__assets/aurora/index.js"');
 		expect(out).toContain('<div id="app">');
 		expect(out).toContain('"rootId":"app"');
 	});

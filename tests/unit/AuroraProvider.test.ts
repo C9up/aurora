@@ -63,7 +63,7 @@ describe("AuroraProvider > start() router resolution", () => {
 			auroraConfig: { pages: { root: "/tmp/aurora-test-pages" } },
 			router: {
 				get() {
-					throw new Error("slug collision: /_assets/aurora/* already mounted");
+					throw new Error("slug collision: /__assets/aurora/* already mounted");
 				},
 			},
 		});
@@ -126,9 +126,9 @@ describe("AuroraProvider > start() router resolution", () => {
 		await provider.boot();
 		await provider.start();
 		expect(captured).toEqual([
-			"/_assets/aurora/*",
-			"/_assets/pages/*",
-			"/_assets/comet/*",
+			"/__assets/aurora/*",
+			"/__assets/pages/*",
+			"/__assets/comet/*",
 		]);
 	});
 
@@ -159,11 +159,11 @@ describe("AuroraProvider > start() router resolution", () => {
 });
 
 describe("AuroraManager — asset prefix derivation", () => {
-	it("defaults to /_assets and derives the aurora/pages paths", () => {
+	it("defaults to /__assets and derives the aurora/pages paths", () => {
 		const m = new AuroraManager({ pages: { root: "/tmp/x" } });
-		expect(m.auroraAssetPath).toBe("/_assets/aurora");
-		expect(m.pageAssetPath).toBe("/_assets/pages");
-		expect(m.pages.urlFor("Hello")).toBe("/_assets/pages/Hello.js");
+		expect(m.auroraAssetPath).toBe("/__assets/aurora");
+		expect(m.pageAssetPath).toBe("/__assets/pages");
+		expect(m.pages.urlFor("Hello")).toBe("/__assets/pages/Hello.js");
 	});
 
 	it("derives everything from a custom assetsPrefix (trailing slash trimmed)", () => {

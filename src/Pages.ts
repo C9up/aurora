@@ -33,7 +33,7 @@ export interface PagesConfig {
 
 	/**
 	 * URL prefix the browser uses to fetch a page's compiled JS.
-	 * Defaults to `/_assets/pages`. A name `"Foo"` maps to
+	 * Defaults to `/__assets/pages`. A name `"Foo"` maps to
 	 * `${urlPrefix}/Foo.js`.
 	 */
 	urlPrefix?: string;
@@ -63,7 +63,7 @@ export class Pages {
 
 	constructor(config: PagesConfig) {
 		this.root = config.root;
-		this.urlPrefix = (config.urlPrefix ?? "/_assets/pages").replace(/\/$/, "");
+		this.urlPrefix = (config.urlPrefix ?? "/__assets/pages").replace(/\/$/, "");
 		this.extension = config.extension ?? ".js";
 	}
 

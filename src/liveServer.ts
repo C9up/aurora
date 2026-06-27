@@ -45,7 +45,7 @@ function isLiveEventBody(value: unknown): value is LiveEventBody {
 }
 
 /** Default inbound-event route — keep the client transport's `path` in sync. */
-export const DEFAULT_LIVE_EVENT_PATH = "/_live/event";
+export const DEFAULT_LIVE_EVENT_PATH = "/__live/event";
 
 /**
  * Register the inbound live-event route on the host router. Call once at boot

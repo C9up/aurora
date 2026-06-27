@@ -53,9 +53,9 @@ describe("aurora > Pages > resolve", () => {
 });
 
 describe("aurora > Pages > urlFor", () => {
-	it("builds a default `/_assets/pages/Name.js` URL", () => {
+	it("builds a default `/__assets/pages/Name.js` URL", () => {
 		const pages = new Pages({ root: FIXTURES });
-		expect(pages.urlFor("ProjectPage")).toBe("/_assets/pages/ProjectPage.js");
+		expect(pages.urlFor("ProjectPage")).toBe("/__assets/pages/ProjectPage.js");
 	});
 
 	it("honors a custom urlPrefix + extension", () => {

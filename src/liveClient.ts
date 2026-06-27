@@ -91,7 +91,7 @@ export interface LiveHttpPoster {
 /**
  * Build a {@link LiveClientTransport} from a relay client (SSE down) + an HTTP
  * client (events up). `path` must match the server's `wireLiveEvents` route
- * (default `/_live/event`). Keeps `liveClient` itself transport-agnostic.
+ * (default `/__live/event`). Keeps `liveClient` itself transport-agnostic.
  *
  * @example
  *   import { relay } from '@c9up/aurora/relay'
@@ -104,7 +104,7 @@ export function buildLiveTransport(
 	http: LiveHttpPoster,
 	options: { path?: string } = {},
 ): LiveClientTransport {
-	const path = options.path ?? "/_live/event";
+	const path = options.path ?? "/__live/event";
 	return {
 		subscribe: (channel, handler) =>
 			relayClient.subscribe<SlotPatch[]>(channel, handler),

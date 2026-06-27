@@ -45,7 +45,7 @@ export interface AuroraManagerConfig {
 	 * URL prefix the asset routes mount under. The aurora runtime is served
 	 * from `<assetsPrefix>/aurora/*` and the app's pages from
 	 * `<assetsPrefix>/pages/*`, and the SSR importmap + page URLs derive from
-	 * it. Default `/_assets` (the leading underscore namespaces framework
+	 * it. Default `/__assets` (the leading underscore namespaces framework
 	 * assets away from app routes, Next.js `/_next` style). Set e.g. `/assets`
 	 * for an underscore-free scheme. An explicit `pages.urlPrefix` still wins.
 	 */
@@ -56,7 +56,7 @@ export interface AuroraManagerConfig {
 	 * importmaps). Merged over aurora's auto defaults (`@c9up/aurora`,
 	 * `@c9up/aurora/rpc`, `@c9up/comet`) on every `render()`. Use to point a bare
 	 * specifier at a curated browser entry, e.g.
-	 * `{ '@c9up/aurora': '/_assets/pages/browser/aurora.js' }`. A per-call
+	 * `{ '@c9up/aurora': '/__assets/pages/browser/aurora.js' }`. A per-call
 	 * `render(..., { importmap })` still wins over this.
 	 *
 	 * (Importmaps are aurora's no-bundler particularity — AdonisJS bundles via Vite
@@ -92,7 +92,7 @@ function normalizePrefix(prefix: string): string {
 export class AuroraManager {
 	readonly pages: Pages;
 	readonly auroraDistRoot: string;
-	/** Resolved asset prefix (default `/_assets`). */
+	/** Resolved asset prefix (default `/__assets`). */
 	readonly assetsPrefix: string;
 	/** Mount path for the aurora runtime — `<assetsPrefix>/aurora`. */
 	readonly auroraAssetPath: string;
@@ -106,7 +106,7 @@ export class AuroraManager {
 	readonly importmap: Record<string, string>;
 
 	constructor(config: AuroraManagerConfig) {
-		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/_assets");
+		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/__assets");
 		this.auroraAssetPath = `${this.assetsPrefix}/aurora`;
 		this.pageAssetPath = `${this.assetsPrefix}/pages`;
 		this.cometAssetPath = `${this.assetsPrefix}/comet`;
@@ -159,7 +159,7 @@ export class AuroraManager {
 
 	/**
 	 * Handler for aurora's pre-built ESM runtime. Mount on
-	 * `GET /_assets/aurora/*`.
+	 * `GET /__assets/aurora/*`.
 	 */
 	auroraAssetsHandler(): (ctx: AssetsHttpContext) => Promise<void> {
 		return serveAssets({ root: this.auroraDistRoot });
@@ -167,7 +167,7 @@ export class AuroraManager {
 
 	/**
 	 * Handler for the app's pages directory. Mount on
-	 * `GET /_assets/pages/*`.
+	 * `GET /__assets/pages/*`.
 	 */
 	pageAssetsHandler(): (ctx: AssetsHttpContext) => Promise<void> {
 		return serveAssets({ root: this.pages.root });

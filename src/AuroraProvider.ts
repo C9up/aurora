@@ -2,8 +2,8 @@
  * AuroraProvider — registers the AuroraManager singleton and auto-mounts
  * the two asset routes the browser needs:
  *
- *   GET /_assets/aurora/*  → packages/@c9up/aurora/dist/*
- *   GET /_assets/pages/*   → resources/pages/*
+ *   GET /__assets/aurora/*  → packages/@c9up/aurora/dist/*
+ *   GET /__assets/pages/*   → resources/pages/*
  *
  * Config (in `config/aurora.ts`):
  *
@@ -92,7 +92,7 @@ export default class AuroraProvider {
 		const router = this.app.container.resolve<ReamRouter>("router");
 		const manager = this.app.container.resolve<AuroraManager>(AuroraManager);
 		// Mount paths derive from the configured `assetsPrefix` (default
-		// `/_assets`) — set `config.aurora.assetsPrefix` to change the scheme.
+		// `/__assets`) — set `config.aurora.assetsPrefix` to change the scheme.
 		router.get(
 			`${manager.auroraAssetPath}/*`,
 			adaptHandler(manager.auroraAssetsHandler()),
