@@ -50,10 +50,14 @@ export interface WebStorageOptions {
 }
 
 /**
- * Typed, SSR-safe key/value store over `localStorage` / `sessionStorage`.
+ * SSR-safe key/value store over `localStorage` / `sessionStorage`.
  *
- * - Values are JSON-serialised; reads return `null` on the server, on a missing
- *   key, or on malformed JSON.
+ * - {@link get} / {@link set} are a thin pass-through — raw strings, no JSON,
+ *   exactly like the native `localStorage` API (so a token round-trips as-is,
+ *   not double-encoded). {@link getJSON} / {@link setJSON} are the opt-in
+ *   variants for structured values.
+ * - Reads return `null` on the server or a missing key (`getJSON` also on
+ *   malformed JSON).
  * - Writes swallow quota / private-mode errors so a full store never crashes
  *   the app (best-effort).
  * - `prefix` namespaces keys; {@link keys} and {@link clear} stay scoped to it,
@@ -80,10 +84,39 @@ export class WebStorage {
 		return this.#prefix + key;
 	}
 
-	get<T>(key: string): T | null {
+	/**
+	 * Read the raw string at `key` — a thin, SSR-safe pass-through over
+	 * `localStorage.getItem` (returns `null` on the server or a missing key).
+	 * No JSON: what you {@link set} is what you get. Use {@link getJSON} for
+	 * structured values.
+	 */
+	get(key: string): string | null {
 		const backend = this.#backend();
 		if (!backend) return null;
-		const raw = backend.getItem(this.fullKey(key));
+		return backend.getItem(this.fullKey(key));
+	}
+
+	/**
+	 * Write the raw string `value` at `key` (SSR no-op; quota / private-mode
+	 * errors are swallowed — best-effort). No encoding, like
+	 * `localStorage.setItem`. Use {@link setJSON} for objects/arrays/etc.
+	 */
+	set(key: string, value: string): void {
+		const backend = this.#backend();
+		if (!backend) return;
+		try {
+			backend.setItem(this.fullKey(key), value);
+		} catch {
+			// QuotaExceededError / Safari private mode — best-effort write.
+		}
+	}
+
+	/**
+	 * Read `key` and JSON-parse it into `T`. Returns `null` on the server, a
+	 * missing key, or malformed JSON. Pair with {@link setJSON}.
+	 */
+	getJSON<T>(key: string): T | null {
+		const raw = this.get(key);
 		if (raw === null) return null;
 		try {
 			return JSON.parse(raw) as T;
@@ -92,14 +125,9 @@ export class WebStorage {
 		}
 	}
 
-	set(key: string, value: unknown): void {
-		const backend = this.#backend();
-		if (!backend) return;
-		try {
-			backend.setItem(this.fullKey(key), JSON.stringify(value));
-		} catch {
-			// QuotaExceededError / Safari private mode — best-effort write.
-		}
+	/** JSON-serialise `value` and store it at `key`. Pair with {@link getJSON}. */
+	setJSON(key: string, value: unknown): void {
+		this.set(key, JSON.stringify(value));
 	}
 
 	/** Whether `key` is present (and not the server). */
@@ -113,9 +141,9 @@ export class WebStorage {
 		this.#backend()?.removeItem(this.fullKey(key));
 	}
 
-	/** Read `key`, or compute + persist `factory()` on a miss, returning the value. */
-	getOrSet<T>(key: string, factory: () => T): T {
-		const existing = this.get<T>(key);
+	/** Read `key`, or compute + persist `factory()` on a miss, returning the string. */
+	getOrSet(key: string, factory: () => string): string {
+		const existing = this.get(key);
 		if (existing !== null) return existing;
 		const value = factory();
 		this.set(key, value);
@@ -183,12 +211,13 @@ export function persistedSignal<T>(
 	options: PersistedSignalOptions = {},
 ): Signal<T> {
 	const store = new WebStorage(options);
-	const stored = store.get<T>(key);
+	const stored = store.getJSON<T>(key);
 	const sig = signal<T>(stored !== null ? stored : initial);
 
 	// Mirror every change back to storage; runs once immediately, then on change.
+	// JSON so any T (object, number, boolean, string) round-trips.
 	effect(() => {
-		store.set(key, sig());
+		store.setJSON(key, sig());
 	});
 
 	if (

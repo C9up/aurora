@@ -88,26 +88,37 @@ describe("aurora > browser > storage", () => {
 	});
 	afterEach(() => vi.unstubAllGlobals());
 
-	it("round-trips a JSON value", () => {
-		storage.set("user", { id: 1, name: "Ada" });
-		expect(storage.get<{ id: number; name: string }>("user")).toEqual({
+	it("get/set round-trip a raw string (no JSON wrapping)", () => {
+		// The token case: a string is stored verbatim, like native localStorage —
+		// no surrounding JSON quotes to strip on the way out.
+		storage.set("token", "eyJ.a.b");
+		expect(storage.get("token")).toBe("eyJ.a.b");
+		expect(localStorage.getItem("token")).toBe("eyJ.a.b");
+	});
+
+	it("getJSON/setJSON round-trip a structured value", () => {
+		storage.setJSON("user", { id: 1, name: "Ada" });
+		expect(storage.getJSON<{ id: number; name: string }>("user")).toEqual({
 			id: 1,
 			name: "Ada",
 		});
 	});
 
-	it("returns null for a missing key or malformed JSON", () => {
+	it("get/getJSON return null on a miss; getJSON also on malformed JSON", () => {
 		expect(storage.get("nope")).toBeNull();
+		expect(storage.getJSON("nope")).toBeNull();
 		localStorage.setItem("bad", "{not json");
-		expect(storage.get("bad")).toBeNull();
+		expect(storage.getJSON("bad")).toBeNull();
+		// get() is a pass-through — it returns the raw string, never null-on-parse.
+		expect(storage.get("bad")).toBe("{not json");
 	});
 
 	it("remove + clear work", () => {
-		storage.set("a", 1);
-		storage.set("b", 2);
+		storage.set("a", "1");
+		storage.set("b", "2");
 		storage.remove("a");
 		expect(storage.get("a")).toBeNull();
-		expect(storage.get("b")).toBe(2);
+		expect(storage.get("b")).toBe("2");
 		storage.clear();
 		expect(storage.get("b")).toBeNull();
 	});
@@ -115,7 +126,7 @@ describe("aurora > browser > storage", () => {
 	it("reads return null when localStorage is undefined (SSR)", () => {
 		vi.stubGlobal("localStorage", undefined);
 		expect(storage.get("x")).toBeNull();
-		expect(() => storage.set("x", 1)).not.toThrow();
+		expect(() => storage.set("x", "1")).not.toThrow();
 	});
 });
 
@@ -129,32 +140,32 @@ describe("aurora > browser > WebStorage class", () => {
 	it("namespaces keys by prefix and keeps stores isolated", () => {
 		const a = new WebStorage({ prefix: "a:" });
 		const b = new WebStorage({ prefix: "b:" });
-		a.set("k", 1);
-		b.set("k", 2);
-		expect(a.get("k")).toBe(1);
-		expect(b.get("k")).toBe(2);
+		a.set("k", "1");
+		b.set("k", "2");
+		expect(a.get("k")).toBe("1");
+		expect(b.get("k")).toBe("2");
 		expect(localStorage.getItem("a:k")).toBe("1");
 	});
 
 	it("has() reflects presence", () => {
 		const s = new WebStorage();
 		expect(s.has("x")).toBe(false);
-		s.set("x", null);
+		s.set("x", "v");
 		expect(s.has("x")).toBe(true);
 	});
 
 	it("getOrSet computes + persists on a miss, returns cached on a hit", () => {
 		const s = new WebStorage();
-		const factory = vi.fn(() => ({ n: 42 }));
-		expect(s.getOrSet("v", factory)).toEqual({ n: 42 });
-		expect(s.getOrSet("v", factory)).toEqual({ n: 42 });
+		const factory = vi.fn(() => "42");
+		expect(s.getOrSet("v", factory)).toBe("42");
+		expect(s.getOrSet("v", factory)).toBe("42");
 		expect(factory).toHaveBeenCalledTimes(1);
 	});
 
 	it("keys() strips the prefix; clear() is prefix-scoped", () => {
 		const s = new WebStorage({ prefix: "app:" });
-		s.set("one", 1);
-		s.set("two", 2);
+		s.set("one", "1");
+		s.set("two", "2");
 		localStorage.setItem("other", "x"); // outside the prefix
 		expect(s.keys().sort()).toEqual(["one", "two"]);
 		s.clear();
@@ -164,7 +175,7 @@ describe("aurora > browser > WebStorage class", () => {
 
 	it("session uses sessionStorage, not localStorage", () => {
 		session.set("tab", "live");
-		expect(sessionStorage.getItem("tab")).toBe('"live"');
+		expect(sessionStorage.getItem("tab")).toBe("live");
 		expect(localStorage.getItem("tab")).toBeNull();
 	});
 
@@ -175,7 +186,7 @@ describe("aurora > browser > WebStorage class", () => {
 		expect(s.has("x")).toBe(false);
 		expect(s.keys()).toEqual([]);
 		expect(() => {
-			s.set("x", 1);
+			s.set("x", "1");
 			s.remove("x");
 			s.clear();
 		}).not.toThrow();
