@@ -16,8 +16,8 @@
  */
 
 import { hydrate } from "./hydrate.js";
+import type { SlotPatch } from "./liveSession.js";
 import { isSignal } from "./reactive.js";
-import type { SlotPatch } from "./live.js";
 import type { TemplateResult } from "./types.js";
 
 /** The transport the live client needs: a patch subscription + an event POST. */
@@ -67,7 +67,11 @@ export function liveClient(opts: LiveClientOptions): () => void {
 		const target = event.target;
 		if (!(target instanceof Element)) return;
 		const el = target.closest("[data-live-click]");
-		if (el) opts.transport.post(opts.mount.id, el.getAttribute("data-live-click") ?? "");
+		if (el)
+			opts.transport.post(
+				opts.mount.id,
+				el.getAttribute("data-live-click") ?? "",
+			);
 	};
 	opts.container.addEventListener("click", onClick);
 

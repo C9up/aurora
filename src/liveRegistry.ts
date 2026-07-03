@@ -15,7 +15,7 @@ import {
 	type LiveComponentDefinition,
 	type LiveSession,
 	mountLiveSession,
-} from "./live.js";
+} from "./liveSession.js";
 
 /** A mounted instance: its id, the owner (e.g. relay uid), and the session. */
 export interface LiveSessionHandle {

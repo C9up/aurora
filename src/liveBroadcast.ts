@@ -20,7 +20,7 @@ import {
 	type LiveSession,
 	mountLiveSession,
 	type SlotPatch,
-} from "./live.js";
+} from "./liveSession.js";
 
 /**
  * Minimal relay surface aurora needs. The real `@c9up/relay` `Relay` satisfies
