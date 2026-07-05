@@ -12,11 +12,11 @@ interface FakeResponse {
 interface TestCtx {
 	request: object;
 	response: FakeResponse;
-	containerResolver?: { make(token: unknown): unknown };
+	containerResolver?: { make(token: unknown): Promise<unknown> };
 	aurora?: AuroraRequestRenderer;
 }
 
-function makeCtx(resolver?: { make(token: unknown): unknown }): TestCtx {
+function makeCtx(resolver?: { make(token: unknown): Promise<unknown> }): TestCtx {
 	const response: FakeResponse = {
 		status: () => response,
 		header: () => response,
@@ -29,7 +29,7 @@ describe("aurora > auroraContext middleware", () => {
 	it("binds ctx.aurora.render delegating to the resolved manager (with ctx)", async () => {
 		const manager = { render: vi.fn(async () => {}) };
 		const resolver = {
-			make: (token: unknown) => (token === "aurora" ? manager : undefined),
+			make: async (token: unknown) => (token === "aurora" ? manager : undefined),
 		};
 		const ctx = makeCtx(resolver);
 
@@ -50,7 +50,7 @@ describe("aurora > auroraContext middleware", () => {
 	});
 
 	it("is a no-op (no ctx.aurora) when no manager is registered", async () => {
-		const ctx = makeCtx({ make: () => undefined });
+		const ctx = makeCtx({ make: async () => undefined });
 		await auroraContext(ctx, async () => {});
 		expect(ctx.aurora).toBeUndefined();
 	});

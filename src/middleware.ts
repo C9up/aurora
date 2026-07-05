@@ -30,7 +30,7 @@ export interface AuroraRequestRenderer {
 
 /** Request context the middleware needs: render target + optional resolver/slot. */
 interface AuroraMiddlewareContext extends RenderHttpContext {
-	containerResolver?: { make(token: unknown): unknown };
+	containerResolver?: { make(token: unknown): Promise<unknown> };
 	aurora?: AuroraRequestRenderer;
 }
 
@@ -44,11 +44,11 @@ function isManager(value: unknown): value is AuroraManager {
 	);
 }
 
-function resolveManager(
-	resolver: { make(token: unknown): unknown } | undefined,
-): AuroraManager | undefined {
+async function resolveManager(
+	resolver: { make(token: unknown): Promise<unknown> } | undefined,
+): Promise<AuroraManager | undefined> {
 	try {
-		const resolved = resolver?.make("aurora");
+		const resolved = await resolver?.make("aurora");
 		return isManager(resolved) ? resolved : undefined;
 	} catch {
 		return undefined;
@@ -59,11 +59,11 @@ function resolveManager(
  * Middleware: attach `ctx.aurora` for the request. No-op (passes through) when
  * the AuroraManager isn't registered, so it's safe to mount unconditionally.
  */
-export function auroraContext(
+export async function auroraContext(
 	ctx: AuroraMiddlewareContext,
 	next: () => Promise<void>,
 ): Promise<void> {
-	const manager = resolveManager(ctx.containerResolver);
+	const manager = await resolveManager(ctx.containerResolver);
 	if (manager) {
 		ctx.aurora = {
 			render: (name, props, options) =>
