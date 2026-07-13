@@ -72,7 +72,10 @@ export interface ServeAssetsOptions {
 export function serveAssets(
 	options: ServeAssetsOptions,
 ): (ctx: AssetsHttpContext) => Promise<void> {
-	const root = options.root;
+	// Normalize the root ONCE so the lexical containment gate below compares
+	// like-for-like: a raw root with a trailing slash or a non-normalized
+	// segment would never match the resolved request path → spurious 403s.
+	const root = resolvePath(options.root);
 	const cacheControl = options.cacheControl ?? "public, max-age=60";
 	// Canonicalize the root ONCE at handler creation. The realpath check
 	// below compares against this canonical form so a symlinked root

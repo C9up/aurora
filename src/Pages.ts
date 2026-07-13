@@ -62,7 +62,11 @@ export class Pages {
 	private readonly registry = new Map<string, PageFactory>();
 
 	constructor(config: PagesConfig) {
-		this.root = config.root;
+		// Normalize the root ONCE so the `startsWith(root + sep)` containment
+		// check below compares like-for-like against the resolved page path.
+		// A raw root with a trailing slash, a relative segment, or `..` would
+		// otherwise never match the resolved absolute path → spurious 403s.
+		this.root = resolvePath(config.root);
 		this.urlPrefix = (config.urlPrefix ?? "/__assets/pages").replace(/\/$/, "");
 		this.extension = config.extension ?? ".js";
 	}

@@ -52,6 +52,12 @@ export interface RenderPageOptions {
 	/**
 	 * Extra markup spliced into `<head>` after the importmap. Use to
 	 * inject `<title>`, meta tags, stylesheets.
+	 *
+	 * ⚠️ Injected RAW / unescaped — it IS `<head>` markup, so it cannot be
+	 * HTML-escaped. Pass ONLY trusted, server-authored strings; NEVER
+	 * interpolate request/user input into it (that is an HTML-injection
+	 * sink). Build any dynamic head content through an escaping helper
+	 * upstream before handing it here.
 	 */
 	headExtra?: string;
 	/**

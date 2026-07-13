@@ -7,7 +7,7 @@
  * client barrel.
  */
 
-import { effect, type Signal, signal } from "./reactive.js";
+import { effect, onCleanup, type Signal, signal } from "./reactive.js";
 
 /** Navigate to `url` with a full page load. No-op during SSR. */
 export function redirect(url: string): void {
@@ -226,14 +226,21 @@ export function persistedSignal<T>(
 		typeof window !== "undefined"
 	) {
 		const fullKey = store.fullKey(key);
-		window.addEventListener("storage", (event) => {
+		const onStorage = (event: StorageEvent) => {
 			if (event.key !== fullKey || event.newValue === null) return;
 			try {
 				sig(JSON.parse(event.newValue) as T);
 			} catch {
 				// Ignore a malformed cross-tab write.
 			}
-		});
+		};
+		window.addEventListener("storage", onStorage);
+		// Tie the listener to the owning reactive scope so a persistedSignal
+		// created in a component's setup removes it on dispose (matching the
+		// mirror effect above — the JSDoc promises disposal-with-the-component).
+		// At module scope onCleanup is a no-op, so the listener lives for the
+		// page lifetime, as intended for a shared module-level signal.
+		onCleanup(() => window.removeEventListener("storage", onStorage));
 	}
 
 	return sig;
