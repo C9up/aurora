@@ -30,7 +30,7 @@ import { renderToString } from "./ssr.js";
 
 interface AuroraContainer {
 	singleton(token: unknown, factory: () => unknown): void;
-	resolve<T = unknown>(token: unknown): T;
+	resolve<T = unknown>(token: unknown): Promise<T>;
 	has(token: unknown): boolean;
 }
 interface AuroraConfigStore {
@@ -52,9 +52,9 @@ export default class AuroraProvider {
 	constructor(protected app: AuroraAppContext) {}
 
 	register(): void {
-		this.app.container.singleton(AuroraManager, () => {
+		this.app.container.singleton(AuroraManager, async () => {
 			const raw = this.app.config.get<AuroraManagerConfig>("aurora");
-			const config = this.resolveConfig(raw);
+			const config = await this.resolveConfig(raw);
 			const manager = new AuroraManager(config);
 			setAurora(manager);
 			return manager;
@@ -72,7 +72,8 @@ export default class AuroraProvider {
 	async boot(): Promise<void> {
 		// Force-resolve so `setAurora` runs even if the app never
 		// touches the singleton from a preload.
-		const manager = this.app.container.resolve<AuroraManager>(AuroraManager);
+		const manager =
+			await this.app.container.resolve<AuroraManager>(AuroraManager);
 		setAurora(manager);
 	}
 
@@ -89,8 +90,9 @@ export default class AuroraProvider {
 		// failures (slug collision, AuroraManager crash) propagate with a stack
 		// instead of being misread as "the asset routes just stopped mounting".
 		if (!this.app.container.has("router")) return;
-		const router = this.app.container.resolve<ReamRouter>("router");
-		const manager = this.app.container.resolve<AuroraManager>(AuroraManager);
+		const router = await this.app.container.resolve<ReamRouter>("router");
+		const manager =
+			await this.app.container.resolve<AuroraManager>(AuroraManager);
 		// Mount paths derive from the configured `assetsPrefix` (default
 		// `/__assets`) — set `config.aurora.assetsPrefix` to change the scheme.
 		router.get(
@@ -125,10 +127,10 @@ export default class AuroraProvider {
 	 * one (Ream does, since v0.x — see Ignitor); other hosts get the
 	 * `process.cwd()` fallback.
 	 */
-	private resolveConfig(
+	private async resolveConfig(
 		raw: AuroraManagerConfig | undefined,
-	): AuroraManagerConfig {
-		const appRoot = this.readAppRoot();
+	): Promise<AuroraManagerConfig> {
+		const appRoot = await this.readAppRoot();
 		const userRoot = raw?.pages?.root;
 		const root =
 			typeof userRoot === "string" && userRoot.length > 0
@@ -142,9 +144,9 @@ export default class AuroraProvider {
 		};
 	}
 
-	private readAppRoot(): string {
+	private async readAppRoot(): Promise<string> {
 		try {
-			const raw = this.app.container.resolve<unknown>("appRoot");
+			const raw = await this.app.container.resolve<unknown>("appRoot");
 			if (raw instanceof URL) return fileURLToPath(raw);
 			if (typeof raw === "string") return raw;
 		} catch {
