@@ -19,6 +19,23 @@
 
 let manifest: Record<string, string> = {};
 
+type RouteManifestReader = () => Record<string, string> | undefined;
+let routeManifestReader: RouteManifestReader | undefined;
+
+/**
+ * @internal Server-side hook used by `renderPage()` to provide a request-scoped
+ * route manifest without importing Node built-ins from this browser-safe module.
+ */
+export function setRouteManifestReader(
+	reader: RouteManifestReader | undefined,
+): void {
+	routeManifestReader = reader;
+}
+
+function activeManifest(): Record<string, string> {
+	return routeManifestReader?.() ?? manifest;
+}
+
 /**
  * Install the `name → path-pattern` map `urlFor` resolves against (e.g.
  * `{ 'users.show': '/users/:id' }`, from Ream's `router.namedManifest()`).
@@ -31,7 +48,7 @@ export function setRouteManifest(routes: Record<string, string>): void {
 
 /** The currently-installed route manifest (mainly for tests/introspection). */
 export function getRouteManifest(): Record<string, string> {
-	return { ...manifest };
+	return { ...activeManifest() };
 }
 
 /**
@@ -44,9 +61,10 @@ export function urlFor(
 	params?: Record<string, string | number>,
 	query?: Record<string, string | number>,
 ): string {
-	const pattern = manifest[name];
+	const routes = activeManifest();
+	const pattern = routes[name];
 	if (pattern === undefined) {
-		const known = Object.keys(manifest);
+		const known = Object.keys(routes);
 		throw new Error(
 			`[aurora] urlFor: unknown route '${name}'. ${
 				known.length > 0

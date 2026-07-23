@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { AuroraManager } from "../../src/AuroraManager.js";
-import { booleanCookie, cookieState, html } from "../../src/index.js";
+import { booleanCookie, cookieState, html, urlFor } from "../../src/index.js";
 import type { RenderHttpContext, RenderResponse } from "../../src/server.js";
 import { Pages, renderPage } from "../../src/server.js";
 
@@ -138,6 +138,35 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('"@c9up/comet":"/__assets/comet/index.js"');
 	});
 
+	it("AuroraManager.render merges config-level shared props with per-call shared props", async () => {
+		const manager = new AuroraManager({
+			pages: { root: FIXTURES },
+			shared: () => ({ auth: { id: 1 }, flash: "saved" }),
+			root: { tag: "main", class: "app-shell" },
+			assetsVersion: "config-version",
+		});
+		manager.pages.register(
+			"ManagerShared",
+			(props: {
+				auth: { id: number };
+				flash: string;
+				title: string;
+			}) =>
+				html`<section data-user="${props.auth.id}" data-flash="${props.flash}">${props.title}</section>`,
+		);
+		const { ctx, getBody } = makeCtx();
+
+		await manager.render(ctx, "ManagerShared", { title: "Home" }, {
+			shared: { flash: "override" },
+		});
+
+		const out = getBody();
+		expect(out).toContain('<main id="aurora-root" class="app-shell">');
+		expect(out).toContain('data-user="1"');
+		expect(out).toContain('data-flash="override"');
+		expect(out).toContain('"version":"config-version"');
+	});
+
 	it("honors a custom importmap override + headExtra + rootId", async () => {
 		const pages = new Pages({ root: FIXTURES });
 		pages.register(
@@ -165,6 +194,45 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('"@c9up/aurora":"/__assets/aurora/index.js"');
 		expect(out).toContain('<div id="app">');
 		expect(out).toContain('"rootId":"app"');
+	});
+
+	it("merges async shared props before invoking the page factory", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register(
+			"Shared",
+			(props: { auth: { id: number }; title: string }) =>
+				html`<h1 data-user="${props.auth.id}">${props.title}</h1>`,
+		);
+		const { ctx, getBody } = makeCtx();
+
+		await renderPage(ctx, pages, "Shared", { title: "Dashboard" }, {
+			shared: async () => ({ auth: { id: 42 }, title: "fallback" }),
+		});
+
+		const out = getBody();
+		expect(out).toContain('data-user="42"');
+		// Page-specific props win over shared props, like Inertia page props.
+		expect(out).toContain("<!--$-->Dashboard<!--/$-->");
+		expect(out).toContain('"auth":{"id":42}');
+		expect(out).toContain('"title":"Dashboard"');
+	});
+
+	it("supports a custom root tag/class and serializes an asset version", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register("Root", () => html`<span>ok</span>`);
+		const { ctx, getBody } = makeCtx();
+
+		await renderPage(ctx, pages, "Root", {}, {
+			rootId: "app",
+			rootTag: "main",
+			rootClass: "min-h-screen",
+			assetsVersion: "build-123",
+		});
+
+		const out = getBody();
+		expect(out).toContain('<main id="app" class="min-h-screen">');
+		expect(out).toContain("</main>");
+		expect(out).toContain('"version":"build-123"');
 	});
 
 	it("escapes </script> sequences embedded in props (XSS guard)", async () => {
@@ -262,5 +330,92 @@ describe("aurora > renderPage", () => {
 			renderPage(ctx, pages, "Plain2", {}, { cookies: ["sidebar"] }),
 		).resolves.toBeUndefined();
 		expect(getBody()).toContain("<span>ok</span>");
+	});
+
+	it("isolates cookie seeds across concurrent async renders", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		let releaseSlow!: () => void;
+		const slowGate = new Promise<void>((resolveGate) => {
+			releaseSlow = resolveGate;
+		});
+		pages.register("SlowCookie", async () => {
+			await slowGate;
+			const tenant = cookieState("tenant", "missing", {
+				parse: (raw) => raw,
+				serialize: (value) => value,
+			});
+			return html`<p>${tenant}</p>`;
+		});
+		pages.register("FastCookie", () => {
+			const tenant = cookieState("tenant", "missing", {
+				parse: (raw) => raw,
+				serialize: (value) => value,
+			});
+			return html`<p>${tenant}</p>`;
+		});
+
+		const slow = makeCtx();
+		slow.ctx.request = {
+			cookie: (name: string) => (name === "tenant" ? "A" : null),
+		};
+		const fast = makeCtx();
+		fast.ctx.request = {
+			cookie: (name: string) => (name === "tenant" ? "B" : null),
+		};
+
+		vi.stubGlobal("document", undefined);
+		try {
+			const pendingSlow = renderPage(
+				slow.ctx,
+				pages,
+				"SlowCookie",
+				{},
+				{
+					cookies: ["tenant"],
+				},
+			);
+			await Promise.resolve();
+			await renderPage(
+				fast.ctx,
+				pages,
+				"FastCookie",
+				{},
+				{
+					cookies: ["tenant"],
+				},
+			);
+			releaseSlow();
+			await pendingSlow;
+		} finally {
+			vi.unstubAllGlobals();
+		}
+
+		expect(fast.getBody()).toContain("<p><!--$-->B<!--/$--></p>");
+		expect(slow.getBody()).toContain("<p><!--$-->A<!--/$--></p>");
+	});
+
+	it("does not reuse a previous request's route manifest when routes are omitted", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register(
+			"NeedsRoute",
+			() => html`<a href="${urlFor("home")}">home</a>`,
+		);
+
+		const first = makeCtx();
+		await renderPage(
+			first.ctx,
+			pages,
+			"NeedsRoute",
+			{},
+			{
+				routes: { home: "/first" },
+			},
+		);
+		expect(first.getBody()).toContain('href="/first"');
+
+		const second = makeCtx();
+		await expect(
+			renderPage(second.ctx, pages, "NeedsRoute", {}),
+		).rejects.toThrow("No routes registered");
 	});
 });

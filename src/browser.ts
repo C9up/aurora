@@ -12,7 +12,7 @@ import { effect, onCleanup, type Signal, signal } from "./reactive.js";
 /** Navigate to `url` with a full page load. No-op during SSR. */
 export function redirect(url: string): void {
 	if (typeof window !== "undefined") {
-		window.location.href = url;
+		window.location.href = safeNavigationUrl(url);
 	}
 }
 
@@ -22,7 +22,7 @@ export function redirect(url: string): void {
  */
 export function replace(url: string): void {
 	if (typeof window !== "undefined") {
-		window.location.replace(url);
+		window.location.replace(safeNavigationUrl(url));
 	}
 }
 
@@ -366,8 +366,28 @@ export function forward(): void {
  */
 export function navigate(url: string): void {
 	if (typeof window === "undefined") return;
-	window.history.pushState({}, "", url);
+	window.history.pushState({}, "", safeNavigationUrl(url));
 	window.dispatchEvent(new Event("popstate"));
+}
+
+function safeNavigationUrl(url: string): string {
+	// Browsers strip ASCII tab/newline/CR from ANYWHERE in a URL and trim leading
+	// control chars + whitespace before resolving the scheme, so `java\tscript:`
+	// (or a leading NUL) is evaluated as `javascript:`. A guard that only
+	// `trimStart()`s is trivially bypassed — mirror the browser and strip every
+	// C0 control char before comparing the scheme.
+	const normalized = url
+		.replace(/[\u0000-\u001F]/g, "")
+		.trimStart()
+		.toLowerCase();
+	if (
+		normalized.startsWith("javascript:") ||
+		normalized.startsWith("vbscript:") ||
+		normalized.startsWith("data:")
+	) {
+		throw new Error(`[aurora] blocked unsafe navigation URL: ${url}`);
+	}
+	return url;
 }
 
 /**
@@ -428,13 +448,25 @@ export interface CookieOptions {
  * no view of the request cookies and renders default UI state → a flash /
  * mismatch on hydration (the classic collapsed-sidebar flicker).
  *
- * Module-global by necessity (the page factory reads it ambiently). It is set
- * synchronously immediately before the synchronous render, so read your cookie
- * signals at the TOP of a page (before any `await`) to avoid a cross-request
- * race under concurrent async page factories. In the browser it is unused —
+ * Fallback module-global for manual/server tests. `renderPage()` installs a
+ * request-scoped reader backed by AsyncLocalStorage, so concurrent SSR renders
+ * do not share this mutable object. In the browser it is unused —
  * {@link cookie.get} reads `document.cookie` directly there.
  */
 let cookieSeed: Record<string, string> = {};
+
+type CookieStoreReader = () => Record<string, string> | undefined;
+let cookieStoreReader: CookieStoreReader | undefined;
+
+/**
+ * @internal Server-side hook used by `renderPage()` to provide a request-scoped
+ * cookie store without importing Node built-ins from this browser-safe module.
+ */
+export function setCookieStoreReader(
+	reader: CookieStoreReader | undefined,
+): void {
+	cookieStoreReader = reader;
+}
 
 /**
  * Install the SSR cookie seed (`name → value`). Called by `renderPage` from its
@@ -458,7 +490,11 @@ export function getCookieStore(): Record<string, string> {
  */
 export const cookie = {
 	get(name: string): string | null {
-		if (typeof document === "undefined") return cookieSeed[name] ?? null;
+		if (typeof document === "undefined") {
+			const scoped = cookieStoreReader?.();
+			if (scoped && Object.hasOwn(scoped, name)) return scoped[name];
+			return cookieSeed[name] ?? null;
+		}
 		const prefix = `${encodeURIComponent(name)}=`;
 		for (const part of document.cookie.split("; ")) {
 			if (part.startsWith(prefix)) {

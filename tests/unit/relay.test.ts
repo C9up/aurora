@@ -191,6 +191,24 @@ describe("aurora/relay > CSRF handshake", () => {
 		expect(sub.headers["x-xsrf-token"]).toBe("tok en-123");
 		expect(sub.credentials).toBe("include");
 	});
+
+	it("does not throw when the XSRF-TOKEN cookie contains malformed percent encoding", async () => {
+		document.cookie = "XSRF-TOKEN=%";
+		const { mock, calls } = captureFetch();
+		vi.stubGlobal("EventSource", FakeEventSource);
+		vi.stubGlobal("fetch", mock);
+
+		const client = relay();
+		client.subscribe("room/1", () => {});
+
+		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+		if (!es) throw new Error("expected an EventSource");
+		es.emitConnected("uid-1");
+		await flush();
+
+		const sub = calls.find((c) => c.url === "/__relay/subscribe");
+		expect(sub?.headers["x-xsrf-token"]).toBe("%");
+	});
 });
 
 describe("aurora/relay > status + reconnect events", () => {

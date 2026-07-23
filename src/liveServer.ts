@@ -29,9 +29,19 @@ export interface LiveHttpContext {
 export interface WireLiveEventsOptions {
 	/** Route path for inbound events (must match the client transport). */
 	path?: string;
+	/**
+	 * Optional per-request guard. Return `false` to reject the event with 403.
+	 * Use this to enforce the same auth/CSRF/owner policy as the page that mounted
+	 * the live session. When omitted, aurora preserves the framework-agnostic
+	 * legacy behavior and expects the host route/middleware to guard the endpoint.
+	 */
+	authorize?: (
+		ctx: LiveHttpContext,
+		body: LiveEventBody,
+	) => boolean | Promise<boolean>;
 }
 
-interface LiveEventBody {
+export interface LiveEventBody {
 	id: string;
 	event: string;
 	payload?: unknown;
@@ -57,11 +67,24 @@ export function wireLiveEvents(
 	options: WireLiveEventsOptions = {},
 ): void {
 	const path = options.path ?? DEFAULT_LIVE_EVENT_PATH;
-	router.post(path, (ctx) => {
+	router.post(path, async (ctx) => {
 		const body = ctx.request.body();
 		if (!isLiveEventBody(body)) {
 			ctx.response.status(400);
 			ctx.response.json({ error: "live event requires { id, event }" });
+			return;
+		}
+		let authorized = true;
+		if (options.authorize) {
+			try {
+				authorized = await options.authorize(ctx, body);
+			} catch {
+				authorized = false;
+			}
+		}
+		if (!authorized) {
+			ctx.response.status(403);
+			ctx.response.json({ error: "forbidden live event" });
 			return;
 		}
 		const handled = live.event(body.id, body.event, body.payload);

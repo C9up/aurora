@@ -112,6 +112,41 @@ describe("aurora > http > HttpClient", () => {
 		expect(calls[1].url).toBe("https://other.test/b");
 	});
 
+	it("does not send managed bearer auth to cross-origin absolute URLs by default", async () => {
+		const calls = stubFetch(() => json({}));
+		const client = new HttpClient({
+			baseURL: "https://api.test",
+			token: "secret",
+		});
+
+		await client.get("https://other.test/b");
+
+		expect(calls[0].url).toBe("https://other.test/b");
+		expect(new Headers(calls[0].init.headers).get("authorization")).toBeNull();
+	});
+
+	it("strips default Authorization on cross-origin absolute URLs unless explicitly allowed", async () => {
+		const calls = stubFetch(() => json({}));
+		const client = new HttpClient({
+			baseURL: "https://api.test",
+			headers: { Authorization: "Bearer default" },
+		});
+
+		await client.get("https://other.test/b");
+		await client.get("https://other.test/c", { allowCrossOriginAuth: true });
+		await client.get("https://other.test/d", {
+			headers: { Authorization: "Bearer explicit" },
+		});
+
+		expect(new Headers(calls[0].init.headers).get("authorization")).toBeNull();
+		expect(new Headers(calls[1].init.headers).get("authorization")).toBe(
+			"Bearer default",
+		);
+		expect(new Headers(calls[2].init.headers).get("authorization")).toBe(
+			"Bearer explicit",
+		);
+	});
+
 	it("appends query params, skipping null/undefined", async () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient();

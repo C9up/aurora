@@ -39,6 +39,7 @@ export {
 } from "./liveRouter.js";
 export {
 	DEFAULT_LIVE_EVENT_PATH,
+	type LiveEventBody,
 	type LiveHttpContext,
 	type LiveHttpRouter,
 	type WireLiveEventsOptions,

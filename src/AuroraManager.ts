@@ -19,6 +19,8 @@ import {
 	type RenderHttpContext,
 	type RenderPageOptions,
 	renderPage,
+	type SharedProps,
+	type SharedPropsResolver,
 } from "./server/renderPage.js";
 import {
 	type AssetsHttpContext,
@@ -28,6 +30,21 @@ import {
 
 export interface AuroraManagerConfig {
 	pages: PagesConfig;
+	/**
+	 * Shared props injected into every `render()` call, matching Adonis/Inertia's
+	 * request-level shared data model. Per-call `options.shared` is merged over it.
+	 */
+	shared?: SharedProps | SharedPropsResolver;
+	/**
+	 * Default root tag/class for rendered pages. Mirrors Inertia's root template
+	 * customization while keeping controllers thin.
+	 */
+	root?: {
+		tag?: string;
+		class?: string;
+	};
+	/** Default asset/version marker serialized into the page payload. */
+	assetsVersion?: string;
 	/**
 	 * Filesystem path to aurora's pre-built `dist/`. Defaults to the
 	 * dist directory shipped with the installed `@c9up/aurora` package.
@@ -104,6 +121,12 @@ export class AuroraManager {
 	readonly cometDistRoot: string | null;
 	/** App-level importmap overrides from `config/aurora.ts`, merged on render. */
 	readonly importmap: Record<string, string>;
+	/** App-level shared props from config/aurora.ts. */
+	readonly shared?: SharedProps | SharedPropsResolver;
+	/** App-level root element defaults from config/aurora.ts. */
+	readonly root?: AuroraManagerConfig["root"];
+	/** App-level asset/version marker. */
+	readonly assetsVersion?: string;
 
 	constructor(config: AuroraManagerConfig) {
 		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/__assets");
@@ -112,6 +135,9 @@ export class AuroraManager {
 		this.cometAssetPath = `${this.assetsPrefix}/comet`;
 		this.cometDistRoot = config.cometDistRoot ?? resolveCometDist();
 		this.importmap = config.importmap ?? {};
+		this.shared = config.shared;
+		this.root = config.root;
+		this.assetsVersion = config.assetsVersion;
 		// Pages serve their compiled JS from the same prefix unless the app
 		// pins an explicit urlPrefix.
 		this.pages = new Pages({
@@ -136,6 +162,10 @@ export class AuroraManager {
 	): Promise<void> {
 		return renderPage(ctx, this.pages, name, props, {
 			...options,
+			rootTag: options?.rootTag ?? this.root?.tag,
+			rootClass: options?.rootClass ?? this.root?.class,
+			assetsVersion: options?.assetsVersion ?? this.assetsVersion,
+			shared: mergeSharedResolvers(this.shared, options?.shared),
 			importmap: {
 				"@c9up/aurora": `${this.auroraAssetPath}/index.js`,
 				// The browser-facing subpath (RPC client) needs an explicit entry —
@@ -183,4 +213,23 @@ export class AuroraManager {
 			? serveAssets({ root: this.cometDistRoot })
 			: null;
 	}
+}
+
+function mergeSharedResolvers(
+	base: AuroraManagerConfig["shared"],
+	override: RenderPageOptions["shared"],
+): RenderPageOptions["shared"] {
+	if (!base) return override;
+	if (!override) return base;
+	return async (ctx) => ({
+		...(await resolveShared(ctx, base)),
+		...(await resolveShared(ctx, override)),
+	});
+}
+
+async function resolveShared(
+	ctx: RenderHttpContext,
+	shared: SharedProps | SharedPropsResolver,
+): Promise<SharedProps> {
+	return typeof shared === "function" ? shared(ctx) : shared;
 }

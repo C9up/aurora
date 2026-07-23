@@ -345,7 +345,15 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 function retrieveXsrfToken(): string | null {
 	if (typeof document === "undefined") return null;
 	const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
-	return match ? decodeURIComponent(match[1]) : null;
+	if (!match) return null;
+	try {
+		return decodeURIComponent(match[1]);
+	} catch {
+		// A malformed cookie must not break subscribe/unsubscribe handshakes. The
+		// server will reject an invalid token normally; the client should not throw
+		// before it even sends the request.
+		return match[1];
+	}
 }
 
 function safeJson<T>(raw: unknown): T | null {

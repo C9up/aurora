@@ -72,9 +72,18 @@ const DEFAULT_SHELL = (body: string, entry: string): string =>
 </head>
 <body>
 <div id="aurora-root">${body}</div>
-<script type="module" src="${entry}"></script>
+<script type="module" src="${escapeAttr(entry)}"></script>
 </body>
 </html>`;
+
+function escapeAttr(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
+}
 
 /**
  * Build a Ream-compatible route handler that SSR-renders the given

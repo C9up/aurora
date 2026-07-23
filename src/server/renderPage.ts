@@ -23,10 +23,11 @@
  *   </body>
  */
 
-import { setCookieStore } from "../browser.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { setCookieStoreReader } from "../browser.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
-import { setRouteManifest } from "../url.js";
+import { setRouteManifestReader } from "../url.js";
 
 /**
  * Structural slice of the host framework's response. Same shape
@@ -71,6 +72,29 @@ export interface RenderPageOptions {
 	 */
 	rootId?: string;
 	/**
+	 * Root element tag for the SSR + hydrated tree. Defaults to `div`.
+	 * Mirrors Inertia's root tag customization (`@inertia({ as: ... })`) while
+	 * keeping aurora independent from a template engine.
+	 */
+	rootTag?: string;
+	/**
+	 * Optional class attribute on the root element. Mirrors
+	 * `@inertia({ class: ... })`.
+	 */
+	rootClass?: string;
+	/**
+	 * Shared props merged into every page render before invoking the page factory.
+	 * Use this for global data such as user, flash and validation errors. A
+	 * function receives the current HTTP context and may be async, matching
+	 * Adonis/Inertia's request middleware `share()` model.
+	 */
+	shared?: SharedProps | SharedPropsResolver;
+	/**
+	 * Asset/version marker serialized with the page payload. Apps can use this to
+	 * detect stale client state when their frontend build changes.
+	 */
+	assetsVersion?: string;
+	/**
 	 * Named-route manifest (`name → path-pattern`) for the isomorphic
 	 * `urlFor()` helper — build it with Ream's `router.namedManifest()`. It is
 	 * installed server-side before the page renders AND serialized into the page
@@ -92,10 +116,25 @@ export interface RenderPageOptions {
 	cookies?: string[];
 }
 
+export type SharedProps = Record<string, unknown>;
+export type SharedPropsResolver = (
+	ctx: RenderHttpContext,
+) => SharedProps | Promise<SharedProps>;
+
 /** A request that can read a cookie by name — the structural slice we need. */
 interface CookieReadableRequest {
 	cookie(name: string): string | null;
 }
+
+interface RenderScope {
+	cookies: Record<string, string>;
+	routes: Record<string, string>;
+}
+
+const renderScope = new AsyncLocalStorage<RenderScope>();
+
+setCookieStoreReader(() => renderScope.getStore()?.cookies);
+setRouteManifestReader(() => renderScope.getStore()?.routes);
 
 function isCookieReadable(request: unknown): request is CookieReadableRequest {
 	return (
@@ -127,21 +166,31 @@ export async function renderPage<P>(
 	props: P,
 	options: RenderPageOptions = {},
 ): Promise<void> {
-	// Install the route manifest BEFORE rendering so a page calling `urlFor`
-	// during SSR resolves against the same map the client will get.
-	if (options.routes) setRouteManifest(options.routes);
+	const scope: RenderScope = {
+		cookies: options.cookies
+			? readRequestCookies(ctx.request, options.cookies)
+			: {},
+		routes: options.routes ?? {},
+	};
 
-	// Seed the request's UI cookies so the page reads the SAME state server-side
-	// that the browser will after hydration. Set synchronously right before the
-	// (synchronous) render — read cookie signals at the top of the page.
-	setCookieStore(
-		options.cookies ? readRequestCookies(ctx.request, options.cookies) : {},
+	return renderScope.run(scope, () =>
+		renderPageInScope(ctx, pages, name, props, options),
 	);
+}
 
+async function renderPageInScope<P>(
+	ctx: RenderHttpContext,
+	pages: Pages,
+	name: string,
+	props: P,
+	options: RenderPageOptions,
+): Promise<void> {
 	const factory = await pages.resolve(name);
+	const shared = await resolveSharedProps(ctx, options.shared);
+	const pageProps = mergeProps(shared, props);
 	// The factory must be invoked the SAME way client-side for hydrate
 	// to find matching slots — `Page(props)` is the contract.
-	const tree = await factory(props as never);
+	const tree = await factory(pageProps as never);
 	const body = renderToString(tree);
 
 	const importmap = {
@@ -149,6 +198,8 @@ export async function renderPage<P>(
 		...options.importmap,
 	};
 	const rootId = options.rootId ?? "aurora-root";
+	const rootTag = normalizeRootTag(options.rootTag ?? "div");
+	const rootClass = options.rootClass;
 	const lang = options.lang ?? "en";
 	const pageUrl = pages.urlFor(name);
 
@@ -161,13 +212,14 @@ export async function renderPage<P>(
 ${options.headExtra ?? ""}
 </head>
 <body>
-<div id="${escapeAttr(rootId)}">${body}</div>
+<${rootTag}${rootAttrs(rootId, rootClass)}>${body}</${rootTag}>
 <script id="aurora-page-data" type="application/json">${escapeJsonForScript({
 		name,
-		props,
+		props: pageProps,
 		url: pageUrl,
 		rootId,
 		routes: options.routes ?? {},
+		version: options.assetsVersion ?? null,
 	})}</script>
 <script type="module">
 import { hydrate, setRouteManifest } from '@c9up/aurora'
@@ -181,6 +233,40 @@ hydrate(document.getElementById(data.rootId), () => Page(data.props))
 
 	ctx.response.header("content-type", "text/html; charset=utf-8");
 	ctx.response.send(doc);
+}
+
+async function resolveSharedProps(
+	ctx: RenderHttpContext,
+	shared: RenderPageOptions["shared"],
+): Promise<SharedProps> {
+	if (!shared) return {};
+	return typeof shared === "function" ? shared(ctx) : shared;
+}
+
+function mergeProps<P>(shared: SharedProps, props: P): P | SharedProps {
+	if (Object.keys(shared).length === 0) return props;
+	if (isPlainRecord(props)) return { ...shared, ...props };
+	return { ...shared, page: props };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.getPrototypeOf(value) === Object.prototype
+	);
+}
+
+function normalizeRootTag(tag: string): string {
+	if (/^[a-z][a-z0-9-]*$/i.test(tag)) return tag.toLowerCase();
+	throw new Error(`[aurora] illegal root tag: ${JSON.stringify(tag)}`);
+}
+
+function rootAttrs(id: string, className: string | undefined): string {
+	const attrs = [`id="${escapeAttr(id)}"`];
+	if (className) attrs.push(`class="${escapeAttr(className)}"`);
+	return ` ${attrs.join(" ")}`;
 }
 
 function escapeAttr(value: string): string {

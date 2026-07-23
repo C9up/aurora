@@ -16,6 +16,8 @@ export {
 	type RenderPageOptions,
 	type RenderResponse,
 	renderPage,
+	type SharedProps,
+	type SharedPropsResolver,
 } from "./server/renderPage.js";
 export {
 	type AssetsHttpContext,

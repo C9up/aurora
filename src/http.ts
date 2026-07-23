@@ -30,6 +30,13 @@ export interface HttpClientOptions {
 	/** Default `credentials` mode (e.g. `"include"` to send cookies). */
 	credentials?: RequestCredentials;
 	/**
+	 * Allow default bearer/default Authorization headers to be sent to absolute
+	 * cross-origin URLs. Default `false`: same-origin API clients should not leak
+	 * credentials if an untrusted value becomes the request URL. Per-request
+	 * `headers.Authorization` is still treated as explicit caller intent.
+	 */
+	allowCrossOriginAuth?: boolean;
+	/**
 	 * Default timeout in ms — the request is aborted (rejecting with a
 	 * `TimeoutError`) if it doesn't settle in time. Combined with a per-request
 	 * `signal`, whichever fires first wins.
@@ -50,6 +57,11 @@ export interface HttpRequestOptions<T = unknown> {
 	timeout?: number;
 	/** `credentials` mode for this request. */
 	credentials?: RequestCredentials;
+	/**
+	 * Per-request override for sending managed auth headers to cross-origin
+	 * absolute URLs. Default inherits the client option (`false` by default).
+	 */
+	allowCrossOriginAuth?: boolean;
 	/**
 	 * Runtime validator/mapper for the parsed body. When provided, the return
 	 * type is whatever it returns — no unchecked cast. When omitted, the parsed
@@ -131,6 +143,36 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
 	return false;
 }
 
+/** Delete every case variant of a header from a plain header record. */
+function deleteHeader(headers: Record<string, string>, name: string): void {
+	const lower = name.toLowerCase();
+	for (const key of Object.keys(headers)) {
+		if (key.toLowerCase() === lower) delete headers[key];
+	}
+}
+
+function originOf(value: string): string | null {
+	try {
+		if (/^[a-z][a-z\d+\-.]*:\/\//i.test(value)) return new URL(value).origin;
+		if (typeof window !== "undefined")
+			return new URL(value, window.location.href).origin;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function isCrossOriginAbsoluteUrl(url: string, baseURL: string): boolean {
+	if (!/^[a-z][a-z\d+\-.]*:\/\//i.test(url)) return false;
+	const targetOrigin = originOf(url);
+	if (targetOrigin === null) return true;
+	const baseOrigin = baseURL ? originOf(baseURL) : null;
+	if (baseOrigin !== null) return targetOrigin !== baseOrigin;
+	if (typeof window !== "undefined")
+		return targetOrigin !== window.location.origin;
+	return true;
+}
+
 /** Merge abort signals into one (whichever fires first wins). `undefined` if none. */
 function combineSignals(
 	signals: ReadonlyArray<AbortSignal | undefined>,
@@ -168,6 +210,7 @@ export class HttpClient {
 	readonly #token?: string | null | (() => string | null | undefined);
 	readonly #credentials?: RequestCredentials;
 	readonly #timeout?: number;
+	readonly #allowCrossOriginAuth: boolean;
 
 	constructor(options: HttpClientOptions = {}) {
 		this.#baseURL = options.baseURL ?? "";
@@ -175,6 +218,7 @@ export class HttpClient {
 		this.#token = options.token;
 		this.#credentials = options.credentials;
 		this.#timeout = options.timeout;
+		this.#allowCrossOriginAuth = options.allowCrossOriginAuth ?? false;
 	}
 
 	/** Set a default header for every subsequent request (case-insensitive replace). Chainable. */
@@ -284,6 +328,8 @@ export class HttpClient {
 			token: options.token ?? this.#token,
 			credentials: options.credentials ?? this.#credentials,
 			timeout: options.timeout ?? this.#timeout,
+			allowCrossOriginAuth:
+				options.allowCrossOriginAuth ?? this.#allowCrossOriginAuth,
 		});
 	}
 
@@ -313,12 +359,31 @@ export class HttpClient {
 		body: unknown,
 		options: HttpRequestOptions,
 	): Promise<Response> {
+		const finalUrl = this.#buildUrl(url, options.query);
+		const crossOrigin = isCrossOriginAbsoluteUrl(finalUrl, this.#baseURL);
+		const allowCrossOriginAuth =
+			options.allowCrossOriginAuth ?? this.#allowCrossOriginAuth;
+		const explicitRequestAuth =
+			options.headers !== undefined &&
+			hasHeader(options.headers, "authorization");
 		const headers: Record<string, string> = {
 			...this.#headers,
 			...options.headers,
 		};
+		if (
+			crossOrigin &&
+			!allowCrossOriginAuth &&
+			!explicitRequestAuth &&
+			hasHeader(this.#headers, "authorization")
+		) {
+			deleteHeader(headers, "authorization");
+		}
 		const token = this.#resolveToken(options.token);
-		if (token != null && !hasHeader(headers, "authorization")) {
+		if (
+			token != null &&
+			!hasHeader(headers, "authorization") &&
+			(!crossOrigin || allowCrossOriginAuth)
+		) {
 			headers.Authorization = `Bearer ${token}`;
 		}
 
@@ -341,7 +406,7 @@ export class HttpClient {
 			timeout !== undefined ? AbortSignal.timeout(timeout) : undefined,
 		]);
 
-		return fetch(this.#buildUrl(url, options.query), {
+		return fetch(finalUrl, {
 			method,
 			headers,
 			body: payload,
