@@ -5,7 +5,7 @@
  * `html\`\`` and never hand-roll field state or try/catch.
  *
  * Validation is OPTIONAL and **agnostic**: pass a `validate` function returning a
- * `{ field: message }` map, OR any object with a `.validate(values)` method
+ * `{ field: message }` map, OR any object with a `.validateResult(values)` method
  * (e.g. a `@c9up/rune` schema) — aurora never imports a validator, it only
  * duck-types `.validate`. With no `validate`, the form simply never reports field
  * errors. Node-free — part of the client barrel.
@@ -35,12 +35,23 @@ import { memo, type ReadSignal, signal } from "./reactive.js";
 /** A field-keyed error map: `{ email: "Invalid", … }`. Absent key ⇒ no error. */
 export type FieldErrors<T> = Partial<Record<keyof T, string>>;
 
-/** Anything `.validate()`-shaped (a `@c9up/rune` schema satisfies this). */
+/** The synchronous, never-throwing outcome a form schema hands back. */
+export interface FormValidationOutcome {
+	valid: boolean;
+	errors?: ReadonlyArray<{ field?: string; message: string }>;
+}
+
+/**
+ * Anything schema-shaped (a `@c9up/rune` schema satisfies this).
+ *
+ * Both spellings are accepted, and `validateResult` wins when present: rune
+ * reserves `validate()` for the VineJS contract (async, throwing), and reading
+ * `.valid` off a Promise yields `undefined` — the form would then report itself
+ * invalid with no error to show.
+ */
 export interface FormSchema<T> {
-	validate(values: T): {
-		valid: boolean;
-		errors?: ReadonlyArray<{ field?: string; message: string }>;
-	};
+	validate?(values: T): FormValidationOutcome;
+	validateResult?(values: T): FormValidationOutcome;
 }
 
 /** Validation source — a function, a schema-like object, or omitted. */
@@ -96,7 +107,9 @@ function computeErrors<T>(
 ): FieldErrors<T> {
 	if (!validate) return {};
 	if (typeof validate === "function") return validate(values);
-	const result = validate.validate(values);
+	const check = validate.validateResult ?? validate.validate;
+	if (typeof check !== "function") return {};
+	const result = check.call(validate, values);
 	if (result.valid) return {};
 	const errors: Record<string, string> = {};
 	for (const issue of result.errors ?? []) {
