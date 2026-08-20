@@ -358,6 +358,12 @@ function hydrateTemplateResult(
 		childNodes: liveNodes,
 	} as unknown as ParentNode;
 
+	// An attribute interpolating several slots — `class="static ${a} ${b}"` — is
+	// ONE attribute value built from all of them plus the static segments in
+	// between. Binding each slot on its own would have the last writer win and
+	// wipe the statics, which is what render.ts already avoids server-side.
+	const multiGroups = new Map<string, MultiAttrGroup>();
+
 	for (let i = 0; i < tpl.slots.length; i++) {
 		const slot = tpl.slots[i];
 		const liveNode = resolvePathLive(syntheticRoot, slot.path, liveNodes);
@@ -373,6 +379,15 @@ function hydrateTemplateResult(
 			}
 			continue;
 		}
+		if (slot.kind === "attr" && slot.staticParts !== undefined) {
+			collectMultiAttr(
+				slot,
+				liveNode as Element,
+				result.values[i],
+				multiGroups,
+			);
+			continue;
+		}
 		hydrateSlot(
 			slot,
 			liveNode,
@@ -382,6 +397,65 @@ function hydrateTemplateResult(
 			markerCursor,
 		);
 	}
+
+	for (const group of multiGroups.values()) {
+		applyMultiAttrGroup(group, cleanups);
+	}
+}
+
+/** One attribute whose value is assembled from several slots. */
+interface MultiAttrGroup {
+	el: Element;
+	name: string;
+	staticParts: readonly string[];
+	values: unknown[];
+}
+
+function collectMultiAttr(
+	slot: AttrSlot,
+	el: Element,
+	value: unknown,
+	groups: Map<string, MultiAttrGroup>,
+): void {
+	if (!slot.staticParts) return;
+	const key = `${slot.name}::${(slot.path as readonly number[]).join(".")}`;
+	let group = groups.get(key);
+	if (!group) {
+		group = { el, name: slot.name, staticParts: slot.staticParts, values: [] };
+		groups.set(key, group);
+	}
+	group.values.push(value);
+}
+
+function applyMultiAttrGroup(
+	group: MultiAttrGroup,
+	cleanups: Disposer[],
+): void {
+	function join(): string {
+		let out = group.staticParts[0] ?? "";
+		for (let i = 0; i < group.values.length; i++) {
+			const v = group.values[i];
+			const resolved =
+				isSignal(v) || typeof v === "function" ? (v as () => unknown)() : v;
+			out += resolved == null || resolved === false ? "" : String(resolved);
+			out += group.staticParts[i + 1] ?? "";
+		}
+		return out;
+	}
+
+	const hasReactive = group.values.some(
+		(v) => isSignal(v) || typeof v === "function",
+	);
+	if (hasReactive) {
+		// SSR already wrote the joined value; re-joining on every tick is what
+		// keeps the statics in place when only one part changes.
+		cleanups.push(
+			effect(() => {
+				group.el.setAttribute(group.name, join());
+			}),
+		);
+	}
+	// Fully static groups need nothing: SSR wrote the final value.
 }
 
 /**

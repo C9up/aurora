@@ -104,10 +104,20 @@ export function mount(
 	// after.
 	const multiGroups = new Map<string, MultiAttrGroup>();
 
+	// Resolve EVERY slot's node before applying any of them. Applying a text
+	// slot inserts nodes into the fragment, which shifts the child indices the
+	// remaining paths were computed against — so a slot sitting after a nested
+	// template (`${Icon()}${label}`) used to resolve to the wrong node, or to
+	// none, and silently never bound. Fragments exist precisely so a component
+	// needs no wrapper element; they must not cost the slots that follow them.
+	const resolved: Array<Node | null> = tpl.slots.map((slot) =>
+		resolvePath(fragment, slot.path),
+	);
+
 	for (let i = 0; i < tpl.slots.length; i++) {
 		const slot = tpl.slots[i];
-		const node = resolvePath(fragment, slot.path);
-		if (node === null) {
+		const node = resolved[i];
+		if (node === null || node === undefined) {
 			// Path didn't resolve — skip this binding rather than crash (see
 			// resolvePath). Degrades to a dead binding; the surrounding render
 			// (and any command driving it) survives.
