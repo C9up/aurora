@@ -359,6 +359,22 @@ export function forward(): void {
 }
 
 /**
+ * Drop every C0 control character (U+0000–U+001F).
+ *
+ * Written as a scan rather than a regex: a character class over control
+ * characters is exactly what `noControlCharactersInRegex` flags, and the rule
+ * is right in general — here the stripping is the point, so the loop states it
+ * without needing a suppression.
+ */
+function stripControlChars(value: string): string {
+	let out = "";
+	for (const char of value) {
+		if (char.charCodeAt(0) > 0x1f) out += char;
+	}
+	return out;
+}
+
+/**
  * SPA navigation: push `url` onto history WITHOUT a full page reload (contrast
  * {@link redirect}, which reloads). Emits a `popstate` event so reactive URL
  * consumers — e.g. {@link queryParam} or a router — pick up the change. No-op
@@ -376,10 +392,7 @@ function safeNavigationUrl(url: string): string {
 	// (or a leading NUL) is evaluated as `javascript:`. A guard that only
 	// `trimStart()`s is trivially bypassed — mirror the browser and strip every
 	// C0 control char before comparing the scheme.
-	const normalized = url
-		.replace(/[\u0000-\u001F]/g, "")
-		.trimStart()
-		.toLowerCase();
+	const normalized = stripControlChars(url).trimStart().toLowerCase();
 	if (
 		normalized.startsWith("javascript:") ||
 		normalized.startsWith("vbscript:") ||
