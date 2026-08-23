@@ -153,3 +153,32 @@ describe("aurora > ssr > arrays + nested templates + components", () => {
 		);
 	});
 });
+
+describe("aurora > attribute detection", () => {
+	it("does not mistake a > inside an attribute value for the end of the tag", () => {
+		const out = renderToString(html`<a title="a > b" href="${"/x"}">link</a>`);
+		// The href value must be inlined, never wrapped in slot markers.
+		expect(out).toContain('href="/x"');
+		expect(out).not.toContain("<!--$-->/x");
+	});
+
+	it("handles single quotes the same way", () => {
+		const out = renderToString(html`<a title='a > b' href="${"/y"}">l</a>`);
+		expect(out).toContain('href="/y"');
+		expect(out).not.toContain("<!--$-->/y");
+	});
+
+	it("still marks a real text slot after a closed tag", () => {
+		const out = renderToString(html`<p title="a > b">${"hello"}</p>`);
+		expect(out).toContain("<!--$-->hello<!--/$-->");
+	});
+
+	it("keeps its bearings across several tags and quoted angle brackets", () => {
+		const out = renderToString(
+			html`<i data-x="<">${"one"}</i><b class="${"c"}">${"two"}</b>`,
+		);
+		expect(out).toContain("<!--$-->one<!--/$-->");
+		expect(out).toContain('class="c"');
+		expect(out).toContain("<!--$-->two<!--/$-->");
+	});
+});

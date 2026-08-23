@@ -50,6 +50,7 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	// segment. This three-step coordination is why the loop holds a
 	// `pendingClosingQuote` flag.
 	let pendingClosingQuote = false;
+	const scanner = new TagScanner();
 	for (let i = 0; i < strings.length; i++) {
 		let segment = strings[i];
 		if (pendingClosingQuote) {
@@ -63,11 +64,14 @@ function stringifyTemplateResult(result: TemplateResult): string {
 			pendingClosingQuote = true;
 		}
 		out += segment;
+		scanner.consume(segment);
 		if (i < values.length && !skipValue) {
 			const value = values[i];
-			const inAttr = isInsideAttribute(out);
+			const inAttr = scanner.insideTag;
 			if (inAttr) {
-				out += stringifyValue(value, true);
+				const rendered = stringifyValue(value, true);
+				out += rendered;
+				scanner.consume(rendered);
 			} else {
 				// Text-region slot — ALWAYS wrap in boundary markers so the SSR
 				// node structure matches the client template, which keeps exactly
@@ -80,9 +84,13 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				// (collapseMarkerRanges) so paths align exactly; the range also
 				// anchors scalar text updates and nested-template swaps. Same
 				// part-marker approach as lit-html / Solid.
+				const rendered = stringifyValue(value, false);
 				out += `<!--${SLOT_START}-->`;
-				out += stringifyValue(value, false);
+				out += rendered;
 				out += `<!--${SLOT_END}-->`;
+				// A text-region value may itself carry markup (a nested template
+				// or a SafeString), so it has to move the scanner too.
+				scanner.consume(rendered);
 			}
 		}
 	}
@@ -94,18 +102,45 @@ const SLOT_START = "$";
 const SLOT_END = "/$";
 
 /**
- * Returns true if the position at the end of `htmlSoFar` lives inside
- * the value region of an HTML tag (between `<` and `>`). The check
- * walks backwards from the end, which is the smallest hint we need to
- * decide between text-region and attribute-region escaping.
+ * Tracks whether the cursor sits inside a tag, scanning FORWARD as the output
+ * grows.
+ *
+ * The obvious version walked backwards looking for the nearest `<` or `>`, but
+ * a `>` inside a quoted attribute value — `title="a > b"` — reads as the end of
+ * the tag, so the next interpolation is treated as a text slot and gets wrapped
+ * in `<!--$-->` markers INSIDE an attribute. That corrupts the markup and
+ * desyncs every following slot path at hydration. Quotes are what disambiguate,
+ * and they can only be resolved by reading forward.
+ *
+ * State is carried across appends instead of re-derived, so the whole render
+ * stays linear.
  */
-function isInsideAttribute(htmlSoFar: string): boolean {
-	for (let i = htmlSoFar.length - 1; i >= 0; i--) {
-		const c = htmlSoFar.charCodeAt(i);
-		if (c === 60 /* '<' */) return true;
-		if (c === 62 /* '>' */) return false;
+class TagScanner {
+	#inTag = false;
+	/** The quote character currently open inside a tag, or empty. */
+	#quote = "";
+
+	/** Feed everything appended since the last call. */
+	consume(chunk: string): void {
+		for (let i = 0; i < chunk.length; i++) {
+			const c = chunk[i];
+			if (this.#quote !== "") {
+				if (c === this.#quote) this.#quote = "";
+				continue;
+			}
+			if (this.#inTag) {
+				if (c === '"' || c === "'") this.#quote = c;
+				else if (c === ">") this.#inTag = false;
+				continue;
+			}
+			if (c === "<") this.#inTag = true;
+		}
 	}
-	return false;
+
+	/** True when the cursor is inside a tag — an attribute region. */
+	get insideTag(): boolean {
+		return this.#inTag;
+	}
 }
 
 function stringifyValue(value: unknown, inAttribute: boolean): string {

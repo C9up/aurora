@@ -12,8 +12,8 @@ import {
 	type LiveHttpContext,
 	type LiveHttpRouter,
 	type RelayBroadcaster,
-	signal,
 	type SlotPatch,
+	signal,
 	wireLiveEvents,
 } from "../../src/index.js";
 

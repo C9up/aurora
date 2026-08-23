@@ -147,18 +147,19 @@ describe("aurora > renderPage", () => {
 		});
 		manager.pages.register(
 			"ManagerShared",
-			(props: {
-				auth: { id: number };
-				flash: string;
-				title: string;
-			}) =>
+			(props: { auth: { id: number }; flash: string; title: string }) =>
 				html`<section data-user="${props.auth.id}" data-flash="${props.flash}">${props.title}</section>`,
 		);
 		const { ctx, getBody } = makeCtx();
 
-		await manager.render(ctx, "ManagerShared", { title: "Home" }, {
-			shared: { flash: "override" },
-		});
+		await manager.render(
+			ctx,
+			"ManagerShared",
+			{ title: "Home" },
+			{
+				shared: { flash: "override" },
+			},
+		);
 
 		const out = getBody();
 		expect(out).toContain('<main id="aurora-root" class="app-shell">');
@@ -205,9 +206,15 @@ describe("aurora > renderPage", () => {
 		);
 		const { ctx, getBody } = makeCtx();
 
-		await renderPage(ctx, pages, "Shared", { title: "Dashboard" }, {
-			shared: async () => ({ auth: { id: 42 }, title: "fallback" }),
-		});
+		await renderPage(
+			ctx,
+			pages,
+			"Shared",
+			{ title: "Dashboard" },
+			{
+				shared: async () => ({ auth: { id: 42 }, title: "fallback" }),
+			},
+		);
 
 		const out = getBody();
 		expect(out).toContain('data-user="42"');
@@ -222,12 +229,18 @@ describe("aurora > renderPage", () => {
 		pages.register("Root", () => html`<span>ok</span>`);
 		const { ctx, getBody } = makeCtx();
 
-		await renderPage(ctx, pages, "Root", {}, {
-			rootId: "app",
-			rootTag: "main",
-			rootClass: "min-h-screen",
-			assetsVersion: "build-123",
-		});
+		await renderPage(
+			ctx,
+			pages,
+			"Root",
+			{},
+			{
+				rootId: "app",
+				rootTag: "main",
+				rootClass: "min-h-screen",
+				assetsVersion: "build-123",
+			},
+		);
 
 		const out = getBody();
 		expect(out).toContain('<main id="app" class="min-h-screen">');
@@ -252,7 +265,12 @@ describe("aurora > renderPage", () => {
 				/<script id="aurora-page-data"[^>]*>([\s\S]*?)<\/script>/,
 			)?.[1] ?? "";
 		expect(dataBlock).not.toContain("</script>");
-		expect(dataBlock).toContain("<\\/script");
+		// And it must still be JSON the client can read: escaping the marker
+		// with a backslash (`<\!--`) produced an invalid escape and killed
+		// hydration for the whole page.
+		expect(JSON.parse(dataBlock).props.msg).toBe(
+			"</script><script>alert(1)</script>",
+		);
 	});
 
 	it("escapes </script> sequences embedded in the importmap (XSS guard)", async () => {
@@ -277,7 +295,10 @@ describe("aurora > renderPage", () => {
 		const out = getBody();
 		const mapBlock =
 			out.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1] ?? "";
-		expect(mapBlock).toContain("<\\/script");
+		expect(mapBlock).not.toContain("</script>");
+		expect(JSON.parse(mapBlock).imports.evil).toBe(
+			'/x.js"></script><script>alert(1)</script>',
+		);
 	});
 
 	it("seeds allowlisted request cookies so a page renders the right UI state in SSR", async () => {

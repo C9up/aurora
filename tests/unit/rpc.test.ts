@@ -118,7 +118,9 @@ describe("aurora/rpc > createRpcClient", () => {
 	});
 
 	it("auto-attaches X-XSRF-TOKEN from the XSRF-TOKEN cookie (signed double-submit)", async () => {
-		vi.stubGlobal("document", { cookie: "theme=dark; XSRF-TOKEN=r4nd0m.s1gn; sid=x" });
+		vi.stubGlobal("document", {
+			cookie: "theme=dark; XSRF-TOKEN=r4nd0m.s1gn; sid=x",
+		});
 		const fetchMock = stubFetch<RpcReq>((req) => ({
 			jsonrpc: "2.0",
 			result: "ok",
@@ -127,7 +129,9 @@ describe("aurora/rpc > createRpcClient", () => {
 		const rpc = createRpcClient();
 		await rpc.call("task.do");
 		// Sent verbatim — must equal the cookie byte-for-byte for double-submit.
-		expect(fetchMock.mock.calls[0][1].headers["X-XSRF-TOKEN"]).toBe("r4nd0m.s1gn");
+		expect(fetchMock.mock.calls[0][1].headers["X-XSRF-TOKEN"]).toBe(
+			"r4nd0m.s1gn",
+		);
 	});
 
 	it("sends no CSRF header when the cookie is absent or xsrf is disabled", async () => {
@@ -139,12 +143,16 @@ describe("aurora/rpc > createRpcClient", () => {
 		}));
 		// No XSRF-TOKEN cookie → no header.
 		await createRpcClient().call("a");
-		expect(fetchMock.mock.calls[0][1].headers?.["X-XSRF-TOKEN"]).toBeUndefined();
+		expect(
+			fetchMock.mock.calls[0][1].headers?.["X-XSRF-TOKEN"],
+		).toBeUndefined();
 
 		// Cookie present but xsrf disabled → still no header.
 		vi.stubGlobal("document", { cookie: "XSRF-TOKEN=tok.sig" });
 		await createRpcClient({ xsrf: false }).call("b");
-		expect(fetchMock.mock.calls[1][1].headers?.["X-XSRF-TOKEN"]).toBeUndefined();
+		expect(
+			fetchMock.mock.calls[1][1].headers?.["X-XSRF-TOKEN"],
+		).toBeUndefined();
 	});
 
 	it("batch() returns one settled entry per call, matched by id, in request order", async () => {

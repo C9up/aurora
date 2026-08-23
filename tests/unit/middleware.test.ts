@@ -16,7 +16,9 @@ interface TestCtx {
 	aurora?: AuroraRequestRenderer;
 }
 
-function makeCtx(resolver?: { make(token: unknown): Promise<unknown> }): TestCtx {
+function makeCtx(resolver?: {
+	make(token: unknown): Promise<unknown>;
+}): TestCtx {
 	const response: FakeResponse = {
 		status: () => response,
 		header: () => response,
@@ -29,7 +31,8 @@ describe("aurora > auroraContext middleware", () => {
 	it("binds ctx.aurora.render delegating to the resolved manager (with ctx)", async () => {
 		const manager = { render: vi.fn(async () => {}) };
 		const resolver = {
-			make: async (token: unknown) => (token === "aurora" ? manager : undefined),
+			make: async (token: unknown) =>
+				token === "aurora" ? manager : undefined,
 		};
 		const ctx = makeCtx(resolver);
 

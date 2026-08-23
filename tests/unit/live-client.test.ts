@@ -6,11 +6,11 @@
 import { describe, expect, it } from "vitest";
 import {
 	html,
-	liveClient,
 	type LiveClientTransport,
+	liveClient,
 	renderToString,
-	signal,
 	type SlotPatch,
+	signal,
 } from "../../src/index.js";
 
 /** Captures the patch subscriber + posted events; lets the test deliver patches. */
@@ -76,9 +76,9 @@ describe("aurora > live client", () => {
 			transport,
 		});
 
-		container.querySelector("button")?.dispatchEvent(
-			new Event("click", { bubbles: true }),
-		);
+		container
+			.querySelector("button")
+			?.dispatchEvent(new Event("click", { bubbles: true }));
 		expect(transport.posts).toEqual([{ id: "abc", event: "increment" }]);
 		dispose();
 	});
@@ -101,9 +101,9 @@ describe("aurora > live client", () => {
 
 		transport.deliver([{ slot: 0, value: "9" }]);
 		expect(container.textContent).toContain("Count: 0"); // patch ignored
-		container.querySelector("button")?.dispatchEvent(
-			new Event("click", { bubbles: true }),
-		);
+		container
+			.querySelector("button")
+			?.dispatchEvent(new Event("click", { bubbles: true }));
 		expect(transport.posts).toHaveLength(0); // click no longer forwarded
 	});
 });

@@ -278,13 +278,29 @@ function escapeAttr(value: string): string {
 
 /**
  * Escape a JSON payload for safe embedding inside a `<script>` block.
- * The HTML parser closes the script on `</script>` regardless of JSON
- * quoting, so we slash-escape the `/`. We also escape `<!--` and `-->`
- * to dodge HTML-comment interpretation inside the script body.
+ *
+ * The HTML parser ends the script on `</script>` and reinterprets `<!--` /
+ * `-->` as comment markers, whatever the JSON quoting says — so those
+ * characters must not survive literally. They are escaped as \uXXXX, which is
+ * valid JSON: a backslash escape like `\!` or `\>` is NOT, and made
+ * `JSON.parse` throw on the client the moment a prop contained a comment
+ * marker, taking the whole page's hydration with it.
  */
 function escapeJsonForScript(value: unknown): string {
-	return JSON.stringify(value)
-		.replace(/<\/(script)/gi, "<\\/$1")
-		.replace(/<!--/g, "<\\!--")
-		.replace(/-->/g, "--\\>");
+	return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (c) => {
+		switch (c) {
+			case "<":
+				return "\\u003c";
+			case ">":
+				return "\\u003e";
+			case "&":
+				return "\\u0026";
+			// Line separators are valid in JSON strings but terminate a JS line,
+			// so a script block carrying them raw is a syntax error.
+			case "\u2028":
+				return "\\u2028";
+			default:
+				return "\\u2029";
+		}
+	});
 }
