@@ -14,7 +14,15 @@ import type { LiveRouter } from "./liveRouter.js";
 
 /** The slice of the host HTTP router this needs. */
 export interface LiveHttpRouter {
-	post(path: string, handler: (ctx: LiveHttpContext) => unknown): unknown;
+	/**
+	 * The handler returns `void | Promise<void>`, not `unknown`: that is what an
+	 * HTTP handler returns in ream and in AdonisJS, and the wider shape made
+	 * ream's own Router fail to satisfy this interface.
+	 */
+	post(
+		path: string,
+		handler: (ctx: LiveHttpContext) => void | Promise<void>,
+	): unknown;
 }
 
 /** The slice of the host HTTP context this needs (Ream's HttpContext satisfies it). */

@@ -1,3 +1,8 @@
+/// <reference lib="dom" />
+// This file uses browser globals. The reference pulls the DOM lib in for
+// THIS file whatever `lib` the consumer configured, so a Node app
+// typechecking against our sources does not trip over `window` —
+// `types: "./src/index.ts"` means every consumer reads them.
 /**
  * `HttpClient` — a small typed wrapper over `fetch` so call sites read
  * `await http.get<User>("/auth/me")` instead of hand-rolling headers,
