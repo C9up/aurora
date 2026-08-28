@@ -249,14 +249,55 @@ function liveNodeCount(value: unknown): number {
 }
 
 /**
+ * The first and last top-level nodes an item contributes to the live DOM, as
+ * node types.
+ *
+ * Needed because the browser MERGES adjacent text nodes when it parses the SSR
+ * HTML. Two items whose markup touches — one ending in text, the next starting
+ * with text — share a single live node at their boundary, and counting them
+ * separately shifts every following item by one. That is why a list of one
+ * hydrates and a list of two does not: with one item there is no boundary.
+ *
+ * Read from the parsed TEMPLATE, which is what both sides agree on: a slot that
+ * renders to nothing still occupies a comment-marked range, and comments never
+ * merge with text.
+ */
+function edgeNodeTypes(value: unknown): { first: number; last: number } | null {
+	if (value === null || value === undefined || value === false) return null;
+	if (isTemplateResult(value)) {
+		const children = getTemplate(value.strings).element.content.childNodes;
+		const first = children[0];
+		const last = children[children.length - 1];
+		if (!first || !last) return null;
+		return { first: first.nodeType, last: last.nodeType };
+	}
+	if (Array.isArray(value)) {
+		// A nested array's edges are its own first and last contributing items.
+		let first: number | null = null;
+		let last: number | null = null;
+		for (const v of value) {
+			const edges = edgeNodeTypes(v);
+			if (!edges) continue;
+			if (first === null) first = edges.first;
+			last = edges.last;
+		}
+		return first === null || last === null ? null : { first, last };
+	}
+	// Scalar — inlined as one text node, so it merges on both sides.
+	return { first: 3 /* Text */, last: 3 /* Text */ };
+}
+
+/**
  * Hydrate the items of a reactive array against the SSR nodes inside its marker
  * range. Each item is hydrated against its own slice of the (marker-collapsed)
  * range, IN ORDER, so every item's inner marker pairs are consumed in document
- * order and the global cursor stays aligned for slots AFTER the list. Item
- * templates need a stable top-level node count (the common
- * `arr.map(x => html`<li>…</li>`)` shape — single root, no surrounding
- * whitespace); bare adjacent scalar items can merge in the browser, so use
- * template items for hydrated lists.
+ * order and the global cursor stays aligned for slots AFTER the list.
+ *
+ * Item templates used to need a shape — single root, no surrounding whitespace,
+ * no bare adjacent scalars — because the slice was a straight node count and
+ * the browser merges adjacent text nodes. A prettier-formatted item template
+ * was enough to break it, silently, from the second item onwards. The boundary
+ * is now accounted for (see `edgeNodeTypes`), so any item shape hydrates.
  */
 function hydrateArrayItems(
 	items: unknown[],
@@ -267,8 +308,18 @@ function hydrateArrayItems(
 ): void {
 	const nodes = collapseMarkerRanges(rangeNodes);
 	let offset = 0;
+	/** The node type the previous item ended on, for the merge check below. */
+	let previousLast: number | null = null;
 	for (const item of items) {
 		const count = liveNodeCount(item);
+		const edges = edgeNodeTypes(item);
+		// Text-node merge at the item boundary: the previous item's trailing
+		// text and this one's leading text are ONE node in the live DOM, so this
+		// item starts where the previous one appeared to end. Without this the
+		// slice slides by one per boundary and every item after the first
+		// resolves its slot paths against the wrong nodes — reported as
+		// "slot 0 (attr) path 1.0 not found", once per slot per item.
+		if (previousLast === 3 && edges?.first === 3) offset -= 1;
 		if (isTemplateResult(item)) {
 			hydrateTemplateResult(
 				item,
@@ -287,6 +338,9 @@ function hydrateArrayItems(
 			);
 		}
 		offset += count;
+		// An item that contributes nothing (null/false) leaves the boundary
+		// where the last CONTRIBUTING item put it.
+		if (edges) previousLast = edges.last;
 	}
 }
 
