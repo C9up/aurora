@@ -168,11 +168,22 @@ export class AuroraManager {
 			shared: mergeSharedResolvers(this.shared, options?.shared),
 			importmap: {
 				"@c9up/aurora": `${this.auroraAssetPath}/index.js`,
-				// The browser-facing subpath (RPC client) needs an explicit entry —
-				// importmaps don't read package `exports`, and an extensionless bare
-				// specifier won't hit a trailing-slash prefix map. Served from the
-				// same aurora dist; harmless when a page never imports it.
+				// Every browser-facing subpath needs an explicit entry — importmaps
+				// don't read package `exports`, and an extensionless bare specifier
+				// won't hit a trailing-slash prefix map. Served from the same aurora
+				// dist; harmless when a page never imports one.
+				//
+				// `relay` is the one that has to be here: unlike `hydrate` and
+				// `ssr` it is NOT re-exported from the barrel, so a page that wants
+				// the relay client has no other specifier to reach it by.
+				//
+				// The node-only subpaths (`provider`, `server`, `services/main`)
+				// are deliberately absent: mapping them would hand the browser a
+				// specifier that resolves to a module it cannot load.
 				"@c9up/aurora/rpc": `${this.auroraAssetPath}/rpc.js`,
+				"@c9up/aurora/relay": `${this.auroraAssetPath}/relay.js`,
+				"@c9up/aurora/hydrate": `${this.auroraAssetPath}/hydrate.js`,
+				"@c9up/aurora/ssr": `${this.auroraAssetPath}/ssr.js`,
 				// Auto-map @c9up/comet when installed so the rpc client's bare
 				// `import '@c9up/comet'` resolves in the no-bundler browser — no
 				// app-side importmap wiring. Omitted when comet isn't present.

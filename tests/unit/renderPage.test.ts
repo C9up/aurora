@@ -121,6 +121,26 @@ describe("aurora > renderPage", () => {
 		expect(getBody()).toContain('"@c9up/aurora/rpc":"/__assets/aurora/rpc.js"');
 	});
 
+	it("importmaps every browser-facing subpath, and no node-only one", async () => {
+		const manager = new AuroraManager({ pages: { root: FIXTURES } });
+		const { ctx, getBody } = makeCtx();
+		await manager.render(ctx, "Hello", { name: "World" });
+		const out = getBody();
+		// `relay` is the load-bearing one: it is NOT re-exported from the barrel,
+		// so `@c9up/aurora/relay` is the only specifier that reaches it and an
+		// app had to hand-write the entry to use the relay client at all.
+		expect(out).toContain('"@c9up/aurora/relay":"/__assets/aurora/relay.js"');
+		expect(out).toContain(
+			'"@c9up/aurora/hydrate":"/__assets/aurora/hydrate.js"',
+		);
+		expect(out).toContain('"@c9up/aurora/ssr":"/__assets/aurora/ssr.js"');
+		// The node-only subpaths must stay out — mapping one hands the browser a
+		// specifier resolving to a module it cannot load.
+		expect(out).not.toContain("@c9up/aurora/provider");
+		expect(out).not.toContain("@c9up/aurora/server");
+		expect(out).not.toContain("@c9up/aurora/services/main");
+	});
+
 	it("merges a config-level importmap (Adonis config/aurora.ts model — thin controllers)", async () => {
 		// The app configures a curated browser entry ONCE in config; controllers
 		// then call render() with no importmap of their own.
