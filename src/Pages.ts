@@ -59,7 +59,7 @@ export class Pages {
 	readonly urlPrefix: string;
 	readonly extension: string;
 
-	private readonly registry = new Map<string, PageFactory>();
+	readonly #registry = new Map<string, PageFactory>();
 
 	constructor(config: PagesConfig) {
 		// Normalize the root ONCE so the `startsWith(root + sep)` containment
@@ -82,7 +82,7 @@ export class Pages {
 	 * back as `unknown` — the renderer JSON.stringifies them either way.
 	 */
 	register<P>(name: string, factory: PageFactory<P>): void {
-		this.registry.set(name, factory as PageFactory);
+		this.#registry.set(name, factory as PageFactory);
 	}
 
 	/**
@@ -94,7 +94,7 @@ export class Pages {
 	 * under `root` — defense in depth against URL-decoding tricks.
 	 */
 	async resolve(name: string): Promise<PageFactory> {
-		const preset = this.registry.get(name);
+		const preset = this.#registry.get(name);
 		if (preset) return preset;
 
 		assertSafeName(name);

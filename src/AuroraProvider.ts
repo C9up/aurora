@@ -54,7 +54,7 @@ export default class AuroraProvider {
 	register(): void {
 		this.app.container.singleton(AuroraManager, async () => {
 			const raw = this.app.config.get<AuroraManagerConfig>("aurora");
-			const config = await this.resolveConfig(raw);
+			const config = await this.#resolveConfig(raw);
 			const manager = new AuroraManager(config);
 			setAurora(manager);
 			return manager;
@@ -127,10 +127,10 @@ export default class AuroraProvider {
 	 * one (Ream does, since v0.x — see Ignitor); other hosts get the
 	 * `process.cwd()` fallback.
 	 */
-	private async resolveConfig(
+	async #resolveConfig(
 		raw: AuroraManagerConfig | undefined,
 	): Promise<AuroraManagerConfig> {
-		const appRoot = await this.readAppRoot();
+		const appRoot = await this.#readAppRoot();
 		const userRoot = raw?.pages?.root;
 		const root =
 			typeof userRoot === "string" && userRoot.length > 0
@@ -144,7 +144,7 @@ export default class AuroraProvider {
 		};
 	}
 
-	private async readAppRoot(): Promise<string> {
+	async #readAppRoot(): Promise<string> {
 		try {
 			const raw = await this.app.container.resolve<unknown>("appRoot");
 			if (raw instanceof URL) return fileURLToPath(raw);
