@@ -132,7 +132,10 @@ export function signal<T>(
 		}
 	}
 
-	(accessor as unknown as { [SIGNAL_BRAND]: true })[SIGNAL_BRAND] = true;
+	// The brand is stamped through Reflect: the accessor is a function, and
+	// saying it is a branded object to write one property would be a lie the
+	// rest of the file then has to work around.
+	Reflect.set(accessor, SIGNAL_BRAND, true);
 	signalNodes.set(accessor, node);
 	return accessor as Signal<T>;
 }

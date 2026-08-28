@@ -405,7 +405,8 @@ function applyPropSlot(
 	cleanups: Disposer[],
 ): void {
 	function apply(v: unknown): void {
-		(el as unknown as Record<string, unknown>)[slot.name] = v;
+		// See hydrate.ts: Reflect.set writes the property without a cast.
+		Reflect.set(el, slot.name, v);
 	}
 	if (isSignal(value) || typeof value === "function") {
 		const dispose = effect(() => apply((value as () => unknown)()));

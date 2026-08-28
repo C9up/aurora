@@ -355,13 +355,6 @@ function hydrateTemplateResult(
 	// Hydration walks via the SAME path resolver as render, but against
 	// a synthetic root that mimics the parsed template's child list.
 	const tpl = getTemplate(result.strings);
-	// The live container's children should structurally match the
-	// template's content children. Wrap them in a transient DocumentFragment
-	// for path resolution — DocumentFragment.childNodes is the same view
-	// we walked during parse.
-	const syntheticRoot = {
-		childNodes: liveNodes,
-	} as unknown as ParentNode;
 
 	// An attribute interpolating several slots — `class="static ${a} ${b}"` — is
 	// ONE attribute value built from all of them plus the static segments in
@@ -371,7 +364,7 @@ function hydrateTemplateResult(
 
 	for (let i = 0; i < tpl.slots.length; i++) {
 		const slot = tpl.slots[i];
-		const liveNode = resolvePathLive(syntheticRoot, slot.path, liveNodes);
+		const liveNode = resolvePathLive(slot.path, liveNodes);
 		if (!liveNode) {
 			// Path missed in the live DOM — SSR markup diverges from the
 			// parsed template's shape. Surfacing the mismatch beats silent
@@ -502,11 +495,7 @@ function collapseMarkerRanges(nodes: ChildNode[]): ChildNode[] {
 	return out;
 }
 
-function resolvePathLive(
-	_root: ParentNode,
-	path: NodePath,
-	rootNodes: ChildNode[],
-): Node | null {
+function resolvePathLive(path: NodePath, rootNodes: ChildNode[]): Node | null {
 	if (path.length === 0) return null;
 	// Collapse marker ranges at EVERY level so the live child list matches the
 	// parsed template's one-node-per-slot shape (see collapseMarkerRanges).
@@ -789,7 +778,10 @@ function hydratePropSlot(
 	cleanups: Disposer[],
 ): void {
 	function apply(v: unknown): void {
-		(el as unknown as Record<string, unknown>)[slot.name] = v;
+		// Reflect.set rather than a cast: writing an arbitrary property onto an
+		// element is exactly what Reflect is for, and it does not require
+		// claiming the element is something it is not.
+		Reflect.set(el, slot.name, v);
 	}
 	if (isSignal(value) || typeof value === "function") {
 		const dispose = effect(() => apply((value as () => unknown)()));
