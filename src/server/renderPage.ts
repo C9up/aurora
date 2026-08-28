@@ -37,13 +37,33 @@ export interface RenderResponse {
 	status(code: number): RenderResponse;
 	header(name: string, value: string): RenderResponse;
 	send(body: string): void;
+	/**
+	 * Per-request CSP nonce, when a security layer set one.
+	 *
+	 * `@c9up/blackhole` seeds it on the response (the AdonisJS idiom,
+	 * `response.nonce`) whenever the policy uses `@nonce`. Optional, and read
+	 * structurally: aurora stays free of any dependency on it, and a host that
+	 * sets no policy renders exactly as before.
+	 */
+	nonce?: string;
 }
 export interface RenderHttpContext {
 	request: unknown;
 	response: RenderResponse;
+	/** Per-request bag; blackhole also seeds `cspNonce` here. */
+	store?: { get(key: string): unknown };
 }
 
 export interface RenderPageOptions {
+	/**
+	 * CSP nonce for the inline scripts this page emits.
+	 *
+	 * Normally left unset: it is read from `response.nonce` (what blackhole
+	 * seeds) or from the request store. Pass it only when the security layer
+	 * puts it somewhere else. It must be the SAME nonce the policy header
+	 * names, otherwise the browser blocks the scripts anyway.
+	 */
+	nonce?: string;
 	/**
 	 * Importmap entries injected into `<head>`. Defaults to mapping
 	 * `@c9up/aurora` to `/__assets/aurora/index.js`. Override to point
@@ -203,25 +223,34 @@ async function renderPageInScope<P>(
 	const lang = options.lang ?? "en";
 	const pageUrl = pages.urlFor(name);
 
+	// A CSP that names a nonce blocks every inline script that lacks it, and the
+	// page then renders but never hydrates — the HTML is byte-identical, so only
+	// a real browser shows the failure. Reading it here is what lets a default
+	// policy stay strict instead of being turned off.
+	const nonce = resolveNonce(ctx, options.nonce);
+	const nonceAttr = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`;
+
 	const doc = `<!doctype html>
 <html lang="${escapeAttr(lang)}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<script type="importmap">${escapeJsonForScript({ imports: importmap })}</script>
+<script${nonceAttr} type="importmap">${escapeJsonForScript({ imports: importmap })}</script>
 ${options.headExtra ?? ""}
 </head>
 <body>
 <${rootTag}${rootAttrs(rootId, rootClass)}>${body}</${rootTag}>
-<script id="aurora-page-data" type="application/json">${escapeJsonForScript({
-		name,
-		props: pageProps,
-		url: pageUrl,
-		rootId,
-		routes: options.routes ?? {},
-		version: options.assetsVersion ?? null,
-	})}</script>
-<script type="module">
+<script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(
+		{
+			name,
+			props: pageProps,
+			url: pageUrl,
+			rootId,
+			routes: options.routes ?? {},
+			version: options.assetsVersion ?? null,
+		},
+	)}</script>
+<script${nonceAttr} type="module">
 import { hydrate, setRouteManifest } from '@c9up/aurora'
 import Page from ${JSON.stringify(pageUrl)}
 const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
@@ -233,6 +262,28 @@ hydrate(document.getElementById(data.rootId), () => Page(data.props))
 
 	ctx.response.header("content-type", "text/html; charset=utf-8");
 	ctx.response.send(doc);
+}
+
+/**
+ * The nonce to stamp on inline scripts, or `undefined` when there is none.
+ *
+ * Explicit option first, then `response.nonce` (what AdonisJS exposes and what
+ * blackhole seeds), then the `cspNonce` a middleware may have left in the
+ * per-request store. Never generated here: a nonce aurora invented would not
+ * appear in the policy header, so it would block the page rather than unblock
+ * it.
+ */
+function resolveNonce(
+	ctx: RenderHttpContext,
+	explicit?: string,
+): string | undefined {
+	if (typeof explicit === "string" && explicit.length > 0) return explicit;
+	const fromResponse = ctx.response.nonce;
+	if (typeof fromResponse === "string" && fromResponse.length > 0)
+		return fromResponse;
+	const fromStore = ctx.store?.get("cspNonce");
+	if (typeof fromStore === "string" && fromStore.length > 0) return fromStore;
+	return undefined;
 }
 
 async function resolveSharedProps(

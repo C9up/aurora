@@ -440,3 +440,68 @@ describe("aurora > renderPage", () => {
 		).rejects.toThrow("No routes registered");
 	});
 });
+
+describe("aurora > renderPage > CSP nonce", () => {
+	/** A context whose response carries a nonce, the way blackhole seeds it. */
+	function ctxWithNonce(nonce?: string): ReturnType<typeof makeCtx> {
+		const made = makeCtx();
+		if (nonce !== undefined) made.ctx.response.nonce = nonce;
+		return made;
+	}
+
+	it("stamps the nonce on every inline script it emits", async () => {
+		// A policy naming a nonce blocks the inline scripts that lack it, and the
+		// page renders but never hydrates. The HTML is byte-identical either
+		// way, which is why this only ever showed up in a real browser.
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = ctxWithNonce("r4nd0m");
+		await renderPage(ctx, pages, "Hello", { name: "World" });
+		const out = getBody();
+
+		expect(out).toContain('<script nonce="r4nd0m" type="importmap">');
+		expect(out).toContain('<script nonce="r4nd0m" type="module">');
+		expect(out).toContain('<script nonce="r4nd0m" id="aurora-page-data"');
+		// No inline script may be left without one.
+		expect(out).not.toMatch(/<script(?![^>]*\bnonce=)[^>]*>[^<]/);
+	});
+
+	it("emits no nonce attribute when the host sets no policy", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = ctxWithNonce();
+		await renderPage(ctx, pages, "Hello", { name: "World" });
+		expect(getBody()).not.toContain("nonce=");
+	});
+
+	it("reads the nonce from the request store when it is only there", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const made = makeCtx();
+		made.ctx.store = {
+			get: (key) => (key === "cspNonce" ? "from-store" : undefined),
+		};
+		await renderPage(made.ctx, pages, "Hello", { name: "World" });
+		expect(made.getBody()).toContain('nonce="from-store"');
+	});
+
+	it("prefers an explicit option over what the response carries", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = ctxWithNonce("from-response");
+		await renderPage(
+			ctx,
+			pages,
+			"Hello",
+			{ name: "World" },
+			{ nonce: "explicit" },
+		);
+		expect(getBody()).toContain('nonce="explicit"');
+		expect(getBody()).not.toContain("from-response");
+	});
+
+	it("escapes the nonce into the attribute", async () => {
+		// It comes from the security layer, not from a request — but an attribute
+		// is an attribute, and a broken one would swallow the script tag.
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = ctxWithNonce('a"b');
+		await renderPage(ctx, pages, "Hello", { name: "World" });
+		expect(getBody()).toContain('nonce="a&quot;b"');
+	});
+});
