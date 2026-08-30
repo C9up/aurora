@@ -331,7 +331,7 @@ describe("aurora > renderPage", () => {
 		const { ctx, getBody } = makeCtx();
 		// A request that exposes only the cookies it was sent.
 		const jar: Record<string, string> = { sidebar: "1", session: "secret" };
-		ctx.request = { cookie: (name: string) => jar[name] ?? null };
+		ctx.request = { plainCookie: (name: string) => jar[name] ?? null };
 
 		// Real SSR has no `document`; without this happy-dom's `document.cookie`
 		// (empty) would shadow the seed and the test wouldn't exercise the path.
@@ -353,7 +353,7 @@ describe("aurora > renderPage", () => {
 		});
 		const { ctx, getBody } = makeCtx();
 		const jar: Record<string, string> = { sidebar: "1", session: "secret" };
-		ctx.request = { cookie: (name: string) => jar[name] ?? null };
+		ctx.request = { plainCookie: (name: string) => jar[name] ?? null };
 
 		await renderPage(ctx, pages, "Probe", {}, { cookies: ["sidebar"] });
 		const out = getBody();
@@ -397,11 +397,11 @@ describe("aurora > renderPage", () => {
 
 		const slow = makeCtx();
 		slow.ctx.request = {
-			cookie: (name: string) => (name === "tenant" ? "A" : null),
+			plainCookie: (name: string) => (name === "tenant" ? "A" : null),
 		};
 		const fast = makeCtx();
 		fast.ctx.request = {
-			cookie: (name: string) => (name === "tenant" ? "B" : null),
+			plainCookie: (name: string) => (name === "tenant" ? "B" : null),
 		};
 
 		vi.stubGlobal("document", undefined);
@@ -523,5 +523,59 @@ describe("aurora > renderPage > CSP nonce", () => {
 		const { ctx, getBody } = ctxWithNonce('a"b');
 		await renderPage(ctx, pages, "Hello", { name: "World" });
 		expect(getBody()).toContain('nonce="a&quot;b"');
+	});
+});
+
+describe("aurora > renderPage seeds from either cookie reader", () => {
+	const sidebarPages = () => {
+		const pages = new Pages({ root: FIXTURES });
+		pages.register("Sidebar", () => {
+			const collapsed = cookieState("sidebar", false, booleanCookie);
+			return html`<aside class="${() => (collapsed() ? "w-16" : "w-60")}"></aside>`;
+		});
+		return pages;
+	};
+
+	const render = async (request: unknown) => {
+		const { ctx, getBody } = makeCtx();
+		ctx.request = request as typeof ctx.request;
+		vi.stubGlobal("document", undefined);
+		try {
+			await renderPage(
+				ctx,
+				sidebarPages(),
+				"Sidebar",
+				{},
+				{ cookies: ["sidebar"] },
+			);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+		return getBody();
+	};
+
+	it("prefers the unsigned read when the host offers both", async () => {
+		// The signed read would verify and find nothing: the browser wrote
+		// these cookies itself, so they carry no signature.
+		const body = await render({
+			plainCookie: (name: string) => (name === "sidebar" ? "1" : null),
+			cookie: () => null,
+		});
+
+		expect(body).toContain('class="w-16"');
+	});
+
+	it("falls back to cookie() for a host that offers only that", async () => {
+		// Rendering default state and saying nothing is the flash this exists
+		// to prevent.
+		const body = await render({
+			cookie: (name: string) => (name === "sidebar" ? "1" : null),
+		});
+
+		expect(body).toContain('class="w-16"');
+	});
+
+	it("seeds nothing when the host reads no cookies at all", async () => {
+		expect(await render({})).toContain('class="w-60"');
 	});
 });

@@ -142,8 +142,24 @@ export type SharedPropsResolver = (
 ) => SharedProps | Promise<SharedProps>;
 
 /** A request that can read a cookie by name — the structural slice we need. */
+/**
+ * The slice of a host request this needs: reading a cookie the browser wrote.
+ *
+ * `plainCookie` is the one to use. These cookies are written client-side
+ * through `document.cookie`, so they carry no signature; a host whose
+ * `cookie()` verifies one (as Ream's does) returns nothing for them, and the
+ * seed silently empties — which is the flash this exists to prevent.
+ *
+ * `cookie` is accepted as a fallback so a host that only offers that spelling
+ * still seeds, rather than rendering default state and saying nothing.
+ */
 interface CookieReadableRequest {
-	cookie(name: string): string | null;
+	plainCookie?<T = string>(
+		name: string,
+		defaultValue?: T,
+		options?: { encoded?: boolean },
+	): T | null;
+	cookie?(name: string): string | null;
 }
 
 interface RenderScope {
@@ -157,11 +173,10 @@ setCookieStoreReader(() => renderScope.getStore()?.cookies);
 setRouteManifestReader(() => renderScope.getStore()?.routes);
 
 function isCookieReadable(request: unknown): request is CookieReadableRequest {
+	if (typeof request !== "object" || request === null) return false;
 	return (
-		typeof request === "object" &&
-		request !== null &&
-		"cookie" in request &&
-		typeof request.cookie === "function"
+		typeof Reflect.get(request, "plainCookie") === "function" ||
+		typeof Reflect.get(request, "cookie") === "function"
 	);
 }
 
@@ -172,9 +187,14 @@ function readRequestCookies(
 ): Record<string, string> {
 	if (!isCookieReadable(request)) return {};
 	const seed: Record<string, string> = {};
+	// Unsigned first; `cookie()` only when the host offers nothing else.
+	const read = request.plainCookie
+		? (name: string) =>
+				request.plainCookie?.<string>(name, undefined, { encoded: false })
+		: (name: string) => request.cookie?.(name);
 	for (const name of names) {
-		const value = request.cookie(name);
-		if (value !== null) seed[name] = value;
+		const value = read(name);
+		if (value !== null && value !== undefined) seed[name] = value;
 	}
 	return seed;
 }
