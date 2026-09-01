@@ -118,7 +118,19 @@ export function buildLiveTransport(
 		subscribe: (channel, handler) =>
 			relayClient.subscribe<SlotPatch[]>(channel, handler),
 		post: (id, event, payload) => {
-			void http.post(path, { id, event, payload });
+			// A post that fails means the server never saw this interaction, so
+			// the component's server-side state and what the user is looking at
+			// have diverged — silence is the worst possible answer. Unhandled,
+			// it was also a bare `Uncaught (in promise)` with no clue which
+			// event was lost.
+			void (async () => http.post(path, { id, event, payload }))().catch(
+				(err: unknown) => {
+					console.warn(
+						`[aurora/live] '${event}' on ${id} did not reach the server; this component is now out of sync:`,
+						err,
+					);
+				},
+			);
 		},
 	};
 }

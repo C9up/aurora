@@ -154,3 +154,44 @@ describe("aurora > buildLiveTransport", () => {
 		});
 	});
 });
+
+describe("aurora > a live post that fails", () => {
+	it("says which event was lost instead of leaving a bare unhandled rejection", async () => {
+		const warnings: unknown[][] = [];
+		const originalWarn = console.warn;
+		console.warn = (...args: unknown[]): void => {
+			warnings.push(args);
+		};
+		const rejections: unknown[] = [];
+		const onUnhandled = (reason: unknown): void => {
+			rejections.push(reason);
+		};
+		process.on("unhandledRejection", onUnhandled);
+		try {
+			const transport = buildLiveTransport(
+				{
+					subscribe<E>(_channel: string, _handler: (event: E) => void) {
+						return () => {};
+					},
+				},
+				{
+					post: async () => {
+						throw new Error("network down");
+					},
+				},
+			);
+
+			transport.post("counter-1", "increment", { by: 1 });
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// A post that fails means the server never saw the interaction, so
+			// the component's server state and the screen have diverged.
+			expect(rejections).toEqual([]);
+			expect(String(warnings[0]?.[0])).toContain("increment");
+			expect(String(warnings[0]?.[0])).toContain("counter-1");
+		} finally {
+			console.warn = originalWarn;
+			process.off("unhandledRejection", onUnhandled);
+		}
+	});
+});
