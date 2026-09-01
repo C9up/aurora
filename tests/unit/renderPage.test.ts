@@ -15,6 +15,7 @@ function makeCtx(): {
 	ctx: RenderHttpContext;
 	getBody: () => string;
 	getHeader: (name: string) => string | undefined;
+	getStatus: () => number;
 } {
 	let body = "";
 	const headers = new Map<string, string>();
@@ -40,14 +41,19 @@ function makeCtx(): {
 		ctx,
 		getBody: () => body,
 		getHeader: (name) => headers.get(name.toLowerCase()),
+		// Recorded but unreachable before, so no test could assert the status
+		// a render answers with.
+		getStatus: () => statusCode,
 	};
 }
 
 describe("aurora > renderPage", () => {
 	it("returns a full HTML document with SSR body + hydration plumbing", async () => {
 		const pages = new Pages({ root: FIXTURES });
-		const { ctx, getBody, getHeader } = makeCtx();
+		const { ctx, getBody, getHeader, getStatus } = makeCtx();
 		await renderPage(ctx, pages, "Hello", { name: "World" });
+
+		expect(getStatus()).toBe(200);
 		const out = getBody();
 
 		expect(getHeader("content-type")).toMatch(/text\/html/);
