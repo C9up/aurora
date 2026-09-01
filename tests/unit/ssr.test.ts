@@ -182,3 +182,64 @@ describe("aurora > attribute detection", () => {
 		expect(out).toContain("<!--$-->two<!--/$-->");
 	});
 });
+
+describe("aurora > ssr > a handler never runs on the server", () => {
+	it("strips a single-quoted directive, as it does a double-quoted one", () => {
+		let calls = 0;
+		const handler = (): string => {
+			calls++;
+			return "SIDE-EFFECT";
+		};
+
+		// The scanner matched `="` only, so this form fell through to the value
+		// stringifier, which CALLED the handler: a counter incremented during
+		// render and `@click='SIDE-EFFECT'` written into the HTML.
+		const out = renderToString(html`<button @click='${handler}'>x</button>`);
+
+		expect(calls).toBe(0);
+		expect(out).toBe("<button>x</button>");
+	});
+
+	it("does the same for ?attr and .prop in single quotes", () => {
+		let calls = 0;
+		const value = (): boolean => {
+			calls++;
+			return true;
+		};
+
+		const out = renderToString(
+			html`<input ?disabled='${value}' .value='${value}'>`,
+		);
+
+		expect(calls).toBe(0);
+		expect(out).toBe("<input>");
+	});
+
+	it("keeps evaluating a reactive expression in text position", () => {
+		// The legitimate case, unchanged: a function in a text slot IS the
+		// reactive expression and is evaluated server-side.
+		expect(renderToString(html`<p>${() => 6 * 7}</p>`)).toContain("42");
+	});
+
+	it("keeps evaluating a reactive expression in an attribute", () => {
+		// The legitimate attribute case, and why a blanket "never call a
+		// function in an attribute" guard is wrong: this is how a class list is
+		// computed server-side.
+		expect(
+			renderToString(html`<aside class="${() => "w-16"}"></aside>`),
+		).toContain('class="w-16"');
+	});
+
+	it("strips an unquoted directive too", () => {
+		let calls = 0;
+		const handler = (): string => {
+			calls++;
+			return "SIDE-EFFECT";
+		};
+
+		expect(renderToString(html`<button @click=${handler}>x</button>`)).toBe(
+			"<button>x</button>",
+		);
+		expect(calls).toBe(0);
+	});
+});

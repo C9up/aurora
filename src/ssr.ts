@@ -49,19 +49,34 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	// the matching value, and consume the closing `"` from the next
 	// segment. This three-step coordination is why the loop holds a
 	// `pendingClosingQuote` flag.
-	let pendingClosingQuote = false;
+	// Which quote closes the directive currently being skipped, so the closing
+	// one consumed is the one that was opened. Undefined when none is pending.
+	let pendingClosingQuote: '"' | "'" | undefined;
 	const scanner = new TagScanner();
 	for (let i = 0; i < strings.length; i++) {
 		let segment = strings[i];
-		if (pendingClosingQuote) {
-			segment = segment.replace(/^"/, "");
-			pendingClosingQuote = false;
+		if (pendingClosingQuote !== undefined) {
+			segment =
+				pendingClosingQuote === '"'
+					? segment.replace(/^"/, "")
+					: segment.replace(/^'/, "");
+			pendingClosingQuote = undefined;
 		}
-		const directiveMatch = segment.match(/\s([@?.][\w-]+)="$/);
+		// Both quote styles. Matching only `="` left `@click='${handler}'`
+		// unrecognised, so the handler fell through to `stringifyValue`, which
+		// CALLED it — a client event handler running on the server, its return
+		// value written into the HTML, and any exception swallowed.
+		const directiveMatch = segment.match(/\s([@?.][\w-]+)=("|'|)$/);
 		const skipValue = directiveMatch !== null;
 		if (directiveMatch) {
 			segment = segment.slice(0, segment.length - directiveMatch[0].length);
-			pendingClosingQuote = true;
+			// Only a quoted directive leaves a closing quote to swallow.
+			pendingClosingQuote =
+				directiveMatch[2] === '"'
+					? '"'
+					: directiveMatch[2] === "'"
+						? "'"
+						: undefined;
 		}
 		out += segment;
 		scanner.consume(segment);
@@ -148,10 +163,10 @@ function stringifyValue(value: unknown, inAttribute: boolean): string {
 	if (value === true) return inAttribute ? "" : "true";
 	if (isSignal(value)) return stringifyValue(value(), inAttribute);
 	if (typeof value === "function") {
-		// In attribute position: directive handlers (`@click`, `?disabled`,
-		// `.prop`) have already been stripped by `stripDirectiveBefore`.
-		// A function reaching this point is a reactive-expression text
-		// slot (`${() => ...}`), which we evaluate eagerly server-side.
+		// A function here is a reactive expression — `class="${() => …}"` in an
+		// attribute, `${() => …}` in text — and is evaluated eagerly
+		// server-side. Directive values (`@click`, `?disabled`, `.prop`) never
+		// reach this point: the scanner skips them, whatever quoting they use.
 		try {
 			return stringifyValue((value as () => unknown)(), inAttribute);
 		} catch {
