@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 describe("aurora > browser harness smoke", () => {
-	it("runs in a real Chromium (not happy-dom)", () => {
+	it("runs in a real Chromium (not jsdom)", () => {
 		expect(navigator.userAgent).toMatch(/Chrom/);
 	});
 

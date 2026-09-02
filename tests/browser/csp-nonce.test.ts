@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
  * simply never hydrates. That is exactly how it reached production — diffing
  * the DOM with and without CSP showed no difference.
  *
- * happy-dom enforces no CSP at all, so this has to be a browser test.
+ * jsdom enforces no CSP at all, so this has to be a browser test.
  */
 
 /** Apply a policy to this document, for scripts inserted afterwards. */

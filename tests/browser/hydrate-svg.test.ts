@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { html, hydrate, renderToString, signal } from "../../src/index.js";
 
 /**
- * Real-Chromium hydration of SVG icons — the case happy-dom can't catch. SVG is
+ * Real-Chromium hydration of SVG icons — the case jsdom can't catch. SVG is
  * foreign content; the browser's parser may produce a different node structure
  * for the SSR string than aurora's client `<template>` parse, desyncing slot
  * paths ("[aurora] hydration mismatch: slot … not found") and skipping bindings

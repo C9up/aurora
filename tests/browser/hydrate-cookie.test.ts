@@ -12,7 +12,7 @@ import {
 /**
  * Real-Chromium proof of the isomorphic cookie bridge: a cookie-backed signal
  * must produce the SAME markup at SSR and at hydration so the browser never
- * repaints the default state (the collapsed-sidebar flash). happy-dom can't be
+ * repaints the default state (the collapsed-sidebar flash). jsdom can't be
  * trusted here — the SSR string is re-parsed by the real browser and hydrate
  * walks that live DOM. Mirrors fluveo's sidebar: a `booleanCookie` drives the
  * width class, with a sibling reactive text slot.
