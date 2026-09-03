@@ -119,8 +119,7 @@ export function mount(
 		resolvePath(fragment, slot.path),
 	);
 
-	for (let i = 0; i < tpl.slots.length; i++) {
-		const slot = tpl.slots[i];
+	for (const [i, slot] of tpl.slots.entries()) {
 		const node = resolved[i];
 		if (node === null || node === undefined) {
 			// Path didn't resolve — skip this binding rather than crash (see

@@ -7,6 +7,13 @@ import {
 	isHttpError,
 } from "../../src/http.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 interface Call {
 	url: string;
 	init: RequestInit;
@@ -49,7 +56,7 @@ describe("aurora > http > HttpClient", () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient({ token: "abc" });
 		await client.get("/me");
-		expect(new Headers(calls[0].init.headers).get("authorization")).toBe(
+		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
 			"Bearer abc",
 		);
 	});
@@ -61,10 +68,10 @@ describe("aurora > http > HttpClient", () => {
 		await client.get("/me");
 		token = "t2";
 		await client.get("/me");
-		expect(new Headers(calls[0].init.headers).get("authorization")).toBe(
+		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
 			"Bearer t1",
 		);
-		expect(new Headers(calls[1].init.headers).get("authorization")).toBe(
+		expect(new Headers(defined(calls[1]).init.headers).get("authorization")).toBe(
 			"Bearer t2",
 		);
 	});
@@ -73,7 +80,7 @@ describe("aurora > http > HttpClient", () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient({ token: "abc" });
 		await client.get("/me", { headers: { Authorization: "Bearer custom" } });
-		expect(new Headers(calls[0].init.headers).get("authorization")).toBe(
+		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
 			"Bearer custom",
 		);
 	});
@@ -82,7 +89,7 @@ describe("aurora > http > HttpClient", () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient();
 		await client.post("/users", { name: "Ada" });
-		const { init } = calls[0];
+		const { init } = defined(calls[0]);
 		expect(init.method).toBe("POST");
 		expect(new Headers(init.headers).get("content-type")).toBe(
 			"application/json",
@@ -98,7 +105,7 @@ describe("aurora > http > HttpClient", () => {
 		const form = new FormData();
 		form.append("file", "x");
 		await client.post("/upload", form);
-		const { init } = calls[0];
+		const { init } = defined(calls[0]);
 		expect(init.body).toBe(form);
 		expect(new Headers(init.headers).get("content-type")).toBeNull();
 	});
@@ -108,8 +115,8 @@ describe("aurora > http > HttpClient", () => {
 		const client = new HttpClient({ baseURL: "https://api.test" });
 		await client.get("/a");
 		await client.get("https://other.test/b");
-		expect(calls[0].url).toBe("https://api.test/a");
-		expect(calls[1].url).toBe("https://other.test/b");
+		expect(defined(calls[0]).url).toBe("https://api.test/a");
+		expect(defined(calls[1]).url).toBe("https://other.test/b");
 	});
 
 	it("does not send managed bearer auth to cross-origin absolute URLs by default", async () => {
@@ -121,8 +128,8 @@ describe("aurora > http > HttpClient", () => {
 
 		await client.get("https://other.test/b");
 
-		expect(calls[0].url).toBe("https://other.test/b");
-		expect(new Headers(calls[0].init.headers).get("authorization")).toBeNull();
+		expect(defined(calls[0]).url).toBe("https://other.test/b");
+		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBeNull();
 	});
 
 	it("strips default Authorization on cross-origin absolute URLs unless explicitly allowed", async () => {
@@ -138,11 +145,11 @@ describe("aurora > http > HttpClient", () => {
 			headers: { Authorization: "Bearer explicit" },
 		});
 
-		expect(new Headers(calls[0].init.headers).get("authorization")).toBeNull();
-		expect(new Headers(calls[1].init.headers).get("authorization")).toBe(
+		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBeNull();
+		expect(new Headers(defined(calls[1]).init.headers).get("authorization")).toBe(
 			"Bearer default",
 		);
-		expect(new Headers(calls[2].init.headers).get("authorization")).toBe(
+		expect(new Headers(defined(calls[2]).init.headers).get("authorization")).toBe(
 			"Bearer explicit",
 		);
 	});
@@ -153,7 +160,7 @@ describe("aurora > http > HttpClient", () => {
 		await client.get("/search", {
 			query: { q: "hi", page: 2, empty: null, missing: undefined },
 		});
-		expect(calls[0].url).toBe("/search?q=hi&page=2");
+		expect(defined(calls[0]).url).toBe("/search?q=hi&page=2");
 	});
 
 	it("throws HttpError with status and parsed body on non-2xx", async () => {
@@ -196,8 +203,8 @@ describe("aurora > http > HttpClient", () => {
 		const base = new HttpClient({ baseURL: "https://api.test" });
 		const authed = base.extend({ token: "abc" });
 		await authed.get("/me");
-		expect(calls[0].url).toBe("https://api.test/me");
-		expect(new Headers(calls[0].init.headers).get("authorization")).toBe(
+		expect(defined(calls[0]).url).toBe("https://api.test/me");
+		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
 			"Bearer abc",
 		);
 	});
@@ -205,7 +212,7 @@ describe("aurora > http > HttpClient", () => {
 	it("exposes a default same-origin `http` instance", async () => {
 		const calls = stubFetch(() => json({ ok: true }));
 		await http.get("/ping");
-		expect(calls[0].url).toBe("/ping");
+		expect(defined(calls[0]).url).toBe("/ping");
 	});
 
 	it("manages default headers via setHeader/setHeaders/removeHeader", async () => {
@@ -216,7 +223,7 @@ describe("aurora > http > HttpClient", () => {
 			.setHeaders({ "Accept-Language": "fr", "X-Trace": "1" })
 			.removeHeader("x-trace");
 		await client.get("/x");
-		const sent = new Headers(calls[0].init.headers);
+		const sent = new Headers(defined(calls[0]).init.headers);
 		expect(sent.get("x-app")).toBe("ream");
 		expect(sent.get("accept-language")).toBe("fr");
 		expect(sent.get("x-trace")).toBeNull();
@@ -229,7 +236,7 @@ describe("aurora > http > HttpClient", () => {
 		});
 		client.setHeader("Content-Type", "application/xml");
 		await client.get("/x");
-		expect(new Headers(calls[0].init.headers).get("content-type")).toBe(
+		expect(new Headers(defined(calls[0]).init.headers).get("content-type")).toBe(
 			"application/xml",
 		);
 		expect(client.getHeaders()).toEqual({ "Content-Type": "application/xml" });
@@ -239,7 +246,7 @@ describe("aurora > http > HttpClient", () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient().setHeader("X-App", "ream");
 		await client.get("/x", { headers: { "X-App": "override" } });
-		expect(new Headers(calls[0].init.headers).get("x-app")).toBe("override");
+		expect(new Headers(defined(calls[0]).init.headers).get("x-app")).toBe("override");
 	});
 });
 
@@ -290,19 +297,19 @@ describe("aurora > http > abort & timeout", () => {
 		const calls = stubFetch(() => json({}));
 		const controller = new AbortController();
 		await new HttpClient().get("/x", { signal: controller.signal });
-		expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+		expect(defined(calls[0]).init.signal).toBeInstanceOf(AbortSignal);
 	});
 
 	it("attaches an abort signal when a timeout is configured", async () => {
 		const calls = stubFetch(() => json({}));
 		await new HttpClient({ timeout: 5000 }).get("/x");
-		expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+		expect(defined(calls[0]).init.signal).toBeInstanceOf(AbortSignal);
 	});
 
 	it("sends no signal when neither timeout nor signal is given", async () => {
 		const calls = stubFetch(() => json({}));
 		await new HttpClient().get("/x");
-		expect(calls[0].init.signal).toBeUndefined();
+		expect(defined(calls[0]).init.signal).toBeUndefined();
 	});
 
 	it("a request aborted via its signal rejects with an abort error", async () => {

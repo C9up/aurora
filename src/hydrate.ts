@@ -416,8 +416,7 @@ function hydrateTemplateResult(
 	// wipe the statics, which is what render.ts already avoids server-side.
 	const multiGroups = new Map<string, MultiAttrGroup>();
 
-	for (let i = 0; i < tpl.slots.length; i++) {
-		const slot = tpl.slots[i];
+	for (const [i, slot] of tpl.slots.entries()) {
 		const liveNode = resolvePathLive(slot.path, liveNodes);
 		if (!liveNode) {
 			// Path missed in the live DOM — SSR markup diverges from the
@@ -554,10 +553,13 @@ function resolvePathLive(path: NodePath, rootNodes: ChildNode[]): Node | null {
 	// Collapse marker ranges at EVERY level so the live child list matches the
 	// parsed template's one-node-per-slot shape (see collapseMarkerRanges).
 	let children = collapseMarkerRanges(rootNodes);
-	let node: Node | null = children[path[0]] ?? null;
-	for (let i = 1; node && i < path.length; i++) {
+	const [head, ...rest] = path;
+	if (head === undefined) return null;
+	let node: Node | null = children[head] ?? null;
+	for (const step of rest) {
+		if (!node) break;
 		children = collapseMarkerRanges(Array.from(node.childNodes));
-		node = children[path[i]] ?? null;
+		node = children[step] ?? null;
 	}
 	return node;
 }

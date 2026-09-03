@@ -11,6 +11,13 @@ import {
 } from "../../src/index.js";
 import { observerCount } from "../../src/reactive.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 let container: HTMLElement;
 
 beforeEach(() => {
@@ -64,8 +71,8 @@ describe("aurora > component > state via signal()", () => {
 		const spans = container.querySelectorAll("span");
 		expect(spans).toHaveLength(2);
 		(spans[0] as HTMLElement).click();
-		expect(spans[0].textContent?.trim()).toBe("1");
-		expect(spans[1].textContent?.trim()).toBe("0");
+		expect(defined(spans[0]).textContent?.trim()).toBe("1");
+		expect(defined(spans[1]).textContent?.trim()).toBe("0");
 	});
 });
 
@@ -179,8 +186,8 @@ describe("aurora > component > fragments (multi-root + composition)", () => {
 		render(html`<ul>${items}</ul>`, container);
 		const li = container.querySelectorAll("li");
 		expect(li).toHaveLength(3);
-		expect(li[0].textContent).toBe("a");
-		expect(li[2].textContent).toBe("c");
+		expect(defined(li[0]).textContent).toBe("a");
+		expect(defined(li[2]).textContent).toBe("c");
 	});
 
 	it("nested components compose without wrapper elements", () => {
@@ -193,8 +200,8 @@ describe("aurora > component > fragments (multi-root + composition)", () => {
 		render(List(), container);
 		const li = container.querySelectorAll("li");
 		expect(li).toHaveLength(2);
-		expect(li[0].textContent).toBe("x");
-		expect(li[1].textContent).toBe("y");
+		expect(defined(li[0]).textContent).toBe("x");
+		expect(defined(li[1]).textContent).toBe("y");
 	});
 
 	it("child component cleanups bubble to the outer dispose", () => {

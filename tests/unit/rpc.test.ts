@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRpcClient, isRpcError, RpcError } from "../../src/rpc.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 interface RpcReq {
 	jsonrpc: string;
 	method: string;
@@ -37,8 +44,8 @@ describe("aurora/rpc > createRpcClient", () => {
 		const out = await rpc.call<{ valid: boolean }>("task.validate", { id: 7 });
 		expect(out).toEqual({ valid: true });
 
-		const init = fetchMock.mock.calls[0][1];
-		expect(fetchMock.mock.calls[0][0]).toBe("/rpc");
+		const init = defined(fetchMock.mock.calls[0])[1];
+		expect(defined(fetchMock.mock.calls[0])[0]).toBe("/rpc");
 		const sent = JSON.parse(init.body);
 		expect(sent).toMatchObject({
 			jsonrpc: "2.0",
@@ -98,7 +105,7 @@ describe("aurora/rpc > createRpcClient", () => {
 
 		await rpc.call("ping", undefined, { signal: ac.signal });
 		// HttpClient may wrap the signal (timeout combine), so assert one is passed.
-		expect(fetchMock.mock.calls[0][1].signal).toBeDefined();
+		expect(defined(fetchMock.mock.calls[0])[1].signal).toBeDefined();
 	});
 
 	it("honours a custom url + injected HttpClient headers", async () => {
@@ -113,8 +120,8 @@ describe("aurora/rpc > createRpcClient", () => {
 		});
 		await rpc.call("ping");
 
-		expect(fetchMock.mock.calls[0][0]).toBe("/api/rpc");
-		expect(fetchMock.mock.calls[0][1].headers.authorization).toBe("Bearer t");
+		expect(defined(fetchMock.mock.calls[0])[0]).toBe("/api/rpc");
+		expect(defined(fetchMock.mock.calls[0])[1].headers.authorization).toBe("Bearer t");
 	});
 
 	it("auto-attaches X-XSRF-TOKEN from the XSRF-TOKEN cookie (signed double-submit)", async () => {
@@ -129,7 +136,7 @@ describe("aurora/rpc > createRpcClient", () => {
 		const rpc = createRpcClient();
 		await rpc.call("task.do");
 		// Sent verbatim — must equal the cookie byte-for-byte for double-submit.
-		expect(fetchMock.mock.calls[0][1].headers["X-XSRF-TOKEN"]).toBe(
+		expect(defined(fetchMock.mock.calls[0])[1].headers["X-XSRF-TOKEN"]).toBe(
 			"r4nd0m.s1gn",
 		);
 	});
@@ -144,14 +151,14 @@ describe("aurora/rpc > createRpcClient", () => {
 		// No XSRF-TOKEN cookie → no header.
 		await createRpcClient().call("a");
 		expect(
-			fetchMock.mock.calls[0][1].headers?.["X-XSRF-TOKEN"],
+			defined(fetchMock.mock.calls[0])[1].headers?.["X-XSRF-TOKEN"],
 		).toBeUndefined();
 
 		// Cookie present but xsrf disabled → still no header.
 		vi.stubGlobal("document", { cookie: "XSRF-TOKEN=tok.sig" });
 		await createRpcClient({ xsrf: false }).call("b");
 		expect(
-			fetchMock.mock.calls[1][1].headers?.["X-XSRF-TOKEN"],
+			defined(fetchMock.mock.calls[1])[1].headers?.["X-XSRF-TOKEN"],
 		).toBeUndefined();
 	});
 
@@ -177,9 +184,10 @@ describe("aurora/rpc > createRpcClient", () => {
 			{ method: "boom" },
 			{ method: "b" },
 		]);
-		expect(results[0]).toEqual({ ok: true, value: "a-ok" });
-		expect(results[1].ok).toBe(false);
-		if (!results[1].ok) expect(results[1].error.message).toBe("boom");
-		expect(results[2]).toEqual({ ok: true, value: "b-ok" });
+		expect(defined(results[0])).toEqual({ ok: true, value: "a-ok" });
+		const second = defined(results[1]);
+		expect(second.ok).toBe(false);
+		if (!second.ok) expect(second.error.message).toBe("boom");
+		expect(defined(results[2])).toEqual({ ok: true, value: "b-ok" });
 	});
 });

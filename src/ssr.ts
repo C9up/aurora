@@ -53,8 +53,8 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	// one consumed is the one that was opened. Undefined when none is pending.
 	let pendingClosingQuote: '"' | "'" | undefined;
 	const scanner = new TagScanner();
-	for (let i = 0; i < strings.length; i++) {
-		let segment = strings[i];
+	for (const [i, raw] of strings.entries()) {
+		let segment = raw;
 		if (pendingClosingQuote !== undefined) {
 			segment =
 				pendingClosingQuote === '"'
@@ -69,14 +69,11 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		const directiveMatch = segment.match(/\s([@?.][\w-]+)=("|'|)$/);
 		const skipValue = directiveMatch !== null;
 		if (directiveMatch) {
-			segment = segment.slice(0, segment.length - directiveMatch[0].length);
+			const [whole = "", , quote] = directiveMatch;
+			segment = segment.slice(0, segment.length - whole.length);
 			// Only a quoted directive leaves a closing quote to swallow.
 			pendingClosingQuote =
-				directiveMatch[2] === '"'
-					? '"'
-					: directiveMatch[2] === "'"
-						? "'"
-						: undefined;
+				quote === '"' ? '"' : quote === "'" ? "'" : undefined;
 		}
 		out += segment;
 		scanner.consume(segment);

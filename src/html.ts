@@ -64,6 +64,9 @@ function classifySlots(strings: readonly string[]): RawSlot[] {
 	let insideComment = false;
 	for (let i = 0; i < strings.length - 1; i++) {
 		const segment = strings[i];
+		// `i` is bounded by the loop; naming the miss is what carries that
+		// bound into the character scan below.
+		if (segment === undefined) continue;
 		for (let j = 0; j < segment.length; j++) {
 			if (insideComment) {
 				// Comments swallow everything (including stray `<` / `>`) up
@@ -111,13 +114,10 @@ function buildMarkup(
 	strings: readonly string[],
 	classification: readonly RawSlot[],
 ): string {
-	let out = strings[0];
-	for (let i = 0; i < classification.length; i++) {
-		out +=
-			classification[i].region === "text"
-				? TEXT_NODE_MARKER
-				: attrPlaceholder(i);
-		out += strings[i + 1];
+	let out = strings[0] ?? "";
+	for (const [i, slot] of classification.entries()) {
+		out += slot.region === "text" ? TEXT_NODE_MARKER : attrPlaceholder(i);
+		out += strings[i + 1] ?? "";
 	}
 	return out;
 }
@@ -195,7 +195,7 @@ function collectSlots(
 			const staticParts: string[] = [];
 			const slotCountInThisAttr = (parts.length - 1) / 2;
 			for (let i = 0; i < parts.length; i += 2) {
-				staticParts.push(parts[i]);
+				staticParts.push(parts[i] ?? "");
 			}
 			for (let i = 0; i < slotCountInThisAttr; i++) {
 				const slot: AttrSlot = {
@@ -220,8 +220,8 @@ function collectSlots(
 		if (node.nodeType === 8 /* Comment */) {
 			const data = (node as Comment).data;
 			if (data === MARKER) {
-				if (slotIndex >= classification.length) return;
 				const cls = classification[slotIndex];
+				if (cls === undefined) return;
 				if (cls.region !== "text") {
 					throw new Error(
 						`[aurora] internal classification mismatch at slot ${slotIndex}`,

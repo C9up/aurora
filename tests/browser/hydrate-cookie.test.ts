@@ -9,6 +9,13 @@ import {
 	signal,
 } from "../../src/index.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 /**
  * Real-Chromium proof of the isomorphic cookie bridge: a cookie-backed signal
  * must produce the SAME markup at SSR and at hydration so the browser never
@@ -23,7 +30,7 @@ let warnSpy: ReturnType<typeof vi.spyOn>;
 
 function clearCookies(): void {
 	for (const part of document.cookie.split("; ")) {
-		const name = part.split("=")[0];
+		const name = defined(part.split("=")[0]);
 		if (name) cookie.remove(name);
 	}
 }

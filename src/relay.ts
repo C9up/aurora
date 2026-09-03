@@ -347,12 +347,12 @@ function retrieveXsrfToken(): string | null {
 	const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
 	if (!match) return null;
 	try {
-		return decodeURIComponent(match[1]);
+		return decodeURIComponent(match[1] ?? "");
 	} catch {
 		// A malformed cookie must not break subscribe/unsubscribe handshakes. The
 		// server will reject an invalid token normally; the client should not throw
 		// before it even sends the request.
-		return match[1];
+		return match[1] ?? null;
 	}
 }
 

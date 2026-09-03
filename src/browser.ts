@@ -510,7 +510,7 @@ export const cookie = {
 	get(name: string): string | null {
 		if (typeof document === "undefined") {
 			const scoped = cookieStoreReader?.();
-			if (scoped && Object.hasOwn(scoped, name)) return scoped[name];
+			if (scoped && Object.hasOwn(scoped, name)) return scoped[name] ?? null;
 			return cookieSeed[name] ?? null;
 		}
 		const prefix = `${encodeURIComponent(name)}=`;

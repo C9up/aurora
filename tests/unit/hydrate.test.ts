@@ -7,6 +7,13 @@ import {
 	signal,
 } from "../../src/index.js";
 
+/** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
+function defined<T>(value: T | null | undefined): T {
+	if (value == null) throw new Error("expected a defined value");
+	return value;
+}
+
+
 let container: HTMLElement;
 
 beforeEach(() => {
@@ -295,7 +302,7 @@ describe("aurora > hydrate > reactive nested template (boundary-marker swap)", (
 		expect(root1.textContent).toContain("scalar-one");
 		// The created text node must belong to root1's document, not doc2.
 		const textNode = Array.from(
-			root1.querySelectorAll("div")[0].childNodes,
+			defined(root1.querySelectorAll("div")[0]).childNodes,
 		).find((n) => n.nodeType === 3 && n.textContent === "scalar-one");
 		expect(textNode?.ownerDocument).toBe(root1.ownerDocument);
 		expect(textNode?.ownerDocument).not.toBe(doc2);
