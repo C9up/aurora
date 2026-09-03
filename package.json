@@ -69,7 +69,8 @@
     "jsdom": "^30.0.1",
     "playwright": "^1.61.1",
     "typescript": "^6.0.2",
-    "vitest": "4.1.9"
+    "vitest": "4.1.9",
+    "@c9up/ream": "^0.2.0"
   },
   "files": [
     "LICENSE",

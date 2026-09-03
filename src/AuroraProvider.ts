@@ -16,6 +16,7 @@
  * and skip the route auto-registration silently.
  */
 
+import "./augmentations.js";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";

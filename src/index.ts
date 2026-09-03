@@ -4,6 +4,8 @@
 // node:fs / node:path / node:url live in `@c9up/aurora/server`. Keeping them off
 // this barrel is what lets a browser bundle import the client primitives without
 // the bundler dragging Node built-ins through the import graph.
+import "./augmentations.js";
+
 export type {
 	CookieCodec,
 	CookieOptions,
