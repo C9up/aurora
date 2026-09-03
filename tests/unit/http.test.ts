@@ -13,7 +13,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 interface Call {
 	url: string;
 	init: RequestInit;
@@ -56,9 +55,9 @@ describe("aurora > http > HttpClient", () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient({ token: "abc" });
 		await client.get("/me");
-		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
-			"Bearer abc",
-		);
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("authorization"),
+		).toBe("Bearer abc");
 	});
 
 	it("reads a token getter fresh on each request", async () => {
@@ -68,21 +67,21 @@ describe("aurora > http > HttpClient", () => {
 		await client.get("/me");
 		token = "t2";
 		await client.get("/me");
-		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
-			"Bearer t1",
-		);
-		expect(new Headers(defined(calls[1]).init.headers).get("authorization")).toBe(
-			"Bearer t2",
-		);
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("authorization"),
+		).toBe("Bearer t1");
+		expect(
+			new Headers(defined(calls[1]).init.headers).get("authorization"),
+		).toBe("Bearer t2");
 	});
 
 	it("does not override a caller-set Authorization header", async () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient({ token: "abc" });
 		await client.get("/me", { headers: { Authorization: "Bearer custom" } });
-		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
-			"Bearer custom",
-		);
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("authorization"),
+		).toBe("Bearer custom");
 	});
 
 	it("JSON-encodes a plain-object body and sets content-type", async () => {
@@ -129,7 +128,9 @@ describe("aurora > http > HttpClient", () => {
 		await client.get("https://other.test/b");
 
 		expect(defined(calls[0]).url).toBe("https://other.test/b");
-		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBeNull();
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("authorization"),
+		).toBeNull();
 	});
 
 	it("strips default Authorization on cross-origin absolute URLs unless explicitly allowed", async () => {
@@ -145,13 +146,15 @@ describe("aurora > http > HttpClient", () => {
 			headers: { Authorization: "Bearer explicit" },
 		});
 
-		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBeNull();
-		expect(new Headers(defined(calls[1]).init.headers).get("authorization")).toBe(
-			"Bearer default",
-		);
-		expect(new Headers(defined(calls[2]).init.headers).get("authorization")).toBe(
-			"Bearer explicit",
-		);
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("authorization"),
+		).toBeNull();
+		expect(
+			new Headers(defined(calls[1]).init.headers).get("authorization"),
+		).toBe("Bearer default");
+		expect(
+			new Headers(defined(calls[2]).init.headers).get("authorization"),
+		).toBe("Bearer explicit");
 	});
 
 	it("appends query params, skipping null/undefined", async () => {
@@ -204,9 +207,9 @@ describe("aurora > http > HttpClient", () => {
 		const authed = base.extend({ token: "abc" });
 		await authed.get("/me");
 		expect(defined(calls[0]).url).toBe("https://api.test/me");
-		expect(new Headers(defined(calls[0]).init.headers).get("authorization")).toBe(
-			"Bearer abc",
-		);
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("authorization"),
+		).toBe("Bearer abc");
 	});
 
 	it("exposes a default same-origin `http` instance", async () => {
@@ -236,9 +239,9 @@ describe("aurora > http > HttpClient", () => {
 		});
 		client.setHeader("Content-Type", "application/xml");
 		await client.get("/x");
-		expect(new Headers(defined(calls[0]).init.headers).get("content-type")).toBe(
-			"application/xml",
-		);
+		expect(
+			new Headers(defined(calls[0]).init.headers).get("content-type"),
+		).toBe("application/xml");
 		expect(client.getHeaders()).toEqual({ "Content-Type": "application/xml" });
 	});
 
@@ -246,7 +249,9 @@ describe("aurora > http > HttpClient", () => {
 		const calls = stubFetch(() => json({}));
 		const client = new HttpClient().setHeader("X-App", "ream");
 		await client.get("/x", { headers: { "X-App": "override" } });
-		expect(new Headers(defined(calls[0]).init.headers).get("x-app")).toBe("override");
+		expect(new Headers(defined(calls[0]).init.headers).get("x-app")).toBe(
+			"override",
+		);
 	});
 });
 

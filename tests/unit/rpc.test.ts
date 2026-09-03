@@ -7,7 +7,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 interface RpcReq {
 	jsonrpc: string;
 	method: string;
@@ -121,7 +120,9 @@ describe("aurora/rpc > createRpcClient", () => {
 		await rpc.call("ping");
 
 		expect(defined(fetchMock.mock.calls[0])[0]).toBe("/api/rpc");
-		expect(defined(fetchMock.mock.calls[0])[1].headers.authorization).toBe("Bearer t");
+		expect(defined(fetchMock.mock.calls[0])[1].headers.authorization).toBe(
+			"Bearer t",
+		);
 	});
 
 	it("auto-attaches X-XSRF-TOKEN from the XSRF-TOKEN cookie (signed double-submit)", async () => {

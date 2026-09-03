@@ -13,7 +13,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 let container: HTMLElement;
 
 beforeEach(() => {

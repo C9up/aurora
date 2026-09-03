@@ -7,7 +7,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 describe("aurora > html > tag", () => {
 	it("returns a TemplateResult with strings + values", () => {
 		const result = html`<div>${1}</div>`;

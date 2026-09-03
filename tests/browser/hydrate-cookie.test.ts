@@ -15,7 +15,6 @@ function defined<T>(value: T | null | undefined): T {
 	return value;
 }
 
-
 /**
  * Real-Chromium proof of the isomorphic cookie bridge: a cookie-backed signal
  * must produce the SAME markup at SSR and at hydration so the browser never
