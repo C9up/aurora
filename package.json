@@ -66,6 +66,7 @@
     "@types/node": "^22.19.15",
     "@vitest/browser": "4.1.11",
     "@vitest/browser-playwright": "4.1.11",
+    "@vitest/coverage-v8": "4.1.9",
     "jsdom": "^30.0.1",
     "playwright": "^1.61.1",
     "typescript": "^6.0.2",
