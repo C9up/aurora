@@ -15,14 +15,36 @@
  * simply inert.
  */
 
-// Referenced so the augmentation below resolves the module it augments.
+// Referenced so the augmentations below resolve the modules they augment.
+import type {} from "@c9up/ream";
 import type {} from "@c9up/ream/types";
 
 import type { AuroraManager } from "./AuroraManager.js";
+import type { AuroraRequestRenderer } from "./middleware.js";
 
 declare module "@c9up/ream/types" {
 	interface ContainerBindings {
 		/** The Aurora manager, bound by `AuroraProvider`. */
 		aurora: AuroraManager;
+	}
+}
+
+declare module "@c9up/ream" {
+	interface HttpContext {
+		/**
+		 * Render a page for THIS request — `ctx.aurora.render(name, props)`.
+		 *
+		 * Attached by the `auroraContext` middleware, which is what the docs tell
+		 * an application to register. Without this declaration the property the
+		 * middleware sets did not exist as far as the compiler was concerned, so
+		 * the shorthand the documentation teaches did not typecheck, and a
+		 * controller had to reach for the module-level `aurora.render(ctx, ...)`
+		 * or assert its way past it.
+		 *
+		 * Optional, because the middleware is: an application that never
+		 * registers it has no `ctx.aurora`, and saying otherwise would let a
+		 * controller call something that is not there.
+		 */
+		aurora?: AuroraRequestRenderer;
 	}
 }
