@@ -102,6 +102,22 @@ interface CapturedFetch {
 }
 
 /** fetch double that records url + parsed body + headers + credentials. */
+/**
+ * Read a header without pinning its capitalisation — HTTP header names are
+ * case-insensitive, and asserting the literal key made the test fail on a
+ * rename that changed nothing on the wire.
+ */
+function header(
+	call: CapturedFetch | undefined,
+	name: string,
+): string | undefined {
+	const wanted = name.toLowerCase();
+	for (const [key, value] of Object.entries(call?.headers ?? {})) {
+		if (key.toLowerCase() === wanted) return value;
+	}
+	return undefined;
+}
+
 function captureFetch(): {
 	mock: ReturnType<typeof vi.fn>;
 	calls: CapturedFetch[];
@@ -187,12 +203,16 @@ describe("aurora/relay > CSRF handshake", () => {
 
 		const sub = calls.find((c) => c.url === "/__relay/subscribe");
 		if (!sub) throw new Error("expected a subscribe POST");
-		// Cookie value is URL-decoded before it rides in the header.
-		expect(sub.headers["x-xsrf-token"]).toBe("tok en-123");
+		// Verbatim, not decoded: the server reads the cookie out of the `Cookie`
+		// header raw and compares it to this one byte-for-byte. Decoding here
+		// sent a token it had never stored — invisible in practice only because
+		// the tokens it issues are hex + `.` + base64url, which percent-encoding
+		// never touches.
+		expect(header(sub, "X-XSRF-TOKEN")).toBe("tok%20en-123");
 		expect(sub.credentials).toBe("include");
 	});
 
-	it("does not throw when the XSRF-TOKEN cookie contains malformed percent encoding", async () => {
+	it("sends a cookie that is not valid percent-encoding as it stands", async () => {
 		document.cookie = "XSRF-TOKEN=%";
 		const { mock, calls } = captureFetch();
 		vi.stubGlobal("EventSource", FakeEventSource);
@@ -207,7 +227,7 @@ describe("aurora/relay > CSRF handshake", () => {
 		await flush();
 
 		const sub = calls.find((c) => c.url === "/__relay/subscribe");
-		expect(sub?.headers["x-xsrf-token"]).toBe("%");
+		expect(header(sub, "X-XSRF-TOKEN")).toBe("%");
 	});
 });
 

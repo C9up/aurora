@@ -347,3 +347,112 @@ describe("aurora > http > abort & timeout", () => {
 		expect(isAbortError(null)).toBe(false);
 	});
 });
+
+describe("aurora > http > the CSRF header the server is waiting for", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		document.cookie = "XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+	});
+
+	/** Read a header without pinning its capitalisation. */
+	function header(call: Call | undefined, name: string): string | undefined {
+		const wanted = name.toLowerCase();
+		const headers = call?.init.headers;
+		if (headers === undefined) return undefined;
+		for (const [key, value] of Object.entries(
+			headers as Record<string, string>,
+		)) {
+			if (key.toLowerCase() === wanted) return value;
+		}
+		return undefined;
+	}
+
+	it("echoes the XSRF-TOKEN cookie on a same-origin request", async () => {
+		// `form()`'s documented submit goes through this client. It sent no
+		// header at all, so every POST from it was refused the moment an
+		// application turned CSRF on — while `rpc.ts` and `relay.ts` both
+		// described their own copies as mirroring a method this class never had.
+		document.cookie = "XSRF-TOKEN=abc.def";
+		const calls = stubFetch(() => json({ ok: true }));
+
+		await new HttpClient().post("/auth/login", { email: "a@b.c" });
+
+		expect(header(calls[0], "X-XSRF-TOKEN")).toBe("abc.def");
+	});
+
+	it("sends it on every method, not only the unsafe ones", async () => {
+		document.cookie = "XSRF-TOKEN=abc.def";
+		const calls = stubFetch(() => json({ ok: true }));
+		const client = new HttpClient();
+
+		await client.get("/me");
+		await client.put("/me", {});
+		await client.delete("/me");
+
+		for (const call of calls) {
+			expect(header(call, "X-XSRF-TOKEN")).toBe("abc.def");
+		}
+	});
+
+	it("sends nothing when there is no cookie", async () => {
+		// A bearer-authed API is CSRF-exempt and seeds no cookie. Sending an
+		// empty header there would be noise the server has to decide about.
+		const calls = stubFetch(() => json({ ok: true }));
+
+		await new HttpClient().post("/rpc", {});
+
+		expect(header(calls[0], "X-XSRF-TOKEN")).toBeUndefined();
+	});
+
+	it("does not hand the token to another origin", async () => {
+		// The token authenticates this page's session. A client whose baseURL is
+		// a third-party API would pass a "matches my baseURL" check and hand it
+		// to whoever runs that host.
+		document.cookie = "XSRF-TOKEN=abc.def";
+		const calls = stubFetch(() => json({ ok: true }));
+
+		await new HttpClient({ baseURL: "https://api.example.com" }).post(
+			"/track",
+			{},
+		);
+
+		expect(header(calls[0], "X-XSRF-TOKEN")).toBeUndefined();
+	});
+
+	it("leaves a header the caller set", async () => {
+		document.cookie = "XSRF-TOKEN=abc.def";
+		const calls = stubFetch(() => json({ ok: true }));
+
+		await new HttpClient().post(
+			"/auth/login",
+			{},
+			{ headers: { "X-XSRF-TOKEN": "mine" } },
+		);
+
+		expect(header(calls[0], "X-XSRF-TOKEN")).toBe("mine");
+	});
+
+	it("can be turned off, per client and per request", async () => {
+		document.cookie = "XSRF-TOKEN=abc.def";
+		const calls = stubFetch(() => json({ ok: true }));
+
+		await new HttpClient({ xsrf: false }).post("/a", {});
+		await new HttpClient().post("/b", {}, { xsrf: false });
+
+		expect(header(calls[0], "X-XSRF-TOKEN")).toBeUndefined();
+		expect(header(calls[1], "X-XSRF-TOKEN")).toBeUndefined();
+	});
+
+	it("reads the cookie and header names the app configured", async () => {
+		document.cookie = "csrf_token=zzz";
+		const calls = stubFetch(() => json({ ok: true }));
+
+		await new HttpClient({
+			xsrfCookieName: "csrf_token",
+			xsrfHeaderName: "X-CSRF-TOKEN",
+		}).post("/a", {});
+
+		expect(header(calls[0], "X-CSRF-TOKEN")).toBe("zzz");
+		document.cookie = "csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+	});
+});

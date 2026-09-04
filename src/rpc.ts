@@ -55,40 +55,26 @@ export interface RpcClientOptions {
 }
 
 /**
- * Read a cookie's raw value from `document.cookie`. Returns `undefined`
- * server-side (no `document`) or when the cookie is absent. The value is sent
- * verbatim — double-submit compares it byte-for-byte against the cookie, so it
- * must not be decoded.
- */
-function readCookie(name: string): string | undefined {
-	if (typeof document === "undefined") return undefined;
-	const prefix = `${name}=`;
-	for (const part of document.cookie.split(";")) {
-		const trimmed = part.trimStart();
-		if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
-	}
-	return undefined;
-}
-
-/**
  * Create a JSON-RPC client bound to aurora's HttpClient transport. Inherits the
  * supplied (or a fresh) HttpClient's base URL, auth headers, and timeouts, and
  * (by default) auto-attaches the `X-XSRF-TOKEN` CSRF header from the cookie.
  */
 export function createRpcClient(options: RpcClientOptions = {}): RpcClient {
-	const http = options.http ?? new HttpClient({ headers: options.headers });
-	const xsrfEnabled = options.xsrf ?? true;
-	const cookieName = options.xsrfCookieName ?? "XSRF-TOKEN";
-	const headerName = options.xsrfHeaderName ?? "X-XSRF-TOKEN";
+	const http =
+		options.http ??
+		new HttpClient({
+			headers: options.headers,
+			xsrf: options.xsrf,
+			xsrfCookieName: options.xsrfCookieName,
+			xsrfHeaderName: options.xsrfHeaderName,
+		});
 	return createCometRpcClient({
 		url: options.url,
-		transport: (url, body, { signal }) => {
-			let headers: Record<string, string> | undefined;
-			if (xsrfEnabled) {
-				const token = readCookie(cookieName);
-				if (token !== undefined) headers = { [headerName]: token };
-			}
-			return http.post<unknown>(url, body, { signal, headers });
-		},
+		// The header comes from the transport, which attaches it for every
+		// request it sends. Adding it here as well meant a caller who passed
+		// their own `http` got a client that read the cookie and one that did
+		// not, depending on which constructor argument they used.
+		transport: (url, body, { signal }) =>
+			http.post<unknown>(url, body, { signal, xsrf: options.xsrf }),
 	});
 }

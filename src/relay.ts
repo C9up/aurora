@@ -18,6 +18,8 @@
  * `EventSource` being undefined.
  */
 
+import { xsrfHeaderFor } from "./xsrf.js";
+
 /**
  * Connection lifecycle status. Mirrors `@adonisjs/transmit-client`'s
  * `TransmitStatus` (minus `initializing`, which the singleton never
@@ -313,19 +315,18 @@ function postUnsubscribe(channel: string): Promise<void> {
 
 /**
  * POST a `{ uid, channel }` handshake to a relay endpoint. Sends the
- * signed-CSRF trio blackhole expects: the `XSRF-TOKEN` cookie echoed as
- * the `X-XSRF-TOKEN` header plus `credentials: 'include'` so the cookie
+ * signed-CSRF trio the security layer expects: the `XSRF-TOKEN` cookie echoed
+ * as the `X-XSRF-TOKEN` header plus `credentials: 'include'` so the cookie
  * itself rides along. Without both, the POST is rejected by the signed
- * double-submit guard. Mirrors `HttpClient.#retrieveXsrfToken` /
- * `createRequest` in `@adonisjs/transmit-client`.
+ * double-submit guard. The header comes from the one reader in `xsrf.ts`,
+ * which `HttpClient` uses too.
  */
 async function postHandshake(url: string, channel: string): Promise<void> {
 	const headers: Record<string, string> = {
 		"content-type": "application/json",
 	};
 	if (CONFIG.bearer) headers.authorization = `Bearer ${CONFIG.bearer}`;
-	const xsrf = retrieveXsrfToken();
-	if (xsrf !== null) headers["x-xsrf-token"] = xsrf;
+	Object.assign(headers, xsrfHeaderFor(url) ?? {});
 	const res = await fetch(url, {
 		method: "POST",
 		headers,
@@ -334,25 +335,6 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 	});
 	if (!res.ok) {
 		throw new Error(`HTTP ${res.status}`);
-	}
-}
-
-/**
- * Read the `XSRF-TOKEN` cookie so it can be echoed as the `X-XSRF-TOKEN`
- * header (signed double-submit CSRF). Browser-only — returns `null` under
- * SSR / any environment without `document`.
- */
-function retrieveXsrfToken(): string | null {
-	if (typeof document === "undefined") return null;
-	const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
-	if (!match) return null;
-	try {
-		return decodeURIComponent(match[1] ?? "");
-	} catch {
-		// A malformed cookie must not break subscribe/unsubscribe handshakes. The
-		// server will reject an invalid token normally; the client should not throw
-		// before it even sends the request.
-		return match[1] ?? null;
 	}
 }
 

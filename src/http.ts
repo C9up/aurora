@@ -21,7 +21,9 @@
  * Workers, Bun, Deno). Part of the client barrel.
  */
 
-export interface HttpClientOptions {
+import { type XsrfOptions, xsrfHeaderFor } from "./xsrf.js";
+
+export interface HttpClientOptions extends XsrfOptions {
 	/** Prepended to every request URL, unless the URL is already absolute. */
 	baseURL?: string;
 	/** Headers merged into every request. */
@@ -56,6 +58,12 @@ export interface HttpRequestOptions<T = unknown> {
 	headers?: Record<string, string>;
 	/** Per-request bearer token override (`null` to force-omit). */
 	token?: string | null;
+	/**
+	 * Turn the automatic `X-XSRF-TOKEN` header off for this request. Rarely
+	 * needed: it is already a no-op cross-origin, outside a browser, and when
+	 * the cookie is absent.
+	 */
+	xsrf?: boolean;
 	/** Abort signal — abort it to cancel the request (e.g. on unmount / new keystroke). */
 	signal?: AbortSignal;
 	/** Per-request timeout in ms (overrides the client default). Aborts with a `TimeoutError`. */
@@ -216,6 +224,7 @@ export class HttpClient {
 	readonly #credentials?: RequestCredentials;
 	readonly #timeout?: number;
 	readonly #allowCrossOriginAuth: boolean;
+	readonly #xsrf: XsrfOptions;
 
 	constructor(options: HttpClientOptions = {}) {
 		this.#baseURL = options.baseURL ?? "";
@@ -224,6 +233,11 @@ export class HttpClient {
 		this.#credentials = options.credentials;
 		this.#timeout = options.timeout;
 		this.#allowCrossOriginAuth = options.allowCrossOriginAuth ?? false;
+		this.#xsrf = {
+			xsrf: options.xsrf,
+			xsrfCookieName: options.xsrfCookieName,
+			xsrfHeaderName: options.xsrfHeaderName,
+		};
 	}
 
 	/** Set a default header for every subsequent request (case-insensitive replace). Chainable. */
@@ -390,6 +404,18 @@ export class HttpClient {
 			(!crossOrigin || allowCrossOriginAuth)
 		) {
 			headers.Authorization = `Bearer ${token}`;
+		}
+
+		// The client's half of the signed double-submit check. Same-origin only,
+		// and never over a header the caller set: an explicit value is intent.
+		const xsrf = xsrfHeaderFor(finalUrl, {
+			...this.#xsrf,
+			xsrf: options.xsrf ?? this.#xsrf.xsrf,
+		});
+		if (xsrf !== undefined) {
+			for (const [name, value] of Object.entries(xsrf)) {
+				if (!hasHeader(headers, name)) headers[name] = value;
+			}
 		}
 
 		let payload: BodyInit | undefined;
