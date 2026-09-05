@@ -259,11 +259,94 @@ function collectSlots(
 	return slots;
 }
 
+/**
+ * Elements that only ever exist inside `<svg>`.
+ *
+ * Names shared with HTML — `a`, `title`, `style`, `script`, `text` in some
+ * dialects — are deliberately absent: seeing one says nothing about which
+ * namespace was meant, and guessing wrong would move an ordinary anchor into
+ * SVG.
+ */
+const SVG_ONLY = new Set([
+	"animate",
+	"animatemotion",
+	"animatetransform",
+	"circle",
+	"clippath",
+	"defs",
+	"desc",
+	"ellipse",
+	"feblend",
+	"fecolormatrix",
+	"fegaussianblur",
+	"femerge",
+	"feoffset",
+	"filter",
+	"foreignobject",
+	"g",
+	"image",
+	"line",
+	"lineargradient",
+	"marker",
+	"mask",
+	"path",
+	"pattern",
+	"polygon",
+	"polyline",
+	"radialgradient",
+	"rect",
+	"stop",
+	"svg",
+	"symbol",
+	"tspan",
+	"use",
+]);
+
+/**
+ * Whether this markup is SVG content that lost its `<svg>` ancestor.
+ *
+ * A template compiled on its own — `html\`<path/><path/>\``, the body of an
+ * icon helper — is parsed with no parent, and the HTML parser has no
+ * self-closing tag for an unknown element: the second `<path>` becomes a CHILD
+ * of the first, in the XHTML namespace. Nothing throws and nothing is logged;
+ * the icon is simply invisible, because `<path>` in the wrong namespace paints
+ * nothing. Parsing the same markup inside an `<svg>` makes the parser apply
+ * foreign-content rules and produce the two siblings that were written.
+ *
+ * `<svg>` itself is excluded: the parser already handles it when it is the root
+ * of the markup, and wrapping one in another would nest them.
+ */
+function isOrphanedSvgContent(root: HTMLTemplateElement): boolean {
+	const elements = Array.from(root.content.childNodes).filter(
+		(node): node is Element => node.nodeType === 1,
+	);
+	if (elements.length === 0) return false;
+	return elements.every((el) => {
+		const name = el.localName.toLowerCase();
+		return name !== "svg" && SVG_ONLY.has(name);
+	});
+}
+
 function compile(strings: TemplateStringsArray): Template {
 	const classification = classifySlots(strings);
 	const markup = buildMarkup(strings, classification);
-	const tpl = document.createElement("template");
+	let tpl = document.createElement("template");
 	tpl.innerHTML = markup;
+
+	if (isOrphanedSvgContent(tpl)) {
+		// Re-parsed with the ancestor the markup was written for, then lifted
+		// back out: the nodes keep the SVG namespace they were given, and the
+		// slot paths below are collected against the shape that will actually
+		// be cloned.
+		const wrapper = document.createElement("template");
+		wrapper.innerHTML = `<svg>${markup}</svg>`;
+		const svg = wrapper.content.firstElementChild;
+		if (svg !== null) {
+			tpl = document.createElement("template");
+			while (svg.firstChild) tpl.content.appendChild(svg.firstChild);
+		}
+	}
+
 	const slots = collectSlots(tpl, classification);
 	return { element: tpl, slots };
 }
