@@ -20,6 +20,35 @@ beforeEach(() => {
 });
 
 describe("aurora > hydrate > SSR roundtrip", () => {
+	it("a boolean attribute survives the handoff without flashing", () => {
+		// The user-visible bug: a `?hidden` panel arrived from the server with
+		// no `hidden` attribute, so it was PAINTED, and only disappeared once
+		// hydration ran. The attribute now crosses SSR, and hydration finds
+		// the DOM already in the state its effect would have written.
+		const factory = () => {
+			const collapsed = signal(true);
+			return html`<section ?hidden="${collapsed}" @click="${() => collapsed(false)}">panel</section>`;
+		};
+		const Panel = component(factory);
+
+		container.innerHTML = renderToString(Panel());
+		const section = defined(container.querySelector("section"));
+		expect(section.hasAttribute("hidden")).toBe(true);
+
+		hydrate(container, Panel);
+		// Still hidden after hydration — no correction, no flash.
+		expect(
+			defined(container.querySelector("section")).hasAttribute("hidden"),
+		).toBe(true);
+		// And the binding is live: the click removes it.
+		defined(container.querySelector("section")).dispatchEvent(
+			new Event("click"),
+		);
+		expect(
+			defined(container.querySelector("section")).hasAttribute("hidden"),
+		).toBe(false);
+	});
+
 	it("adopts SSR markup and wires reactive bindings", () => {
 		const factory = () => {
 			const count = signal(5);

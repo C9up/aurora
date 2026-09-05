@@ -107,6 +107,52 @@ describe("aurora > ssr > reactive snapshots", () => {
 		expect(ssr).not.toContain("disabled");
 	});
 
+	it("renders a boolean attribute the server can see is true", () => {
+		// The client writes `setAttribute(name, "")`; the server writes the
+		// same bytes, so hydration re-applying the effect changes nothing.
+		expect(renderToString(html`<button ?disabled="${true}">go</button>`)).toBe(
+			'<button disabled="">go</button>',
+		);
+	});
+
+	it("reads a signal and a reactive expression behind ?attr", () => {
+		const open = signal(true);
+		expect(renderToString(html`<dialog ?open="${open}"></dialog>`)).toBe(
+			'<dialog open=""></dialog>',
+		);
+		open(false);
+		expect(renderToString(html`<dialog ?open="${open}"></dialog>`)).toBe(
+			"<dialog></dialog>",
+		);
+		expect(renderToString(html`<p ?hidden="${() => 1 > 2}">shown</p>`)).toBe(
+			"<p>shown</p>",
+		);
+		expect(renderToString(html`<p ?hidden="${() => 2 > 1}">gone</p>`)).toBe(
+			'<p hidden="">gone</p>',
+		);
+	});
+
+	it("leaves the attribute off when the expression throws", () => {
+		// Fail-soft, like every other server-side evaluation here: the client
+		// effect decides once it has a DOM, rather than the page failing.
+		const out = renderToString(
+			html`<p ?hidden="${() => {
+				throw new Error("no context yet");
+			}}">text</p>`,
+		);
+		expect(out).toBe("<p>text</p>");
+	});
+
+	it("keeps the following slots aligned after a rendered ?attr", () => {
+		// The emitted attribute moves the tag scanner, so the slot after it is
+		// still classified as an attribute and not as a text region.
+		expect(
+			renderToString(
+				html`<p ?hidden="${true}" title="${"a > b"}">${"body"}</p>`,
+			),
+		).toBe('<p hidden="" title="a &gt; b"><!--$-->body<!--/$--></p>');
+	});
+
 	it("ignores prop (.value) directives — props are runtime-only", () => {
 		const ssr = renderToString(html`<input .value="${"hello"}" />`);
 		expect(ssr).not.toContain(".value");
@@ -200,19 +246,22 @@ describe("aurora > ssr > a handler never runs on the server", () => {
 		expect(out).toBe("<button>x</button>");
 	});
 
-	it("does the same for ?attr and .prop in single quotes", () => {
-		let calls = 0;
-		const value = (): boolean => {
-			calls++;
-			return true;
+	it("does the same for .prop in single quotes, and still renders ?attr", () => {
+		let propCalls = 0;
+		const prop = (): string => {
+			propCalls++;
+			return "typed";
 		};
 
 		const out = renderToString(
-			html`<input ?disabled='${value}' .value='${value}'>`,
+			html`<input ?disabled='${() => true}' .value='${prop}'>`,
 		);
 
-		expect(calls).toBe(0);
-		expect(out).toBe("<input>");
+		// A property has no markup — reading it server-side would run author
+		// code for a value that cannot be serialised anyway.
+		expect(propCalls).toBe(0);
+		// A boolean attribute does, and single quoting must not change that.
+		expect(out).toBe('<input disabled="">');
 	});
 
 	it("keeps evaluating a reactive expression in text position", () => {

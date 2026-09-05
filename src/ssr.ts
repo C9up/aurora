@@ -68,15 +68,36 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		// value written into the HTML, and any exception swallowed.
 		const directiveMatch = segment.match(/\s([@?.][\w-]+)=("|'|)$/);
 		const skipValue = directiveMatch !== null;
+		// Set when the skipped directive is a boolean attribute, which — unlike
+		// the other two — still has markup to emit. See below.
+		let booleanAttrName: string | undefined;
 		if (directiveMatch) {
-			const [whole = "", , quote] = directiveMatch;
+			const [whole = "", directive = "", quote] = directiveMatch;
 			segment = segment.slice(0, segment.length - whole.length);
+			// `?disabled=${x}` is HTML STATE, not a client-only binding.
+			// `@click` is a listener and `.value` a DOM property: neither
+			// exists until the runtime binds it, so dropping them is right.
+			// A boolean attribute is different — the browser acts on it while
+			// parsing. Skipping it too made the server contradict the very
+			// first client render: a `?hidden` panel arrived visible and
+			// blinked away once hydration caught up.
+			if (directive.startsWith("?")) booleanAttrName = directive.slice(1);
 			// Only a quoted directive leaves a closing quote to swallow.
 			pendingClosingQuote =
 				quote === '"' ? '"' : quote === "'" ? "'" : undefined;
 		}
 		out += segment;
 		scanner.consume(segment);
+		if (booleanAttrName !== undefined && i < values.length) {
+			// Present-and-empty when truthy, absent otherwise — byte-for-byte
+			// what applyBooleanAttrSlot writes on the client, so hydration
+			// re-applying the effect is a no-op instead of a correction.
+			if (resolveBooleanValue(values[i])) {
+				const rendered = ` ${booleanAttrName}=""`;
+				out += rendered;
+				scanner.consume(rendered);
+			}
+		}
 		if (i < values.length && !skipValue) {
 			const value = values[i];
 			const inAttr = scanner.insideTag;
@@ -153,6 +174,26 @@ class TagScanner {
 	get insideTag(): boolean {
 		return this.#inTag;
 	}
+}
+
+/**
+ * Read a boolean attribute's value the way the client reads it: a signal or a
+ * reactive expression is called ONCE, then coerced. One level is not an
+ * approximation — `applyBooleanAttrSlot` does exactly the same, so a signal
+ * that returns a signal is truthy on both sides.
+ */
+function resolveBooleanValue(value: unknown): boolean {
+	if (isSignal(value) || typeof value === "function") {
+		try {
+			return Boolean((value as () => unknown)());
+		} catch {
+			// Same fail-soft as stringifyValue: an expression that throws
+			// server-side leaves the attribute off and lets the client effect
+			// decide once it has a real DOM to read.
+			return false;
+		}
+	}
+	return Boolean(value);
 }
 
 function stringifyValue(value: unknown, inAttribute: boolean): string {
