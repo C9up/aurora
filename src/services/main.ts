@@ -24,6 +24,18 @@ export function getAurora(): AuroraManager | undefined {
 	return instance;
 }
 
+/**
+ * @internal Release the singleton, so a shut-down application does not leave a
+ * dead Aurora manager reachable through `services/main`.
+ *
+ * The caller checks ownership first (`getAurora() === mine`): two applications
+ * share this module in one process, and the one shutting down must not clear
+ * what the other has since bound.
+ */
+export function clearAurora(): void {
+	instance = undefined;
+}
+
 const aurora: AuroraManager = new Proxy({} as AuroraManager, {
 	get(_target, prop) {
 		// A module loader inspects what it imports before anyone uses it: it reads

@@ -185,3 +185,38 @@ describe("AuroraManager — asset prefix derivation", () => {
 		expect(m.auroraAssetPath).toBe("/assets/aurora");
 	});
 });
+
+describe("AuroraProvider > shutdown", () => {
+	it("releases the services/main singleton it bound", async () => {
+		const { getAurora } = await import("../../src/services/main.js");
+		const provider = new AuroraProvider(buildApp());
+		provider.register();
+		await provider.boot();
+		expect(getAurora()).toBeDefined();
+
+		await provider.shutdown();
+
+		// A stopped application left a dead Aurora manager reachable through
+		// `import aurora from '@c9up/aurora/services/main'`.
+		expect(getAurora()).toBeUndefined();
+	});
+
+	it("leaves what another application has since bound alone", async () => {
+		const { getAurora } = await import("../../src/services/main.js");
+		const provider = new AuroraProvider(buildApp());
+		provider.register();
+		await provider.boot();
+
+		// A second application boots in the same process and takes the singleton
+		// over; the first one then shuts down.
+		const other = new AuroraProvider(buildApp());
+		other.register();
+		await other.boot();
+		const replacement = getAurora();
+		if (!replacement) throw new Error("expected the second boot to bind one");
+
+		await provider.shutdown();
+
+		expect(getAurora()).toBe(replacement);
+	});
+});

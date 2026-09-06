@@ -26,7 +26,7 @@ import type {
 	AssetsRequest,
 	AssetsResponse,
 } from "./server/serveAssets.js";
-import { setAurora } from "./services/main.js";
+import { clearAurora, getAurora, setAurora } from "./services/main.js";
 import { renderToString } from "./ssr.js";
 
 interface AuroraContainer {
@@ -50,6 +50,9 @@ interface ReamRouter {
 }
 
 export default class AuroraProvider {
+	/** What this provider bound, so shutdown only clears its own. */
+	#owned: AuroraManager | undefined;
+
 	constructor(protected app: AuroraAppContext) {}
 
 	register(): void {
@@ -75,6 +78,7 @@ export default class AuroraProvider {
 		// touches the singleton from a preload.
 		const manager =
 			await this.app.container.resolve<AuroraManager>(AuroraManager);
+		this.#owned = manager;
 		setAurora(manager);
 	}
 
@@ -114,7 +118,14 @@ export default class AuroraProvider {
 	}
 
 	async ready(): Promise<void> {}
-	async shutdown(): Promise<void> {}
+	async shutdown(): Promise<void> {
+		// Release the module-level singleton, while it is still ours. A stopped
+		// application left a dead Aurora manager reachable through `services/main`, and
+		// with two applications in one process the survivor's binding must not
+		// be the one cleared.
+		if (this.#owned !== undefined && getAurora() === this.#owned) clearAurora();
+		this.#owned = undefined;
+	}
 
 	/**
 	 * Resolve the user-supplied config:
