@@ -4,6 +4,12 @@
 // importing client primitives (component/html/hydrate/render) never pulls the
 // Node built-ins through the import graph. Server code imports from
 // `@c9up/aurora/server`; the client `.` entry stays node-free.
+//
+// The ream augmentations (`ctx.aurora`, the `aurora` container binding) load
+// here rather than from the client barrel: everything they describe is
+// server-side, and naming `@c9up/ream` from the browser entry pulled ream's
+// source into every consumer's program — including ones that never use it.
+import "./augmentations.js";
 
 export { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
 export {

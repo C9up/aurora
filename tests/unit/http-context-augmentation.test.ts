@@ -10,6 +10,16 @@
  *
  * A type-only failure is invisible to a runtime suite, so this is asserted by
  * compiling a snippet the way an application would.
+ *
+ * The augmentation ships on `@c9up/aurora/server`, not on the client barrel.
+ * It names `@c9up/ream` — that is what a `declare module` for ream's types
+ * requires — and doing so from the browser entry pulled ream's whole source
+ * into every consumer's program, so a component library that imports nothing
+ * but `component`/`html` was compiling ream's decorated console commands under
+ * its own tsconfig and failing to build. Every application that renders a page
+ * already imports the server barrel (that is where `auroraContext` and
+ * `renderPage` live), and one import anywhere in the program carries the
+ * augmentation to every file in it.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -72,7 +82,7 @@ describe("aurora > what the docs teach must typecheck", () => {
 	it("accepts `ctx.aurora.render(name, props)` in a controller", () => {
 		const result = typecheck(`
 			import type { HttpContext } from '@c9up/ream'
-			import '@c9up/aurora'
+			import '@c9up/aurora/server'
 
 			export default class HomeController {
 			  async index(ctx: HttpContext) {
@@ -82,6 +92,42 @@ describe("aurora > what the docs teach must typecheck", () => {
 		`);
 		expect(result.output).toBe("");
 		expect(result.ok).toBe(true);
+	});
+
+	it("carries the augmentation from anywhere in the program, not per file", () => {
+		// What an application actually looks like: `start/kernel.ts` registers
+		// `auroraContext` from the server barrel, and a controller elsewhere
+		// imports only ream. One file bringing the server surface in is enough
+		// for the whole program — which is why moving the augmentation off the
+		// client barrel costs an application nothing.
+		const result = typecheck(`
+			import type { HttpContext } from '@c9up/ream'
+			import { auroraContext } from '@c9up/aurora/server'
+
+			export const middleware = [auroraContext]
+
+			export async function show(ctx: HttpContext) {
+			  await ctx.aurora?.render('Home', {})
+			}
+		`);
+		expect(result.output).toBe("");
+		expect(result.ok).toBe(true);
+	});
+
+	it("does not reach a browser bundle that imports only the client barrel", () => {
+		// Deliberate, and the reason the whole file moved: naming ream from the
+		// client entry drags ream's source into any package that imports aurora
+		// for `component`/`html` alone.
+		const result = typecheck(`
+			import type { HttpContext } from '@c9up/ream'
+			import '@c9up/aurora'
+
+			export async function show(ctx: HttpContext) {
+			  await ctx.aurora?.render('Home', {})
+			}
+		`);
+		expect(result.ok).toBe(false);
+		expect(result.output).toContain("'aurora' does not exist");
 	});
 
 	it("still refuses a property nothing attaches", () => {

@@ -4,7 +4,15 @@
 // node:fs / node:path / node:url live in `@c9up/aurora/server`. Keeping them off
 // this barrel is what lets a browser bundle import the client primitives without
 // the bundler dragging Node built-ins through the import graph.
-import "./augmentations.js";
+//
+// `./augmentations.js` is NOT loaded here either, and for a related reason: it
+// augments ream's HttpContext and ContainerBindings, so it names `@c9up/ream`
+// and drags ream's whole source into any program that imports this barrel. A
+// component library that only wants `component`/`html` was compiling ream's
+// decorated console commands under its own tsconfig, which does not enable
+// decorators — a build failure, in a package that never mentions ream. The
+// augmentations load from `@c9up/aurora/server` and `@c9up/aurora/provider`,
+// which is where every type they describe is reachable from anyway.
 
 export type {
 	CookieCodec,
