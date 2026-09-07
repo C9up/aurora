@@ -209,9 +209,20 @@ export class AuroraManager {
 	/**
 	 * Handler for the app's pages directory. Mount on
 	 * `GET /__assets/pages/*`.
+	 *
+	 * `no-cache` while developing — which does NOT mean "do not cache", it
+	 * means "always ask". These are source files: served with the default
+	 * 60-second TTL and no validator, an edited page was handed back stale for
+	 * a minute with no way for the browser even to enquire. The ETag makes the
+	 * question cheap; production keeps the TTL.
 	 */
 	pageAssetsHandler(): (ctx: AssetsHttpContext) => Promise<void> {
-		return serveAssets({ root: this.pages.root });
+		return serveAssets({
+			root: this.pages.root,
+			...(process.env.NODE_ENV === "production"
+				? {}
+				: { cacheControl: "no-cache" }),
+		});
 	}
 
 	/**

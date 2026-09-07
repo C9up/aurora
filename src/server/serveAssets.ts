@@ -10,6 +10,7 @@
  * `AssetsHttpContext` (Ream, AdonisJS, anything duck-typed) works.
  */
 
+import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +45,12 @@ export interface AssetsRequest {
 	 * convention.
 	 */
 	param(name: string): unknown;
+	/**
+	 * Read a request header. OPTIONAL, so a host that only implements
+	 * `param()` keeps working: without it there is no conditional request and
+	 * every response is a full 200, which is what happened before.
+	 */
+	header?(name: string): string | undefined;
 }
 export interface AssetsResponse {
 	status(code: number): AssetsResponse;
@@ -65,6 +72,10 @@ export interface ServeAssetsOptions {
 	 * `Cache-Control` value to emit. Defaults to a dev-friendly
 	 * 60-second TTL. Production deployments should hash the asset
 	 * name and switch to `public, max-age=31536000, immutable`.
+	 *
+	 * Note that a TTL alone tells the browser not to ASK for 60 seconds. Pair
+	 * it with `no-cache` while developing — the ETag below then makes the
+	 * revalidation nearly free.
 	 */
 	cacheControl?: string;
 }
@@ -144,10 +155,26 @@ export function serveAssets(
 			return;
 		}
 
+		// A validator, so a cached copy can be CHECKED rather than only trusted
+		// for a fixed time. Without one an edited module was served stale for
+		// the whole TTL with no way for the browser to ask whether it changed —
+		// in development that is a source file, and the answer is usually yes.
+		//
+		// Hashed from the bytes actually being sent rather than from mtime and
+		// size: a checkout, a rebuild or a touched file all move the metadata
+		// without changing the content, and each would needlessly re-download.
+		const etag = `"${createHash("sha1").update(body).digest("base64url")}"`;
 		const type =
 			CONTENT_TYPES[extname(canonicalAbsolute)] ?? "application/octet-stream";
 		ctx.response.header("content-type", type);
 		ctx.response.header("cache-control", cacheControl);
+		ctx.response.header("etag", etag);
+		if (ctx.request.header?.("if-none-match") === etag) {
+			// 304 carries no body, and must not: the browser reuses the copy it
+			// already has.
+			ctx.response.status(304).send("");
+			return;
+		}
 		ctx.response.send(body);
 	};
 }
