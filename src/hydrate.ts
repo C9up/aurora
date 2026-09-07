@@ -143,7 +143,10 @@ function renderValueToNodes(
 		return out;
 	}
 	if (isTemplateResult(value)) {
-		const frag = mount(value, cleanups, [], mountHooks);
+		// The renderer collects hooks in a queue now; hydrate keeps its own
+		// flat list, so it hands one over and takes back what was collected.
+		const nested = { hooks: mountHooks, flushed: false };
+		const frag = mount(value, cleanups, [], nested);
 		return Array.from(frag.childNodes);
 	}
 	if (value instanceof Node) return [value as ChildNode];

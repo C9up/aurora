@@ -32,6 +32,42 @@ import {
 export type Disposer = () => void;
 
 /**
+ * The `onMount` hooks collected while a tree is built, and whether they have
+ * already been run.
+ *
+ * A bare array was not enough. The root flushes it once, after the fragment is
+ * in the document; a reactive slot that swapped its content LATER kept
+ * appending to that same array, and nothing flushed it again — the component's
+ * setup ran, its `onMount` never did, and the hooks piled up for the life of
+ * the page. The flag is what lets a later update tell "collect these, the root
+ * will run them" from "the root is done, run mine myself".
+ */
+interface MountQueue {
+	hooks: Array<EffectCallback>;
+	flushed: boolean;
+}
+
+/**
+ * Run hooks, sending any teardown to `cleanups`.
+ *
+ * Failures are swallowed per hook: one component's bad `onMount` must not stop
+ * its siblings from mounting.
+ */
+function runMountHooks(
+	hooks: Array<EffectCallback>,
+	cleanups: Disposer[],
+): void {
+	for (const hook of hooks) {
+		try {
+			const teardown = hook();
+			if (typeof teardown === "function") cleanups.push(teardown);
+		} catch {
+			/* swallow — one bad onMount should not block sibling components */
+		}
+	}
+}
+
+/**
  * Mount a TemplateResult into `container`. Returns a `Disposer` that
  * stops every reactive effect and removes the mounted nodes. Calling it
  * twice is a no-op.
@@ -42,22 +78,19 @@ export function render(
 ): Disposer {
 	const cleanups: Disposer[] = [];
 	const mountedNodes: ChildNode[] = [];
-	const mountHooks: Array<EffectCallback> = [];
+	const queue: MountQueue = { hooks: [], flushed: false };
 
-	const fragment = mount(result, cleanups, mountedNodes, mountHooks);
+	const fragment = mount(result, cleanups, mountedNodes, queue);
 	container.appendChild(fragment);
 
 	// `onMount` hooks fire after the fragment is live in the document so
 	// callbacks that measure / focus / observe see a real DOM. A returned
 	// cleanup function joins the unmount queue.
-	for (const hook of mountHooks) {
-		try {
-			const teardown = hook();
-			if (typeof teardown === "function") cleanups.push(teardown);
-		} catch {
-			/* swallow — one bad onMount should not block sibling components */
-		}
-	}
+	runMountHooks(queue.hooks, cleanups);
+	queue.hooks = [];
+	// From here on the root never flushes again, so a slot that mounts
+	// something later has to run its own hooks.
+	queue.flushed = true;
 
 	let disposed = false;
 	return () => {
@@ -92,7 +125,7 @@ export function mount(
 	result: TemplateResult,
 	cleanups: Disposer[],
 	mounted: ChildNode[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 ): DocumentFragment {
 	const tpl = getTemplate(result.strings);
 	const fragment = tpl.element.content.cloneNode(true) as DocumentFragment;
@@ -100,7 +133,7 @@ export function mount(
 	// Forward any component()-attached lifecycle from this result.
 	const lifecycle = readComponentLifecycle(result);
 	if (lifecycle) {
-		for (const hook of lifecycle.mountHooks) mountHooks.push(hook);
+		for (const hook of lifecycle.mountHooks) queue.hooks.push(hook);
 		for (const c of lifecycle.cleanups) cleanups.push(c);
 	}
 
@@ -148,7 +181,7 @@ export function mount(
 		if (slot.kind === "attr" && slot.staticParts !== undefined) {
 			collectMultiAttr(slot, node as Element, result.values[i], multiGroups);
 		} else {
-			applySlot(slot, node, result.values[i], cleanups, mounted, mountHooks);
+			applySlot(slot, node, result.values[i], cleanups, mounted, queue);
 		}
 	}
 
@@ -185,18 +218,11 @@ function applySlot(
 	value: unknown,
 	cleanups: Disposer[],
 	mounted: ChildNode[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 ): void {
 	switch (slot.kind) {
 		case "text":
-			applyTextSlot(
-				slot,
-				node as Comment,
-				value,
-				cleanups,
-				mounted,
-				mountHooks,
-			);
+			applyTextSlot(slot, node as Comment, value, cleanups, mounted, queue);
 			return;
 		case "attr":
 			applyAttrSlot(slot, node as Element, value, cleanups);
@@ -225,7 +251,7 @@ function applyTextSlot(
 	value: unknown,
 	cleanups: Disposer[],
 	mounted: ChildNode[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 ): void {
 	let currentNodes: ChildNode[] = [];
 	// Per-render disposers for whatever the slot currently shows. A
@@ -246,18 +272,36 @@ function applyTextSlot(
 		disposeLocal();
 		for (const n of currentNodes) n.remove();
 		currentNodes = [];
-		const nodes = renderValueIntoNodes(
-			newValue,
-			localCleanups,
-			mounted,
-			mountHooks,
-		);
+		// This render's hooks are collected apart from the shared queue,
+		// whichever phase we are in, because their TEARDOWNS belong to this
+		// slot: the next swap must dispose what it replaces. Left on the root's
+		// list, a component mounted per row kept its subscription until the
+		// whole page unmounted.
+		//
+		// `flushed` is inherited so a deeper slot built during this render
+		// still knows whether the root has a flush coming.
+		const own: MountQueue = { hooks: [], flushed: queue.flushed };
+		const nodes = renderValueIntoNodes(newValue, localCleanups, mounted, own);
 		const parent = anchor.parentNode;
 		if (!parent) return;
 		for (const n of nodes) {
 			parent.insertBefore(n, anchor);
 			currentNodes.push(n);
 		}
+		if (queue.flushed) {
+			// After insertion, exactly as at the root: an `onMount` that
+			// measures, focuses or observes has to see a live node.
+			runMountHooks(own.hooks, localCleanups);
+			return;
+		}
+		// Still building the initial tree: the nodes are in a detached
+		// fragment, so defer to the root's flush. One wrapper carries them, and
+		// it returns nothing — the real teardowns go to `localCleanups`, not to
+		// the root.
+		const pending = own.hooks;
+		queue.hooks.push(() => {
+			runMountHooks(pending.splice(0), localCleanups);
+		});
 	}
 
 	if (isSignal(value) || typeof value === "function") {
@@ -282,18 +326,18 @@ function renderValueIntoNodes(
 	value: unknown,
 	cleanups: Disposer[],
 	mounted: ChildNode[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 ): ChildNode[] {
 	if (value === null || value === undefined || value === false) return [];
 	if (Array.isArray(value)) {
 		const out: ChildNode[] = [];
 		for (const item of value) {
-			out.push(...renderValueIntoNodes(item, cleanups, mounted, mountHooks));
+			out.push(...renderValueIntoNodes(item, cleanups, mounted, queue));
 		}
 		return out;
 	}
 	if (isTemplateResult(value)) {
-		const frag = mount(value, cleanups, mounted, mountHooks);
+		const frag = mount(value, cleanups, mounted, queue);
 		return Array.from(frag.childNodes);
 	}
 	if (value instanceof Node) {
