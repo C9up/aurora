@@ -83,8 +83,11 @@ export default class AuroraProvider {
 	}
 
 	async start(): Promise<void> {
-		// Asset routes are registered in `start()` — after preloads — so apps can
-		// swap aurora's pages root in a preload if they wanted to.
+		// Asset routes are registered in `start()`, which runs BEFORE the
+		// preloads — providers start, then the `starting` hooks, then the
+		// preloads are imported. An earlier version of this comment claimed the
+		// opposite; an app that wanted to swap aurora's pages root has to do it
+		// from a provider, not from a preload.
 		//
 		// Resolve the host router from the container, where Ream registers it as
 		// `'router'` (Ignitor). Reading it from the container — instead of
