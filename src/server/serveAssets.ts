@@ -29,6 +29,27 @@ export function packageAssetDir(specifier: string): string {
 	return dirname(fileURLToPath(import.meta.resolve(specifier)));
 }
 
+/**
+ * Does `If-None-Match` cover this entity? (RFC 9110 §13.1.2)
+ *
+ * A strict `===` answered 200 for three shapes a real client sends: `*`, a
+ * comma-separated list of tags, and the weak form `W/"…"` — so a browser
+ * holding the exact bytes re-downloaded them anyway, which is most of what the
+ * validator exists to prevent. Written here rather than imported because aurora
+ * does not depend on ream; the same function lives in `ream/src/http/etag.ts`.
+ */
+function matchesIfNoneMatch(header: string | undefined, tag: string): boolean {
+	if (header === undefined || header === "" || tag === "") return false;
+	// `*` means "any current representation", so a stored copy always matches.
+	if (header.trim() === "*") return true;
+	const bare = (value: string): string =>
+		value.startsWith("W/") ? value.slice(2) : value;
+	const current = bare(tag);
+	return header
+		.split(",")
+		.some((candidate) => bare(candidate.trim()) === current);
+}
+
 const CONTENT_TYPES: Record<string, string> = {
 	".js": "text/javascript; charset=utf-8",
 	".mjs": "text/javascript; charset=utf-8",
@@ -169,7 +190,7 @@ export function serveAssets(
 		ctx.response.header("content-type", type);
 		ctx.response.header("cache-control", cacheControl);
 		ctx.response.header("etag", etag);
-		if (ctx.request.header?.("if-none-match") === etag) {
+		if (matchesIfNoneMatch(ctx.request.header?.("if-none-match"), etag)) {
 			// 304 carries no body, and must not: the browser reuses the copy it
 			// already has.
 			ctx.response.status(304).send("");

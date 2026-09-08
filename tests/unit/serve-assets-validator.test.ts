@@ -113,3 +113,60 @@ describe("aurora > serveAssets validators", () => {
 		expect(probe.read().body).toBe("x");
 	});
 });
+
+/**
+ * `If-None-Match` is a list, not a string.
+ *
+ * A strict `===` answered 200 for three shapes a real client sends — `*`, a
+ * comma-separated list, and the weak form `W/"…"` — so a browser holding the
+ * exact bytes downloaded them again, which is most of what the validator exists
+ * to prevent.
+ */
+describe("aurora > matching If-None-Match", () => {
+	async function etagFor(content: string) {
+		const handler = serveAssets({ root: await fixture("page.js", content) });
+		const probe = call("page.js");
+		await handler(probe.ctx);
+		const tag = probe.read().headers.etag;
+		if (tag === undefined) throw new Error("no ETag");
+		return { handler, tag };
+	}
+
+	it("answers 304 to a list containing the tag", async () => {
+		const { handler, tag } = await etagFor("export const a = 1");
+		const probe = call("page.js", { "if-none-match": `"other", ${tag}` });
+
+		await handler(probe.ctx);
+
+		expect(probe.read().status).toBe(304);
+	});
+
+	it("answers 304 to the weak form of the same tag", async () => {
+		const { handler, tag } = await etagFor("export const a = 1");
+		const probe = call("page.js", { "if-none-match": `W/${tag}` });
+
+		await handler(probe.ctx);
+
+		expect(probe.read().status).toBe(304);
+	});
+
+	it("answers 304 to `*`", async () => {
+		// "any current representation" — a stored copy always matches.
+		const { handler } = await etagFor("export const a = 1");
+		const probe = call("page.js", { "if-none-match": "*" });
+
+		await handler(probe.ctx);
+
+		expect(probe.read().status).toBe(304);
+	});
+
+	it("still sends the body when the tag does not match", async () => {
+		const { handler } = await etagFor("export const a = 1");
+		const probe = call("page.js", { "if-none-match": '"stale", "older"' });
+
+		await handler(probe.ctx);
+
+		expect(probe.read().status).toBe(200);
+		expect(probe.read().body).toBe("export const a = 1");
+	});
+});
