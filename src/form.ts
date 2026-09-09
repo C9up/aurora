@@ -45,7 +45,7 @@ export interface FormValidationOutcome {
  * Anything schema-shaped (a `@c9up/rune` schema satisfies this).
  *
  * Both spellings are accepted, and `validateResult` wins when present: rune
- * reserves `validate()` for the VineJS contract (async, throwing), and reading
+ * reserves `validate()` for the async, throwing contract, and reading
  * `.valid` off a Promise yields `undefined` — the form would then report itself
  * invalid with no error to show.
  */
