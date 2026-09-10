@@ -61,17 +61,17 @@
     }
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.10",
+    "@biomejs/biome": "^2.5.12",
     "@c9up/comet": "^0.1.0",
-    "@types/node": "^22.19.15",
+    "@c9up/ream": "^0.2.0",
+    "@types/node": "^22.20.1",
     "@vitest/browser": "4.1.11",
     "@vitest/browser-playwright": "4.1.11",
-    "@vitest/coverage-v8": "4.1.9",
+    "@vitest/coverage-v8": "4.1.11",
     "jsdom": "^30.0.1",
-    "playwright": "^1.61.1",
-    "typescript": "^6.0.2",
-    "vitest": "4.1.9",
-    "@c9up/ream": "^0.2.0"
+    "playwright": "^1.63.0",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.11"
   },
   "files": [
     "LICENSE",
