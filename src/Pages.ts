@@ -14,6 +14,7 @@
  * stem (with or without the `.js` extension).
  */
 
+import { existsSync } from "node:fs";
 import { resolve as resolvePath, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { TemplateResult } from "./types.js";
@@ -131,11 +132,7 @@ export class Pages {
 		try {
 			mod = (await import(urlHref)) as { default?: unknown };
 		} catch (err) {
-			throw new Error(
-				`[aurora] page "${name}" not found at ${absolute} — ${
-					(err as Error).message
-				}`,
-			);
+			throw pageImportError(name, absolute, err, isDev);
 		}
 		if (typeof mod.default !== "function") {
 			throw new Error(
@@ -153,6 +150,65 @@ export class Pages {
 		assertSafeName(name);
 		return `${this.urlPrefix}/${name}${this.extension}`;
 	}
+}
+
+/**
+ * Tell "this page does not exist" apart from "this page exists and its module
+ * graph refused to load".
+ *
+ * `import()` fails for many reasons that say nothing about whether the page is
+ * there: a syntax error anywhere in the graph, a throw at module top level, an
+ * export missing from a transitively imported module. Reporting every one of
+ * them as "not found", against the page's own path, sends the reader to the one
+ * file that is certainly present, while the real cause arrives at the end of the
+ * sentence naming a module the message never said was involved.
+ *
+ * The question is answered from the filesystem, not from the error text. Node
+ * raises `ERR_MODULE_NOT_FOUND` for a missing specifier ANYWHERE in the graph
+ * and names the page in both cases — as the missing module when it IS the page,
+ * and as the IMPORTER when a transitive is missing:
+ *
+ *   Cannot find module '<missing>' imported from '<importer>'
+ *
+ * so a substring test mis-sorts the second. Parsing the message is worse than
+ * fragile anyway: under a loader that is not plain Node (Vite's module runner,
+ * say) the text is different entirely. Whether the page is on disk is the same
+ * question under every loader.
+ *
+ * @internal exported for the tests that assert the classification
+ */
+export function pageImportError(
+	name: string,
+	absolute: string,
+	cause: unknown,
+	isDev: boolean,
+): Error {
+	const error = cause instanceof Error ? cause : new Error(String(cause));
+
+	if (!existsSync(absolute)) {
+		return new Error(`[aurora] page "${name}" not found at ${absolute}`, {
+			cause: error,
+		});
+	}
+
+	// A missing export is raised at link time as a SyntaxError, and it names the
+	// specifier it could not satisfy. In dev that has a second cause worth
+	// naming: the page URL is busted by mtime, its imports are not, so a module
+	// edited on disk can stay frozen in the ESM cache for the life of the
+	// process while the page around it is re-read on every request. The export
+	// is then genuinely in the file and genuinely absent from the loaded module.
+	const stale =
+		isDev && error.message.includes("does not provide an export named")
+			? "\n  That export may well be on disk. Only the page URL is cache-busted here," +
+				"\n  so an edited module it imports can stay frozen in this process's ESM cache." +
+				"\n  Restart the server, or run it under a loader hook that invalidates a page's" +
+				"\n  dependents (hot-hook)."
+			: "";
+
+	return new Error(
+		`[aurora] page "${name}" loaded from ${absolute} but its module graph failed: ${error.message}${stale}`,
+		{ cause: error },
+	);
 }
 
 function assertSafeName(name: string): void {

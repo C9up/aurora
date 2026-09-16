@@ -16,7 +16,13 @@ export {
 	type AuroraRequestRenderer,
 	auroraContext,
 } from "./middleware.js";
-export { type PageFactory, Pages, type PagesConfig } from "./Pages.js";
+export {
+	type PageFactory,
+	Pages,
+	type PagesConfig,
+	/** @internal classification seam, asserted by the tests */
+	pageImportError,
+} from "./Pages.js";
 export {
 	type RenderHttpContext,
 	type RenderPageOptions,

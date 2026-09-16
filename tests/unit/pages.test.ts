@@ -2,7 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { html, renderToString } from "../../src/index.js";
-import { Pages } from "../../src/server.js";
+import { Pages, pageImportError } from "../../src/server.js";
 
 const FIXTURES = resolve(
 	dirname(fileURLToPath(import.meta.url)),
@@ -148,6 +148,105 @@ describe("aurora > Pages > hot-reload (dev only)", () => {
 			expect(v2).toBe("A");
 		} finally {
 			process.env.NODE_ENV = prev;
+			cleanup();
+		}
+	});
+});
+
+describe("aurora > Pages > why an import failed", () => {
+	// Every failure used to be reported as "page not found", against the page's
+	// own path — the one file guaranteed to be present. These three cases are
+	// distinguishable, and the message has to distinguish them, because the
+	// reader goes wherever it points.
+
+	/** The rejection, or a failure saying the call unexpectedly succeeded. */
+	async function rejection(promise: Promise<unknown>): Promise<Error> {
+		try {
+			await promise;
+		} catch (err) {
+			if (err instanceof Error) return err;
+			throw new Error(`expected an Error, got ${typeof err}`);
+		}
+		throw new Error("expected resolve() to reject, but it succeeded");
+	}
+
+	async function pageDir(label: string) {
+		const { writeFileSync } = await import("node:fs");
+		const { join } = await import("node:path");
+		const { root, cleanup } = await setupHotReloadTmp(label);
+		return {
+			root,
+			cleanup,
+			write: (file: string, source: string) => {
+				writeFileSync(join(root, file), source);
+			},
+		};
+	}
+
+	it("says 'not found' only when the PAGE is the missing module", async () => {
+		const { root, cleanup } = await pageDir("absent");
+		try {
+			const pages = new Pages({ root, extension: ".js" });
+			await expect(pages.resolve("Ghost")).rejects.toThrow(/not found/);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("does not call a page 'not found' when a module it imports is the missing one", async () => {
+		const { root, cleanup, write } = await pageDir("missing-dep");
+		try {
+			// Node names the page here too — as the IMPORTER ("imported from
+			// <page>"). A substring check would have mis-sorted this case.
+			write(
+				"Pocket.js",
+				"import { x } from './services.js';\nexport default () => x;\n",
+			);
+			const pages = new Pages({ root, extension: ".js" });
+			const error = await rejection(pages.resolve("Pocket"));
+			expect(error.message).not.toMatch(/not found/);
+			expect(error.message).toMatch(/module graph failed/);
+			expect(error.message).toContain("services.js");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("names the stale-cache trap for a link-time missing export, in dev only", () => {
+		// Vitest cannot stage this end-to-end: Vite's SSR transform rewrites
+		// imports into property accesses, so a missing export reads as
+		// `undefined` and the module links fine. The link-time SyntaxError below
+		// is the verbatim shape a real Node process raises (measured, not
+		// recalled), so the classification is what is under test here.
+		const linkError = new SyntaxError(
+			"The requested module './services.js' does not provide an export named 'amountParts'",
+		);
+		// A page that really is on disk: the whole point is that the page is
+		// present and something it imports is what broke.
+		const page = resolve(FIXTURES, "Hello.js");
+
+		const dev = pageImportError("Hello", page, linkError, true);
+		expect(dev.message).not.toMatch(/not found/);
+		expect(dev.message).toContain("./services.js");
+		expect(dev.message).toMatch(/frozen in this process's ESM cache/);
+		expect(dev.cause).toBe(linkError);
+
+		// In production the page URL is not cache-busted either, so the hint
+		// would be a wrong explanation rather than a helpful one.
+		const prod = pageImportError("Hello", page, linkError, false);
+		expect(prod.message).toContain("./services.js");
+		expect(prod.message).not.toMatch(/ESM cache/);
+	});
+
+	it("keeps the original error as `cause` instead of flattening it to a string", async () => {
+		const { root, cleanup, write } = await pageDir("cause");
+		try {
+			write("Broken.js", "export default () => {\n");
+			const pages = new Pages({ root, extension: ".js" });
+			const error = await rejection(pages.resolve("Broken"));
+			// Flattening into the message loses the stack that points at the line.
+			expect(error.cause).toBeInstanceOf(Error);
+		} finally {
 			cleanup();
 		}
 	});
