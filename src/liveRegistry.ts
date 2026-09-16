@@ -11,6 +11,8 @@
  * and node-free (only `mountLiveSession` + `crypto.randomUUID`, both isomorphic).
  */
 
+import { AuroraError } from "./errors.js";
+
 import {
 	type LiveComponentDefinition,
 	type LiveSession,
@@ -75,7 +77,8 @@ export function createLiveRegistry(): LiveRegistry {
 		mount(name, ownerId) {
 			const factory = defs.get(name);
 			if (!factory) {
-				throw new Error(
+				throw new AuroraError(
+					"E_AURORA_UNKNOWN_LIVE_COMPONENT",
 					`[aurora:live] unknown live component "${name}" — register it with registry.define("${name}", …) before mounting.`,
 				);
 			}

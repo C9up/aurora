@@ -25,6 +25,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setCookieStoreReader } from "../browser.js";
+import { AuroraError } from "../errors.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
 import { setRouteManifestReader } from "../url.js";
@@ -331,7 +332,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeRootTag(tag: string): string {
 	if (/^[a-z][a-z0-9-]*$/i.test(tag)) return tag.toLowerCase();
-	throw new Error(`[aurora] illegal root tag: ${JSON.stringify(tag)}`);
+	throw new AuroraError(
+		"E_AURORA_ILLEGAL_ROOT_TAG",
+		`[aurora] illegal root tag: ${JSON.stringify(tag)}`,
+	);
 }
 
 function rootAttrs(id: string, className: string | undefined): string {

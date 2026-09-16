@@ -17,6 +17,8 @@
  * side. Node-free — part of aurora's client runtime.
  */
 
+import { AuroraError } from "./errors.js";
+
 let manifest: Record<string, string> = {};
 
 type RouteManifestReader = () => Record<string, string> | undefined;
@@ -65,7 +67,8 @@ export function urlFor(
 	const pattern = routes[name];
 	if (pattern === undefined) {
 		const known = Object.keys(routes);
-		throw new Error(
+		throw new AuroraError(
+			"E_AURORA_UNKNOWN_ROUTE",
 			`[aurora] urlFor: unknown route '${name}'. ${
 				known.length > 0
 					? `Known: ${known.join(", ")}`
@@ -91,7 +94,8 @@ export function urlFor(
 
 	const missing = url.match(/:[A-Za-z_][\w]*/g);
 	if (missing && missing.length > 0) {
-		throw new Error(
+		throw new AuroraError(
+			"E_AURORA_MISSING_ROUTE_PARAMS",
 			`[aurora] urlFor: route '${name}' is missing params ${missing.join(", ")}`,
 		);
 	}

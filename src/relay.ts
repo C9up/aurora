@@ -18,6 +18,7 @@
  * `EventSource` being undefined.
  */
 
+import { AuroraError } from "./errors.js";
 import { xsrfHeaderFor } from "./xsrf.js";
 
 /**
@@ -334,7 +335,10 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 		credentials: "include",
 	});
 	if (!res.ok) {
-		throw new Error(`HTTP ${res.status}`);
+		throw new AuroraError(
+			"E_AURORA_RELAY_REQUEST_FAILED",
+			`[aurora:relay] HTTP ${res.status}`,
+		);
 	}
 }
 

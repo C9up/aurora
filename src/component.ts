@@ -19,6 +19,7 @@
  * actually moves on screen.
  */
 
+import { AuroraError } from "./errors.js";
 import { setOwner } from "./reactive.js";
 import type { Disposer } from "./render.js";
 import type { EffectCallback, TemplateResult } from "./types.js";
@@ -40,7 +41,8 @@ const contextStack: ComponentContext[] = [];
 function activeContext(): ComponentContext {
 	const ctx = contextStack[contextStack.length - 1];
 	if (!ctx) {
-		throw new Error(
+		throw new AuroraError(
+			"E_AURORA_OUTSIDE_COMPONENT",
 			"[aurora] onMount / onUnmount called outside component() — only valid inside a component setup function.",
 		);
 	}

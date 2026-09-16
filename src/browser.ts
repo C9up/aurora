@@ -12,6 +12,7 @@
  * client barrel.
  */
 
+import { AuroraError } from "./errors.js";
 import { effect, onCleanup, type Signal, signal } from "./reactive.js";
 
 /** Navigate to `url` with a full page load. No-op during SSR. */
@@ -403,7 +404,10 @@ function safeNavigationUrl(url: string): string {
 		normalized.startsWith("vbscript:") ||
 		normalized.startsWith("data:")
 	) {
-		throw new Error(`[aurora] blocked unsafe navigation URL: ${url}`);
+		throw new AuroraError(
+			"E_AURORA_UNSAFE_URL",
+			`[aurora] blocked unsafe navigation URL: ${url}`,
+		);
 	}
 	return url;
 }

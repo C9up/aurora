@@ -12,6 +12,7 @@
 import "./augmentations.js";
 
 export { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
+export { AuroraError, type AuroraErrorCode } from "./errors.js";
 export {
 	type AuroraRequestRenderer,
 	auroraContext,

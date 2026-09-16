@@ -21,6 +21,8 @@
  * placeholders.
  */
 
+import { AuroraError } from "./errors.js";
+
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
@@ -223,7 +225,8 @@ function collectSlots(
 				const cls = classification[slotIndex];
 				if (cls === undefined) return;
 				if (cls.region !== "text") {
-					throw new Error(
+					throw new AuroraError(
+						"E_AURORA_INTERNAL",
 						`[aurora] internal classification mismatch at slot ${slotIndex}`,
 					);
 				}
