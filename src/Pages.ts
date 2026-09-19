@@ -17,6 +17,7 @@
 import { existsSync } from "node:fs";
 import { resolve as resolvePath, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { newestMtime, registerDevPageHooks } from "./devPageReload.js";
 import { AuroraError } from "./errors.js";
 import type { TemplateResult } from "./types.js";
 
@@ -114,21 +115,27 @@ export class Pages {
 		// the first-imported version of the page for the whole process
 		// lifetime — pages edited on disk would NOT be picked up even
 		// when the app runs under a file watcher. In dev mode we bust
-		// the URL with the file's mtime so a real change yields a new
-		// cache key and triggers a re-import. In production we keep
-		// the stable URL — page sources don't change post-deploy and
-		// busting per-request would leak memory (each unique URL stays
-		// resident in the ESM loader for the process lifetime).
+		// the URL so a real change yields a new cache key and triggers
+		// a re-import. In production we keep the stable URL — page
+		// sources don't change post-deploy and busting per-request
+		// would leak memory (each unique URL stays resident in the ESM
+		// loader for the process lifetime).
+		//
+		// **The token is the newest mtime in the TREE, not this file's.**
+		// A page's layout, its organisms and the services it imports are
+		// separate modules; keyed on the page's own mtime, editing any of
+		// them leaves this URL unchanged, so Node serves the cached page
+		// and never re-resolves what it imports. That made "edit a page"
+		// reload and "edit a template" not, which reads from the outside
+		// as the server caching files. See `devPageReload.ts`, and
+		// `devPageHooks.ts` for the other half: the page re-imports, and
+		// its imports need their own fresh keys to follow.
 		const isDev = process.env.NODE_ENV !== "production";
 		let urlHref = pathToFileURL(absolute).href;
 		if (isDev) {
-			try {
-				const { statSync } = await import("node:fs");
-				urlHref = `${urlHref}?v=${statSync(absolute).mtimeMs}`;
-			} catch {
-				// stat failed → fall back to stable URL; the import below
-				// will surface the underlying ENOENT.
-			}
+			await registerDevPageHooks(this.root);
+			const stamp = newestMtime(this.root);
+			if (stamp !== null) urlHref = `${urlHref}?v=${stamp}`;
 		}
 		let mod: { default?: unknown };
 		try {

@@ -251,3 +251,77 @@ describe("aurora > Pages > why an import failed", () => {
 		}
 	});
 });
+
+describe("aurora > Pages > reloading what a page imports", () => {
+	/**
+	 * **Editing a page reloaded; editing what it imports did not.**
+	 *
+	 * The cache-busting query was stamped with the page file's own mtime, so a
+	 * change to a layout left the page's URL identical — Node served the cached
+	 * module and never re-resolved its imports. From the outside that reads as
+	 * the server caching files, which sent at least one person looking at the
+	 * static middleware instead.
+	 *
+	 * The two halves are tested where they are pure. The reload ITSELF is a
+	 * property of Node's module registry, not of this package: vitest resolves
+	 * dynamic imports itself and does not honour a `file://` URL carrying a
+	 * query, so an end-to-end assertion here would be testing the runner. It is
+	 * verified against a real node process instead — see the package notes.
+	 */
+	it("takes its token from the newest file in the tree, not the page", async () => {
+		const { mkdtempSync, writeFileSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { newestMtime } = await import("../../src/devPageReload.js");
+
+		const root = mkdtempSync(join(tmpdir(), "aurora-mtime-"));
+		writeFileSync(join(root, "Page.js"), "export default () => null\n", "utf8");
+		const before = newestMtime(root);
+		expect(before).not.toBeNull();
+
+		// A nested file, written later: a layout is what a page imports, and it
+		// is the case the old token could not see.
+		const { mkdirSync } = await import("node:fs");
+		mkdirSync(join(root, "templates"));
+		await new Promise((done) => setTimeout(done, 25));
+		writeFileSync(join(root, "templates", "Layout.js"), "export const a = 1\n", "utf8");
+
+		const after = newestMtime(root);
+		expect(after).not.toBeNull();
+		expect(after as number).toBeGreaterThan(before as number);
+	});
+
+	it("stamps an import under the root, and leaves everything else alone", async () => {
+		const { mkdtempSync, writeFileSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { pathToFileURL } = await import("node:url");
+		const hooks = await import("../../src/devPageHooks.js");
+
+		const root = mkdtempSync(join(tmpdir(), "aurora-hook-"));
+		const inside = join(root, "Layout.js");
+		writeFileSync(inside, "export const a = 1\n", "utf8");
+		hooks.initialize({ root });
+
+		const passthrough = (url: string) => async () => ({ url, format: "module" });
+
+		// A module the page imports: it gets its own mtime, so it re-imports when
+		// IT changes and stays cached when it does not.
+		const stamped = await hooks.resolve("./Layout.js", { conditions: [], importAttributes: {} }, passthrough(pathToFileURL(inside).href));
+		expect(stamped.url).toMatch(/\?v=\d/);
+
+		/**
+		 * A URL `Pages` has already versioned is left alone. It carries the
+		 * NEWEST mtime in the tree — which is what makes the page re-import when
+		 * a layout changes — and re-stamping it with the page's own mtime would
+		 * reintroduce exactly the bug, one level up.
+		 */
+		const already = `${pathToFileURL(inside).href}?v=1`;
+		expect((await hooks.resolve("./Layout.js", { conditions: [], importAttributes: {} }, passthrough(already))).url).toBe(already);
+
+		// And nothing outside the pages root is touched: node_modules is not a
+		// place where an edit should invalidate anything.
+		const outside = pathToFileURL(join(tmpdir(), "elsewhere.js")).href;
+		expect((await hooks.resolve("x", { conditions: [], importAttributes: {} }, passthrough(outside))).url).toBe(outside);
+	});
+});
