@@ -284,7 +284,11 @@ describe("aurora > Pages > reloading what a page imports", () => {
 		const { mkdirSync } = await import("node:fs");
 		mkdirSync(join(root, "templates"));
 		await new Promise((done) => setTimeout(done, 25));
-		writeFileSync(join(root, "templates", "Layout.js"), "export const a = 1\n", "utf8");
+		writeFileSync(
+			join(root, "templates", "Layout.js"),
+			"export const a = 1\n",
+			"utf8",
+		);
 
 		const after = newestMtime(root);
 		expect(after).not.toBeNull();
@@ -303,11 +307,18 @@ describe("aurora > Pages > reloading what a page imports", () => {
 		writeFileSync(inside, "export const a = 1\n", "utf8");
 		hooks.initialize({ root });
 
-		const passthrough = (url: string) => async () => ({ url, format: "module" });
+		const passthrough = (url: string) => async () => ({
+			url,
+			format: "module",
+		});
 
 		// A module the page imports: it gets its own mtime, so it re-imports when
 		// IT changes and stays cached when it does not.
-		const stamped = await hooks.resolve("./Layout.js", { conditions: [], importAttributes: {} }, passthrough(pathToFileURL(inside).href));
+		const stamped = await hooks.resolve(
+			"./Layout.js",
+			{ conditions: [], importAttributes: {} },
+			passthrough(pathToFileURL(inside).href),
+		);
 		expect(stamped.url).toMatch(/\?v=\d/);
 
 		/**
@@ -317,11 +328,27 @@ describe("aurora > Pages > reloading what a page imports", () => {
 		 * reintroduce exactly the bug, one level up.
 		 */
 		const already = `${pathToFileURL(inside).href}?v=1`;
-		expect((await hooks.resolve("./Layout.js", { conditions: [], importAttributes: {} }, passthrough(already))).url).toBe(already);
+		expect(
+			(
+				await hooks.resolve(
+					"./Layout.js",
+					{ conditions: [], importAttributes: {} },
+					passthrough(already),
+				)
+			).url,
+		).toBe(already);
 
 		// And nothing outside the pages root is touched: node_modules is not a
 		// place where an edit should invalidate anything.
 		const outside = pathToFileURL(join(tmpdir(), "elsewhere.js")).href;
-		expect((await hooks.resolve("x", { conditions: [], importAttributes: {} }, passthrough(outside))).url).toBe(outside);
+		expect(
+			(
+				await hooks.resolve(
+					"x",
+					{ conditions: [], importAttributes: {} },
+					passthrough(outside),
+				)
+			).url,
+		).toBe(outside);
 	});
 });

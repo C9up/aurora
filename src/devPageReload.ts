@@ -16,21 +16,30 @@
  * per-request busting would leak: every distinct URL stays resident in the ESM
  * registry for the process lifetime.
  *
- * **Measured 2026-09-19, and it decides what this can and cannot do.** The
- * whole approach rests on Node keying modules by full URL, query included. That
- * holds under plain Node — importing `Page.js?v=1` then `Page.js?v=2` yields two
- * instances, and the second sees the edit. Under `tsx` it does NOT: its loader
- * normalises the query away, so both imports return the same instance and every
- * registered `resolve` hook is bypassed for a relative specifier. So under a
- * TypeScript runner this file changes nothing, including the page-level busting
- * that predates it, and the only reload left is restarting the process — which
- * is what a watcher is for, and why a dev script should watch the page sources
- * as well as the server's own.
+ * **Measured 2026-09-19, and re-measured before it was written down.** The
+ * whole approach rests on Node keying modules by full URL, query included, and
+ * on a registered `resolve` hook being consulted for every specifier. Both hold
+ * under plain Node AND under `tsx` — checked at tsx 4.7.0, 4.19.2 and 4.23.13,
+ * under `tsx` and `tsx watch`, with pages written as `.js` and as `.ts`, on
+ * Node 25. Importing `Page.js?v=1` then `Page.js?v=2` yields two instances in
+ * every one of those, and an edited template is visible in the second.
  *
- * That is a property of the runner, not something this package can fix from
- * inside. It is written down here because the symptom — "my template edits do
- * nothing" — points at a file cache, and the last person to chase it went
- * looking in the static middleware.
+ * That is worth stating because the opposite was believed first, and the belief
+ * would have closed the question: "the runner normalises the query away, so
+ * nothing here can work" reads as a fact about tsx and sends the next reader to
+ * configure a watcher instead. **A hook registration that fails silently is
+ * indistinguishable from a runner that ignores hooks** — which is what the
+ * `.js`/`.ts` bug below produced, and why it is the first thing to check if
+ * reloading ever appears not to work. Re-measuring costs two imports:
+ *
+ * ```js
+ * const a = await import("./mod.js?v=1")
+ * const b = await import("./mod.js?v=2")   // a !== b, under every runner tried
+ * ```
+ *
+ * A watcher is still worth having for the server's own sources. It is no longer
+ * needed for pages and templates, and watching them costs a full restart where
+ * this costs one re-import.
  */
 
 import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
