@@ -118,6 +118,22 @@ export default class AuroraProvider {
 		if (cometHandler) {
 			router.get(`${manager.cometAssetPath}/*`, adaptHandler(cometHandler));
 		}
+		// chronos the same way, but in TWO routes rather than one: its dist
+		// imports `../wasm/…`, a sibling directory, and the bindgen glue then
+		// fetches the binary beside itself. One route over the package root
+		// would serve both and also publish the five `.node` binaries.
+		const chronosDist = manager.chronosDistHandler();
+		const chronosWasm = manager.chronosWasmHandler();
+		if (chronosDist && chronosWasm) {
+			router.get(
+				`${manager.chronosAssetPath}/dist/*`,
+				adaptHandler(chronosDist),
+			);
+			router.get(
+				`${manager.chronosAssetPath}/wasm/*`,
+				adaptHandler(chronosWasm),
+			);
+		}
 	}
 
 	async ready(): Promise<void> {}

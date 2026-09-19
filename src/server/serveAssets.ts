@@ -56,6 +56,11 @@ const CONTENT_TYPES: Record<string, string> = {
 	".map": "application/json; charset=utf-8",
 	".css": "text/css; charset=utf-8",
 	".json": "application/json; charset=utf-8",
+	// `application/wasm` is not cosmetic: `WebAssembly.instantiateStreaming`
+	// REFUSES any other type, and wasm-bindgen's browser glue calls it first.
+	// Served as octet-stream, a module compiles nowhere and the fallback path
+	// is what is left.
+	".wasm": "application/wasm",
 };
 
 export interface AssetsRequest {

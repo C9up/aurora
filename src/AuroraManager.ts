@@ -59,6 +59,13 @@ export interface AuroraManagerConfig {
 	 */
 	cometDistRoot?: string;
 	/**
+	 * Filesystem path to `@c9up/chronos`'s `dist/`. Defaults to the dist of the
+	 * installed (optional-peer) chronos, so `import '@c9up/chronos'` resolves in
+	 * the no-bundler browser with no app wiring. Left unserved when chronos
+	 * isn't installed.
+	 */
+	chronosDistRoot?: string;
+	/**
 	 * URL prefix the asset routes mount under. The aurora runtime is served
 	 * from `<assetsPrefix>/aurora/*` and the app's pages from
 	 * `<assetsPrefix>/pages/*`, and the SSR importmap + page URLs derive from
@@ -100,6 +107,14 @@ function resolveCometDist(): string | null {
 	}
 }
 
+function resolveChronosDist(): string | null {
+	try {
+		return packageAssetDir("@c9up/chronos");
+	} catch {
+		return null;
+	}
+}
+
 /** Normalize an asset prefix: ensure a leading slash, drop trailing slashes. */
 function normalizePrefix(prefix: string): string {
 	const withLead = prefix.startsWith("/") ? prefix : `/${prefix}`;
@@ -119,6 +134,21 @@ export class AuroraManager {
 	readonly cometAssetPath: string;
 	/** Resolved `@c9up/comet` dist dir, or `null` when comet isn't installed. */
 	readonly cometDistRoot: string | null;
+	/** Mount path for the `@c9up/chronos` runtime — `<assetsPrefix>/chronos`. */
+	readonly chronosAssetPath: string;
+	/** Resolved `@c9up/chronos` dist dir, or `null` when chronos isn't installed. */
+	readonly chronosDistRoot: string | null;
+	/**
+	 * Resolved `@c9up/chronos` `wasm/` dir, a SIBLING of its dist.
+	 *
+	 * chronos is not comet: its `dist/native.js` reaches out with
+	 * `import("../wasm/chronos_engine_wasm.js")`, and the glue then fetches
+	 * `..._bg.wasm` next to itself. Serving the dist alone answers 404 for both,
+	 * and serving the package root instead would publish the five `.node`
+	 * binaries — some 13 MB of server-only code — over HTTP. Two narrow roots
+	 * keep the relative path working and expose nothing else.
+	 */
+	readonly chronosWasmRoot: string | null;
 	/** App-level importmap overrides from `config/aurora.ts`, merged on render. */
 	readonly importmap: Record<string, string>;
 	/** App-level shared props from config/aurora.ts. */
@@ -134,6 +164,11 @@ export class AuroraManager {
 		this.pageAssetPath = `${this.assetsPrefix}/pages`;
 		this.cometAssetPath = `${this.assetsPrefix}/comet`;
 		this.cometDistRoot = config.cometDistRoot ?? resolveCometDist();
+		this.chronosAssetPath = `${this.assetsPrefix}/chronos`;
+		this.chronosDistRoot = config.chronosDistRoot ?? resolveChronosDist();
+		this.chronosWasmRoot = this.chronosDistRoot
+			? resolvePath(this.chronosDistRoot, "..", "wasm")
+			: null;
 		this.importmap = config.importmap ?? {};
 		this.shared = config.shared;
 		this.root = config.root;
@@ -190,6 +225,12 @@ export class AuroraManager {
 				...(this.cometDistRoot
 					? { "@c9up/comet": `${this.cometAssetPath}/index.js` }
 					: {}),
+				// Same for chronos. The entry points INTO `dist/`, so the
+				// `../wasm/…` its native module asks for resolves to the sibling
+				// route below rather than escaping the mount.
+				...(this.chronosDistRoot
+					? { "@c9up/chronos": `${this.chronosAssetPath}/dist/index.js` }
+					: {}),
 				// Config-level overrides (config/aurora.ts) — Adonis-style config-driven,
 				// so controllers never hand-write an importmap. A per-call override wins.
 				...this.importmap,
@@ -233,6 +274,27 @@ export class AuroraManager {
 	cometAssetsHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
 		return this.cometDistRoot
 			? serveAssets({ root: this.cometDistRoot })
+			: null;
+	}
+
+	/**
+	 * Handler for `@c9up/chronos`'s `dist/`. Mount on
+	 * `GET <chronosAssetPath>/dist/*`. `null` when chronos isn't installed.
+	 */
+	chronosDistHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
+		return this.chronosDistRoot
+			? serveAssets({ root: this.chronosDistRoot })
+			: null;
+	}
+
+	/**
+	 * Handler for `@c9up/chronos`'s `wasm/` — the bindgen glue and the binary.
+	 * Mount on `GET <chronosAssetPath>/wasm/*`, which is where the dist's
+	 * `../wasm/…` lands.
+	 */
+	chronosWasmHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
+		return this.chronosWasmRoot
+			? serveAssets({ root: this.chronosWasmRoot })
 			: null;
 	}
 }
