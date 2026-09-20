@@ -80,6 +80,13 @@ export {
 } from "./http.js";
 export { hydrate } from "./hydrate.js";
 export {
+	type HydrationDetail,
+	type HydrationState,
+	hydrationErrors,
+	hydrationState,
+	whenHydrated,
+} from "./hydrationSignal.js";
+export {
 	type LiveComponentDefinition,
 	type LiveSession,
 	mountLiveSession,

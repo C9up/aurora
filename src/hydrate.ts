@@ -22,6 +22,7 @@
 
 import { readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
+import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { effect, isSignal } from "./reactive.js";
 import { type Disposer, mount } from "./render.js";
 import {
@@ -359,6 +360,22 @@ export function hydrate(
 	container: Element,
 	factory: () => TemplateResult,
 ): Disposer {
+	// Announce the phase around the work, not inside it: `aurora:hydrate` fires
+	// for this root either way, and `aurora:load` once the page settles. A
+	// signal withheld on failure would turn a race into a silent hang.
+	beginHydration();
+	try {
+		return hydrateRoot(container, factory);
+	} catch (error) {
+		endHydration(container, error);
+		throw error;
+	}
+}
+
+function hydrateRoot(
+	container: Element,
+	factory: () => TemplateResult,
+): Disposer {
 	const cleanups: Disposer[] = [];
 	const mountHooks: Array<EffectCallback> = [];
 	const markerCursor: MarkerCursor = {
@@ -382,6 +399,9 @@ export function hydrate(
 			/* swallow */
 		}
 	}
+	// The root is adopted: mount hooks have run and every effect is wired.
+	endHydration(container);
+
 	let disposed = false;
 	return () => {
 		if (disposed) return;
