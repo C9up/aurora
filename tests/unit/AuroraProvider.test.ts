@@ -128,7 +128,7 @@ describe("AuroraProvider > start() router resolution", () => {
 		expect(captured).toEqual([
 			"/__assets/aurora/*",
 			"/__assets/pages/*",
-			"/__assets/comet/*",
+			"/__assets/comet/dist/*",
 		]);
 	});
 
@@ -153,7 +153,7 @@ describe("AuroraProvider > start() router resolution", () => {
 		expect(captured).toEqual([
 			"/assets/aurora/*",
 			"/assets/pages/*",
-			"/assets/comet/*",
+			"/assets/comet/dist/*",
 		]);
 	});
 });

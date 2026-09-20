@@ -14,6 +14,11 @@
 
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	type BrowserPackage,
+	DEFAULT_BROWSER_PACKAGES,
+	resolveBrowserPackages,
+} from "./browserPackage.js";
 import { Pages, type PagesConfig } from "./Pages.js";
 import {
 	type RenderHttpContext,
@@ -22,11 +27,7 @@ import {
 	type SharedProps,
 	type SharedPropsResolver,
 } from "./server/renderPage.js";
-import {
-	type AssetsHttpContext,
-	packageAssetDir,
-	serveAssets,
-} from "./server/serveAssets.js";
+import { type AssetsHttpContext, serveAssets } from "./server/serveAssets.js";
 
 export interface AuroraManagerConfig {
 	pages: PagesConfig;
@@ -66,6 +67,20 @@ export interface AuroraManagerConfig {
 	 */
 	chronosDistRoot?: string;
 	/**
+	 * Extra packages to serve to the browser, by bare specifier.
+	 *
+	 * `@c9up/comet` and `@c9up/chronos` are served already — aurora's own
+	 * optional peers, imported by code it generates. Anything else an app wants
+	 * importable without a bundler goes here:
+	 *
+	 *   browserPackages: ['@c9up/atom']
+	 *
+	 * Each resolved package gets `<assetsPrefix>/<name>/dist/*`, a `wasm/*`
+	 * route when it has one, and an importmap entry. A package that is not
+	 * installed is skipped in silence, as the built-in two are.
+	 */
+	browserPackages?: string[];
+	/**
 	 * URL prefix the asset routes mount under. The aurora runtime is served
 	 * from `<assetsPrefix>/aurora/*` and the app's pages from
 	 * `<assetsPrefix>/pages/*`, and the SSR importmap + page URLs derive from
@@ -94,27 +109,6 @@ const DEFAULT_AURORA_DIST = resolvePath(
 	"../dist",
 );
 
-/**
- * Resolve `@c9up/comet`'s dist dir, or `null` when it isn't installed. comet is
- * aurora's OPTIONAL peer (only present when the app uses RPC), so a missing one
- * is expected — aurora then simply doesn't serve it or add it to the importmap.
- */
-function resolveCometDist(): string | null {
-	try {
-		return packageAssetDir("@c9up/comet");
-	} catch {
-		return null;
-	}
-}
-
-function resolveChronosDist(): string | null {
-	try {
-		return packageAssetDir("@c9up/chronos");
-	} catch {
-		return null;
-	}
-}
-
 /** Normalize an asset prefix: ensure a leading slash, drop trailing slashes. */
 function normalizePrefix(prefix: string): string {
 	const withLead = prefix.startsWith("/") ? prefix : `/${prefix}`;
@@ -130,25 +124,17 @@ export class AuroraManager {
 	readonly auroraAssetPath: string;
 	/** Mount path for the app's pages — `<assetsPrefix>/pages`. */
 	readonly pageAssetPath: string;
-	/** Mount path for the RPC client's `@c9up/comet` runtime — `<assetsPrefix>/comet`. */
-	readonly cometAssetPath: string;
-	/** Resolved `@c9up/comet` dist dir, or `null` when comet isn't installed. */
-	readonly cometDistRoot: string | null;
-	/** Mount path for the `@c9up/chronos` runtime — `<assetsPrefix>/chronos`. */
-	readonly chronosAssetPath: string;
-	/** Resolved `@c9up/chronos` dist dir, or `null` when chronos isn't installed. */
-	readonly chronosDistRoot: string | null;
 	/**
-	 * Resolved `@c9up/chronos` `wasm/` dir, a SIBLING of its dist.
+	 * Packages served to the browser, resolved and de-duplicated.
 	 *
-	 * chronos is not comet: its `dist/native.js` reaches out with
-	 * `import("../wasm/chronos_engine_wasm.js")`, and the glue then fetches
-	 * `..._bg.wasm` next to itself. Serving the dist alone answers 404 for both,
-	 * and serving the package root instead would publish the five `.node`
-	 * binaries — some 13 MB of server-only code — over HTTP. Two narrow roots
-	 * keep the relative path working and expose nothing else.
+	 * Replaces what used to be a pair of fields per package. The third one that
+	 * needed it would have copied the same fourteen lines again.
 	 */
-	readonly chronosWasmRoot: string | null;
+	readonly browserPackages: readonly BrowserPackage[];
+	/** Mount path for `@c9up/comet`, or `null` when it isn't installed. */
+	readonly cometAssetPath: string | null;
+	/** Mount path for `@c9up/chronos`, or `null` when it isn't installed. */
+	readonly chronosAssetPath: string | null;
 	/** App-level importmap overrides from `config/aurora.ts`, merged on render. */
 	readonly importmap: Record<string, string>;
 	/** App-level shared props from config/aurora.ts. */
@@ -162,13 +148,20 @@ export class AuroraManager {
 		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/__assets");
 		this.auroraAssetPath = `${this.assetsPrefix}/aurora`;
 		this.pageAssetPath = `${this.assetsPrefix}/pages`;
-		this.cometAssetPath = `${this.assetsPrefix}/comet`;
-		this.cometDistRoot = config.cometDistRoot ?? resolveCometDist();
-		this.chronosAssetPath = `${this.assetsPrefix}/chronos`;
-		this.chronosDistRoot = config.chronosDistRoot ?? resolveChronosDist();
-		this.chronosWasmRoot = this.chronosDistRoot
-			? resolvePath(this.chronosDistRoot, "..", "wasm")
-			: null;
+		this.browserPackages = resolveBrowserPackages(
+			[...DEFAULT_BROWSER_PACKAGES, ...(config.browserPackages ?? [])],
+			this.assetsPrefix,
+			{
+				"@c9up/comet": config.cometDistRoot,
+				"@c9up/chronos": config.chronosDistRoot,
+			},
+		);
+		this.cometAssetPath =
+			this.browserPackages.find((p) => p.specifier === "@c9up/comet")
+				?.assetPath ?? null;
+		this.chronosAssetPath =
+			this.browserPackages.find((p) => p.specifier === "@c9up/chronos")
+				?.assetPath ?? null;
 		this.importmap = config.importmap ?? {};
 		this.shared = config.shared;
 		this.root = config.root;
@@ -219,18 +212,12 @@ export class AuroraManager {
 				"@c9up/aurora/relay": `${this.auroraAssetPath}/relay.js`,
 				"@c9up/aurora/hydrate": `${this.auroraAssetPath}/hydrate.js`,
 				"@c9up/aurora/ssr": `${this.auroraAssetPath}/ssr.js`,
-				// Auto-map @c9up/comet when installed so the rpc client's bare
-				// `import '@c9up/comet'` resolves in the no-bundler browser — no
-				// app-side importmap wiring. Omitted when comet isn't present.
-				...(this.cometDistRoot
-					? { "@c9up/comet": `${this.cometAssetPath}/index.js` }
-					: {}),
-				// Same for chronos. The entry points INTO `dist/`, so the
-				// `../wasm/…` its native module asks for resolves to the sibling
-				// route below rather than escaping the mount.
-				...(this.chronosDistRoot
-					? { "@c9up/chronos": `${this.chronosAssetPath}/dist/index.js` }
-					: {}),
+				// Every served package, mapped INTO its dist so a relative
+				// `../wasm/…` lands on the sibling route rather than climbing
+				// out of the mount.
+				...Object.fromEntries(
+					this.browserPackages.map((pkg) => [pkg.specifier, pkg.entry]),
+				),
 				// Config-level overrides (config/aurora.ts) — Adonis-style config-driven,
 				// so controllers never hand-write an importmap. A per-call override wins.
 				...this.importmap,
@@ -271,31 +258,20 @@ export class AuroraManager {
 	 * `GET <cometAssetPath>/*`. Returns `null` when comet isn't installed —
 	 * the provider then skips the route (no RPC, nothing to serve).
 	 */
-	cometAssetsHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
-		return this.cometDistRoot
-			? serveAssets({ root: this.cometDistRoot })
-			: null;
-	}
-
 	/**
-	 * Handler for `@c9up/chronos`'s `dist/`. Mount on
-	 * `GET <chronosAssetPath>/dist/*`. `null` when chronos isn't installed.
+	 * Handlers for one served package: its dist, and its wasm when it has one.
+	 *
+	 * Returned as a pair rather than mounted here so the provider stays the only
+	 * thing that touches the router.
 	 */
-	chronosDistHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
-		return this.chronosDistRoot
-			? serveAssets({ root: this.chronosDistRoot })
-			: null;
-	}
-
-	/**
-	 * Handler for `@c9up/chronos`'s `wasm/` — the bindgen glue and the binary.
-	 * Mount on `GET <chronosAssetPath>/wasm/*`, which is where the dist's
-	 * `../wasm/…` lands.
-	 */
-	chronosWasmHandler(): ((ctx: AssetsHttpContext) => Promise<void>) | null {
-		return this.chronosWasmRoot
-			? serveAssets({ root: this.chronosWasmRoot })
-			: null;
+	browserPackageHandlers(pkg: BrowserPackage): {
+		dist: (ctx: AssetsHttpContext) => Promise<void>;
+		wasm: ((ctx: AssetsHttpContext) => Promise<void>) | null;
+	} {
+		return {
+			dist: serveAssets({ root: pkg.distRoot }),
+			wasm: pkg.wasmRoot ? serveAssets({ root: pkg.wasmRoot }) : null,
+		};
 	}
 }
 

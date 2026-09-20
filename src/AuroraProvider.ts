@@ -111,28 +111,15 @@ export default class AuroraProvider {
 			`${manager.pageAssetPath}/*`,
 			adaptHandler(manager.pageAssetsHandler()),
 		);
-		// Serve @c9up/comet's runtime so the RPC client's bare `import
-		// '@c9up/comet'` resolves in the browser. Skipped when comet isn't
-		// installed (optional peer — the app doesn't use RPC).
-		const cometHandler = manager.cometAssetsHandler();
-		if (cometHandler) {
-			router.get(`${manager.cometAssetPath}/*`, adaptHandler(cometHandler));
-		}
-		// chronos the same way, but in TWO routes rather than one: its dist
-		// imports `../wasm/…`, a sibling directory, and the bindgen glue then
-		// fetches the binary beside itself. One route over the package root
-		// would serve both and also publish the five `.node` binaries.
-		const chronosDist = manager.chronosDistHandler();
-		const chronosWasm = manager.chronosWasmHandler();
-		if (chronosDist && chronosWasm) {
-			router.get(
-				`${manager.chronosAssetPath}/dist/*`,
-				adaptHandler(chronosDist),
-			);
-			router.get(
-				`${manager.chronosAssetPath}/wasm/*`,
-				adaptHandler(chronosWasm),
-			);
+		// Every package aurora serves to the browser, in one loop. This used to
+		// be a branch per package — comet, then chronos — and a third would
+		// have been a third copy. `config.browserPackages` adds one in a line.
+		for (const pkg of manager.browserPackages) {
+			const { dist, wasm } = manager.browserPackageHandlers(pkg);
+			router.get(`${pkg.assetPath}/dist/*`, adaptHandler(dist));
+			// The wasm sibling only when the package has one: a route over a
+			// directory that does not exist would answer 500, not 404.
+			if (wasm) router.get(`${pkg.assetPath}/wasm/*`, adaptHandler(wasm));
 		}
 	}
 

@@ -116,13 +116,21 @@ describe("aurora > renderPage", () => {
 	it("auto-wires @c9up/comet into the importmap + asset path when comet is installed", async () => {
 		const manager = new AuroraManager({ pages: { root: FIXTURES } });
 		// comet is a (dev) dependency in this workspace, so it resolves.
-		expect(manager.cometDistRoot).not.toBeNull();
+		const comet = manager.browserPackages.find(
+			(pkg) => pkg.specifier === "@c9up/comet",
+		);
+		if (comet === undefined) throw new Error("comet did not resolve");
 		expect(manager.cometAssetPath).toBe("/__assets/comet");
-		expect(manager.cometAssetsHandler()).not.toBeNull();
+		expect(manager.browserPackageHandlers(comet).dist).toBeTypeOf("function");
 		const { ctx, getBody } = makeCtx();
 		await manager.render(ctx, "Hello", { name: "World" });
-		// The RPC client's bare `import '@c9up/comet'` resolves with zero app wiring.
-		expect(getBody()).toContain('"@c9up/comet":"/__assets/comet/index.js"');
+		// The RPC client's bare `import '@c9up/comet'` resolves with zero app
+		// wiring. The entry points INTO dist — uniform with every other served
+		// package, so a wasm-backed one's `../wasm/…` lands on its sibling route
+		// instead of climbing out of the mount.
+		expect(getBody()).toContain(
+			'"@c9up/comet":"/__assets/comet/dist/index.js"',
+		);
 		// …and the RPC subpath itself is importmapped (no app-side entry needed).
 		expect(getBody()).toContain('"@c9up/aurora/rpc":"/__assets/aurora/rpc.js"');
 	});
@@ -161,7 +169,7 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('"@c9up/aurora":"/__assets/pages/browser/aurora.js"');
 		// …while aurora's auto rpc + comet entries still come for free.
 		expect(out).toContain('"@c9up/aurora/rpc":"/__assets/aurora/rpc.js"');
-		expect(out).toContain('"@c9up/comet":"/__assets/comet/index.js"');
+		expect(out).toContain('"@c9up/comet":"/__assets/comet/dist/index.js"');
 	});
 
 	it("AuroraManager.render merges config-level shared props with per-call shared props", async () => {
