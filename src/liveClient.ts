@@ -49,8 +49,8 @@ export interface LiveClientOptions {
  *
  * Patches set writable signal slots; derived slots recompute locally from the
  * base signals they read (aurora re-evaluates them) — so the server's
- * base-signal patch is enough. (Derived-only slots with no mirrored base are an
- * étape-6 refinement.)
+ * base-signal patch is enough. (Derived-only slots with no mirrored base are a
+ * later refinement.)
  *
  * Authoring rule (aurora hydration): a reactive text slot must be the SOLE
  * content of its element — write `Count: <span>${count}</span>`, not
