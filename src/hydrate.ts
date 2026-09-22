@@ -24,11 +24,15 @@ import { readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { effect, isSignal } from "./reactive.js";
-import { type Disposer, mount } from "./render.js";
+import {
+	type Disposer,
+	type MountQueue,
+	mount,
+	runMountHooks,
+} from "./render.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
-	type EffectCallback,
 	type EventSlot,
 	isTemplateResult,
 	type NodePath,
@@ -132,22 +136,22 @@ function collectMarkerPairs(container: Node): MarkerPair[] {
 function renderValueToNodes(
 	value: unknown,
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	doc: Document,
 ): ChildNode[] {
 	if (value === null || value === undefined || value === false) return [];
 	if (Array.isArray(value)) {
 		const out: ChildNode[] = [];
 		for (const item of value) {
-			out.push(...renderValueToNodes(item, cleanups, mountHooks, doc));
+			out.push(...renderValueToNodes(item, cleanups, queue, doc));
 		}
 		return out;
 	}
 	if (isTemplateResult(value)) {
-		// The renderer collects hooks in a queue now; hydrate keeps its own
-		// flat list, so it hands one over and takes back what was collected.
-		const nested = { hooks: mountHooks, flushed: false };
-		const frag = mount(value, cleanups, [], nested);
+		// Collect into the queue we were handed. Whoever calls this owns the
+		// queue, because only they know when the nodes reach the document —
+		// an `onMount` that measures or positions has to see a live node.
+		const frag = mount(value, cleanups, [], queue);
 		return Array.from(frag.childNodes);
 	}
 	if (value instanceof Node) return [value as ChildNode];
@@ -167,7 +171,7 @@ function hydrateReactiveStructured(
 	fn: () => unknown,
 	pair: MarkerPair,
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
 	const { start, end } = pair;
@@ -188,23 +192,32 @@ function hydrateReactiveStructured(
 			// MUST recurse into every item, else the items' marker pairs go
 			// unconsumed and the cursor desyncs, wiring slots AFTER the list to
 			// the wrong range (SSR list "present but not painted").
+			// This slot's own queue even while hydrating, because the
+			// TEARDOWNS belong to the slot: the next swap must dispose what it
+			// replaces. Left on the root's list, a surface hydrated here kept
+			// its subscription until the whole page unmounted — and the swap
+			// that removed its nodes never told it so.
+			const own: MountQueue = { hooks: [], flushed: queue.flushed };
 			if (isTemplateResult(next)) {
 				hydrateTemplateResult(
 					next,
 					currentNodes,
 					localCleanups,
-					mountHooks,
+					own,
 					markerCursor,
 				);
 			} else if (Array.isArray(next)) {
-				hydrateArrayItems(
-					next,
-					currentNodes,
-					localCleanups,
-					mountHooks,
-					markerCursor,
-				);
+				hydrateArrayItems(next, currentNodes, localCleanups, own, markerCursor);
 			}
+			// The nodes are the server's and already in the document, so the
+			// hooks could run now — but the root has not finished adopting the
+			// tree, and an `onMount` that reads a sibling must not see a half
+			// hydrated one. One wrapper carries them into the root's flush; it
+			// returns nothing, because the real teardowns go to this slot.
+			const pending = own.hooks;
+			queue.hooks.push(() => {
+				runMountHooks(pending.splice(0), localCleanups);
+			});
 			return;
 		}
 		// Signal changed post-hydration: tear down the old subtree's
@@ -216,14 +229,29 @@ function hydrateReactiveStructured(
 		currentNodes = [];
 		const parent = end.parentNode;
 		if (parent === null) return;
+		// This slot's own queue, inheriting `flushed`. Handing the root's list
+		// over was the bug: nothing drains it once hydration is done, so a
+		// component built by a slot that changed LATER ran its setup and never
+		// its `onMount`. A component whose whole job happens in `onMount` —
+		// a floating surface that only starts reacting once it is in the
+		// document — therefore never appeared at all.
+		const own: MountQueue = { hooks: [], flushed: queue.flushed };
 		const fresh = renderValueToNodes(
 			next,
 			localCleanups,
-			mountHooks,
+			own,
 			markerCursor.doc,
 		);
 		for (const n of fresh) parent.insertBefore(n, end);
 		currentNodes = fresh;
+		if (own.flushed) {
+			// After insertion, as at the root. The teardowns go to this slot's
+			// cleanups: the next swap must dispose what it replaces.
+			runMountHooks(own.hooks, localCleanups);
+		} else {
+			// Still building the initial tree — the root's flush is coming.
+			queue.hooks.push(...own.hooks);
+		}
 	});
 
 	cleanups.push(() => {
@@ -307,7 +335,7 @@ function hydrateArrayItems(
 	items: unknown[],
 	rangeNodes: ChildNode[],
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
 	const nodes = collapseMarkerRanges(rangeNodes);
@@ -329,7 +357,7 @@ function hydrateArrayItems(
 				item,
 				nodes.slice(offset, offset + count),
 				cleanups,
-				mountHooks,
+				queue,
 				markerCursor,
 			);
 		} else if (Array.isArray(item)) {
@@ -337,7 +365,7 @@ function hydrateArrayItems(
 				item,
 				nodes.slice(offset, offset + count),
 				cleanups,
-				mountHooks,
+				queue,
 				markerCursor,
 			);
 		}
@@ -377,7 +405,11 @@ function hydrateRoot(
 	factory: () => TemplateResult,
 ): Disposer {
 	const cleanups: Disposer[] = [];
-	const mountHooks: Array<EffectCallback> = [];
+	// `flushed` flips below, once the loop has run what hydration collected.
+	// Everything built after that point — a reactive slot swapping its content
+	// when data arrives — sees a queue nobody is going to drain for it, and
+	// runs its own hooks instead.
+	const queue: MountQueue = { hooks: [], flushed: false };
 	const markerCursor: MarkerCursor = {
 		pairs: collectMarkerPairs(container),
 		i: 0,
@@ -388,17 +420,12 @@ function hydrateRoot(
 		result,
 		Array.from(container.childNodes),
 		cleanups,
-		mountHooks,
+		queue,
 		markerCursor,
 	);
-	for (const hook of mountHooks) {
-		try {
-			const teardown = hook();
-			if (typeof teardown === "function") cleanups.push(teardown);
-		} catch {
-			/* swallow */
-		}
-	}
+	runMountHooks(queue.hooks, cleanups);
+	queue.hooks.length = 0;
+	queue.flushed = true;
 	// The root is adopted: mount hooks have run and every effect is wired.
 	endHydration(container);
 
@@ -420,12 +447,12 @@ function hydrateTemplateResult(
 	result: TemplateResult,
 	liveNodes: ChildNode[],
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
 	const lifecycle = readComponentLifecycle(result);
 	if (lifecycle) {
-		for (const hook of lifecycle.mountHooks) mountHooks.push(hook);
+		for (const hook of lifecycle.mountHooks) queue.hooks.push(hook);
 		for (const c of lifecycle.cleanups) cleanups.push(c);
 	}
 
@@ -467,7 +494,7 @@ function hydrateTemplateResult(
 			liveNode,
 			result.values[i],
 			cleanups,
-			mountHooks,
+			queue,
 			markerCursor,
 		);
 	}
@@ -592,7 +619,7 @@ function hydrateSlot(
 	node: Node,
 	value: unknown,
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
 	// Type guard: an attr/bool/prop/event slot needs an Element. On a SSR↔client
@@ -610,7 +637,7 @@ function hydrateSlot(
 	}
 	switch (slot.kind) {
 		case "text":
-			hydrateTextSlot(node, value, cleanups, mountHooks, markerCursor);
+			hydrateTextSlot(node, value, cleanups, queue, markerCursor);
 			return;
 		case "attr":
 			hydrateAttrSlot(slot, node as Element, value, cleanups);
@@ -637,7 +664,7 @@ function hydrateTextSlot(
 	commentMarker: Node,
 	value: unknown,
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
 	// Every text slot is SSR-wrapped in a <!--$-->…<!--/$--> pair, and its path
@@ -646,13 +673,7 @@ function hydrateTextSlot(
 	const pair = markerCursor.pairs[markerCursor.i];
 	if (pair === undefined) {
 		// Legacy markup without per-slot markers (mismatched older SSR build).
-		legacyHydrateTextSlot(
-			commentMarker,
-			value,
-			cleanups,
-			mountHooks,
-			markerCursor,
-		);
+		legacyHydrateTextSlot(commentMarker, value, cleanups, queue, markerCursor);
 		return;
 	}
 	markerCursor.i += 1;
@@ -669,13 +690,7 @@ function hydrateTextSlot(
 	// reactive slot to a scalar text-node effect (based on its FIRST value) would
 	// String() a later template/array into "[object Object]".
 	if (reactiveFn) {
-		hydrateReactiveStructured(
-			reactiveFn,
-			pair,
-			cleanups,
-			mountHooks,
-			markerCursor,
-		);
+		hydrateReactiveStructured(reactiveFn, pair, cleanups, queue, markerCursor);
 		return;
 	}
 
@@ -690,11 +705,11 @@ function hydrateTextSlot(
 			range.push(n as ChildNode);
 		}
 		if (isTemplateResult(value)) {
-			hydrateTemplateResult(value, range, cleanups, mountHooks, markerCursor);
+			hydrateTemplateResult(value, range, cleanups, queue, markerCursor);
 		} else if (Array.isArray(value)) {
 			// Direct array — hydrate each item so its inner marker pairs are
 			// consumed and the cursor stays aligned.
-			hydrateArrayItems(value, range, cleanups, mountHooks, markerCursor);
+			hydrateArrayItems(value, range, cleanups, queue, markerCursor);
 		}
 	}
 	// else: static scalar — already rendered between the markers.
@@ -709,7 +724,7 @@ function legacyHydrateTextSlot(
 	commentMarker: Node,
 	value: unknown,
 	cleanups: Disposer[],
-	mountHooks: Array<EffectCallback>,
+	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
 	if (isSignal(value) || typeof value === "function") {
@@ -722,7 +737,7 @@ function legacyHydrateTextSlot(
 			const pair = markerCursor.pairs[markerCursor.i];
 			if (pair !== undefined) {
 				markerCursor.i += 1;
-				hydrateReactiveStructured(fn, pair, cleanups, mountHooks, markerCursor);
+				hydrateReactiveStructured(fn, pair, cleanups, queue, markerCursor);
 				return;
 			}
 			// LEGACY markup (no boundary markers — produced by an older
@@ -743,7 +758,7 @@ function legacyHydrateTextSlot(
 					first,
 					[commentMarker as ChildNode],
 					cleanups,
-					mountHooks,
+					queue,
 					markerCursor,
 				);
 			}
@@ -794,7 +809,7 @@ function legacyHydrateTextSlot(
 			) {
 				range.push(n as ChildNode);
 			}
-			hydrateTemplateResult(value, range, cleanups, mountHooks, markerCursor);
+			hydrateTemplateResult(value, range, cleanups, queue, markerCursor);
 			return;
 		}
 		// Legacy markup without markers (older SSR build): best-effort against
@@ -803,7 +818,7 @@ function legacyHydrateTextSlot(
 			value,
 			[commentMarker as ChildNode],
 			cleanups,
-			mountHooks,
+			queue,
 			markerCursor,
 		);
 		return;

@@ -42,7 +42,7 @@ export type Disposer = () => void;
  * the page. The flag is what lets a later update tell "collect these, the root
  * will run them" from "the root is done, run mine myself".
  */
-interface MountQueue {
+export interface MountQueue {
 	hooks: Array<EffectCallback>;
 	flushed: boolean;
 }
@@ -53,7 +53,7 @@ interface MountQueue {
  * Failures are swallowed per hook: one component's bad `onMount` must not stop
  * its siblings from mounting.
  */
-function runMountHooks(
+export function runMountHooks(
 	hooks: Array<EffectCallback>,
 	cleanups: Disposer[],
 ): void {
