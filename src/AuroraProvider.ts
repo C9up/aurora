@@ -21,11 +21,11 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
 import { auroraRoute } from "./route.js";
-import type {
-	AssetsHttpContext,
-	AssetsRequest,
-	AssetsResponse,
-} from "./server/serveAssets.js";
+import {
+	type AssetMount,
+	type AssetsHost,
+	assetsMiddleware,
+} from "./server/assetsMiddleware.js";
 import { clearAurora, getAurora, setAurora } from "./services/main.js";
 import { renderToString } from "./ssr.js";
 
@@ -42,10 +42,18 @@ export interface AuroraAppContext {
 	config: AuroraConfigStore;
 }
 
-interface ReamRouter {
-	get(
-		path: string,
-		handler: (ctx: AssetsHttpContext) => Promise<void> | void,
+/**
+ * The host's server, duck-typed.
+ *
+ * Only `use`, and only the plain-function form — aurora must not import its
+ * host's HTTP types, and a lazy middleware class would mean resolving one
+ * through a container aurora does not own.
+ */
+interface ReamServer {
+	use(
+		middleware: Array<
+			(host: AssetsHost, next: () => Promise<void>) => Promise<void>
+		>,
 	): unknown;
 }
 
@@ -83,44 +91,48 @@ export default class AuroraProvider {
 	}
 
 	async start(): Promise<void> {
-		// Asset routes are registered in `start()`, which runs BEFORE the
-		// preloads — providers start, then the `starting` hooks, then the
-		// preloads are imported. An earlier version of this comment claimed the
-		// opposite; an app that wanted to swap aurora's pages root has to do it
-		// from a provider, not from a preload.
+		// Registered in `start()`, which runs BEFORE the preloads — providers
+		// start, then the `starting` hooks, then the preloads are imported. That
+		// ordering is what puts this ahead of the application's own
+		// `server.use([...])` in `start/kernel.ts`, which is the whole point:
+		// an asset request must not reach the middleware that authenticates.
 		//
-		// Resolve the host router from the container, where Ream registers it as
-		// `'router'` (Ignitor). Reading it from the container — instead of
-		// importing `@c9up/ream/services/router` — keeps aurora runtime-agnostic:
-		// a non-Ream host simply never registers `'router'`, so aurora silently
-		// skips its asset routes. The container yields the real Router instance
-		// (registered before any provider's `start()`), so route-registration
-		// failures (slug collision, AuroraManager crash) propagate with a stack
-		// instead of being misread as "the asset routes just stopped mounting".
-		if (!this.app.container.has("router")) return;
-		const router = await this.app.container.resolve<ReamRouter>("router");
+		// SERVER middleware, not routes. Aurora ships its pages unbundled, so
+		// one page load is dozens of `.js` requests — as routes they each ran
+		// the application's whole stack, and anything resolving a user from a
+		// session cookie paid a `SELECT` per file for bytes that are identical
+		// for everybody. Upstream's `@adonisjs/static` registers itself the same
+		// way, and never as a route.
+		//
+		// Resolved from the container rather than imported, so aurora stays
+		// runtime-agnostic: a host that registers no `'server'` simply serves no
+		// assets, exactly as it previously served none without a `'router'`.
+		if (!this.app.container.has("server")) return;
+		const server = await this.app.container.resolve<ReamServer>("server");
 		const manager =
 			await this.app.container.resolve<AuroraManager>(AuroraManager);
+
 		// Mount paths derive from the configured `assetsPrefix` (default
 		// `/__assets`) — set `config.aurora.assetsPrefix` to change the scheme.
-		router.get(
-			`${manager.auroraAssetPath}/*`,
-			adaptHandler(manager.auroraAssetsHandler()),
-		);
-		router.get(
-			`${manager.pageAssetPath}/*`,
-			adaptHandler(manager.pageAssetsHandler()),
-		);
+		const mounts: AssetMount[] = [
+			{
+				prefix: manager.auroraAssetPath,
+				handler: manager.auroraAssetsHandler(),
+			},
+			{ prefix: manager.pageAssetPath, handler: manager.pageAssetsHandler() },
+		];
 		// Every package aurora serves to the browser, in one loop. This used to
 		// be a branch per package — comet, then chronos — and a third would
 		// have been a third copy. `config.browserPackages` adds one in a line.
 		for (const pkg of manager.browserPackages) {
 			const { dist, wasm } = manager.browserPackageHandlers(pkg);
-			router.get(`${pkg.assetPath}/dist/*`, adaptHandler(dist));
-			// The wasm sibling only when the package has one: a route over a
+			mounts.push({ prefix: `${pkg.assetPath}/dist`, handler: dist });
+			// The wasm sibling only when the package has one: a mount over a
 			// directory that does not exist would answer 500, not 404.
-			if (wasm) router.get(`${pkg.assetPath}/wasm/*`, adaptHandler(wasm));
+			if (wasm) mounts.push({ prefix: `${pkg.assetPath}/wasm`, handler: wasm });
 		}
+
+		server.use([assetsMiddleware(mounts)]);
 	}
 
 	async ready(): Promise<void> {}
@@ -172,19 +184,4 @@ export default class AuroraProvider {
 		}
 		return process.cwd();
 	}
-}
-
-/**
- * Adapter: serveAssets() returns a handler that takes our duck-typed
- * AssetsHttpContext. Ream's router passes its own HttpContext. The
- * two are structurally compatible (request.param + response.{status,
- * header, send}) but TypeScript needs the bridge made explicit.
- */
-function adaptHandler(
-	handler: (ctx: AssetsHttpContext) => Promise<void>,
-): (ctx: {
-	request: AssetsRequest;
-	response: AssetsResponse;
-}) => Promise<void> {
-	return (ctx) => handler(ctx);
 }
