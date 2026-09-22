@@ -54,7 +54,15 @@ export {
 export { type ClassValue, clsx, cn, twMerge } from "./cn.js";
 export type { Command } from "./command.js";
 export { command } from "./command.js";
-export { component, onMount, onUnmount } from "./component.js";
+export {
+	type Context,
+	component,
+	createContext,
+	inject,
+	onMount,
+	onUnmount,
+	provide,
+} from "./component.js";
 export { AuroraError, type AuroraErrorCode } from "./errors.js";
 export type {
 	FieldErrors,

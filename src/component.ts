@@ -34,6 +34,8 @@ interface ComponentContext {
 	readonly cleanups: Disposer[];
 	/** Mount hooks queued via `onMount` — flushed after setup returns. */
 	readonly mountHooks: Array<EffectCallback>;
+	/** Values this component provided, by context key. Empty for most. */
+	readonly provided: Map<symbol, unknown>;
 }
 
 const contextStack: ComponentContext[] = [];
@@ -64,6 +66,7 @@ export function component<P = Record<string, never>>(
 		const ctx: ComponentContext = {
 			cleanups: [],
 			mountHooks: [],
+			provided: new Map(),
 		};
 		contextStack.push(ctx);
 		// Own the reactive scope of setup: effects/memos created here register
@@ -79,6 +82,89 @@ export function component<P = Record<string, never>>(
 			contextStack.pop();
 		}
 	};
+}
+
+/**
+ * A value a component hands to its descendants without threading it through
+ * every prop in between.
+ *
+ * Compound components need this: a `Select` owns the open state, the active
+ * item and the ids, and its trigger, its content and each of its items all
+ * read them. Passing that down explicitly means every level in between carries
+ * props it does not use, and the composition stops looking like what it builds.
+ *
+ * ONE RULE, and it is the whole of the contract: a descendant sees the value
+ * only if it is CREATED INSIDE the provider's setup. Aurora evaluates
+ * eagerly — there is no JSX compiler deferring anything — so
+ *
+ *     Parent({ children: [Child()] })       // Child() ran BEFORE Parent's setup
+ *
+ * hands `Child` nothing, while
+ *
+ *     Parent({ children: () => [Child()] }) // Parent's setup calls it
+ *
+ * works, because the thunk runs while the provider is on the stack. A
+ * component that provides anything therefore reads its children itself,
+ * inside setup.
+ */
+export interface Context<T> {
+	/** Identity. A symbol so two contexts never collide by name. */
+	readonly key: symbol;
+	/** Shown when nothing provided a value, and named in the error when there is none. */
+	readonly name: string;
+	readonly hasDefault: boolean;
+	readonly defaultValue: T | undefined;
+}
+
+/**
+ * Declare a context.
+ *
+ * With no default, `inject` throws when nothing provided one — which is what a
+ * compound component wants: `SelectItem` outside a `Select` is a mistake, not
+ * a case to handle.
+ */
+export function createContext<T>(name: string): Context<T>;
+export function createContext<T>(name: string, defaultValue: T): Context<T>;
+export function createContext<T>(name: string, ...rest: [T] | []): Context<T> {
+	return {
+		key: Symbol(name),
+		name,
+		hasDefault: rest.length > 0,
+		defaultValue: rest[0],
+	};
+}
+
+/**
+ * Hand a value to everything created inside this component's setup.
+ *
+ * Returns the value, so the provider can keep using it in one statement.
+ */
+export function provide<T>(context: Context<T>, value: T): T {
+	activeContext().provided.set(context.key, value);
+	return value;
+}
+
+/**
+ * Read the nearest provided value.
+ *
+ * Nearest wins: a `Select` inside a `DropdownMenu` shadows the menu's context
+ * for its own subtree, which is what a reader of the markup would expect.
+ */
+export function inject<T>(context: Context<T>): T {
+	for (let i = contextStack.length - 1; i >= 0; i -= 1) {
+		const frame = contextStack[i];
+		if (frame?.provided.has(context.key) === true) {
+			return frame.provided.get(context.key) as T;
+		}
+	}
+	if (context.hasDefault) return context.defaultValue as T;
+	// Naming both halves, because the fix is almost always one of two things:
+	// the component is used outside its parent, or its parent read its
+	// children outside setup and the thunk rule was missed.
+	throw new AuroraError(
+		"E_AURORA_MISSING_CONTEXT",
+		`No value provided for context "${context.name}". Either this component is used outside the one that provides it, or that one built its children outside its own setup — a provider must read its children itself, inside setup, or they are created before it exists.`,
+	);
 }
 
 /**

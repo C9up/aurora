@@ -25,6 +25,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_ILLEGAL_ROOT_TAG"
 	/** `onMount` / `onUnmount` called outside a `component()` setup function. */
 	| "E_AURORA_OUTSIDE_COMPONENT"
+	/** `inject` found no provider for the context, and it declared no default. */
+	| "E_AURORA_MISSING_CONTEXT"
 	/** The manager singleton was read before a provider or `setAurora` set it. */
 	| "E_AURORA_NOT_BOOTED"
 	/** `urlFor` was given a name absent from the route manifest. */
