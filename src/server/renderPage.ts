@@ -26,7 +26,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setCookieStoreReader } from "../browser.js";
 import { AuroraError } from "../errors.js";
-import { resetIds } from "../id.js";
+import { createIdCounter, setIdCounterReader } from "../id.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
 import { setRouteManifestReader } from "../url.js";
@@ -165,6 +165,14 @@ interface CookieReadableRequest {
 }
 
 interface RenderScope {
+	/**
+	 * This render's id counter.
+	 *
+	 * Per request, not per process: `resetIds()` followed by an await is a
+	 * race between two responses, and the losing one ships markup whose ids
+	 * the browser will never find.
+	 */
+	ids: { value: number };
 	cookies: Record<string, string>;
 	routes: Record<string, string>;
 }
@@ -173,6 +181,7 @@ const renderScope = new AsyncLocalStorage<RenderScope>();
 
 setCookieStoreReader(() => renderScope.getStore()?.cookies);
 setRouteManifestReader(() => renderScope.getStore()?.routes);
+setIdCounterReader(() => renderScope.getStore()?.ids);
 
 function isCookieReadable(request: unknown): request is CookieReadableRequest {
 	if (typeof request !== "object" || request === null) return false;
@@ -209,6 +218,9 @@ export async function renderPage<P>(
 	options: RenderPageOptions = {},
 ): Promise<void> {
 	const scope: RenderScope = {
+		// One counter per render, created before the scope is entered: every
+		// `uid()` below, however many awaits deep, lands in this one.
+		ids: createIdCounter(),
 		cookies: options.cookies
 			? readRequestCookies(ctx.request, options.cookies)
 			: {},
@@ -227,10 +239,6 @@ async function renderPageInScope<P>(
 	props: P,
 	options: RenderPageOptions,
 ): Promise<void> {
-	// One page, one id sequence. A server process is long-lived: without this
-	// the counter climbs across requests and the markup stops matching what the
-	// browser mints when it hydrates from zero.
-	resetIds();
 	const factory = await pages.resolve(name);
 	const shared = await resolveSharedProps(ctx, options.shared);
 	const pageProps = mergeProps(shared, props);

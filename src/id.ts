@@ -25,12 +25,49 @@
  * `renderToString` itself resets before it, the way `renderPage` does.
  */
 
-let counter = 0;
+/**
+ * The counter, in a cell so it can be swapped per render.
+ *
+ * A module-level number is what a single-page browser needs, and exactly what
+ * a SERVER must not have: `renderPage` resets, then awaits — resolving the
+ * page module, gathering shared props, calling the component. Two requests
+ * overlapping across any of those awaits share the counter, and one response
+ * ships `trigger-2` while its browser hydrates from `trigger-1`. Caught by an
+ * external audit, not by the sequential tests.
+ *
+ * So the cell is looked up through a reader the server installs, backed by its
+ * per-request AsyncLocalStorage. Nothing here imports `node:async_hooks` —
+ * this module is in the browser barrel.
+ */
+interface Counter {
+	value: number;
+}
+
+const fallback: Counter = { value: 0 };
+let readCounter: (() => Counter | undefined) | undefined;
+
+/**
+ * @internal Point the ids at a per-render cell. Called by the server; the
+ * browser leaves it alone and keeps the module-level one.
+ */
+export function setIdCounterReader(reader: () => Counter | undefined): void {
+	readCounter = reader;
+}
+
+/** @internal A fresh cell for one render pass. */
+export function createIdCounter(): Counter {
+	return { value: 0 };
+}
+
+function cell(): Counter {
+	return readCounter?.() ?? fallback;
+}
 
 /** Mint an id unique within this render pass. */
 export function uid(prefix = "aurora"): string {
-	counter += 1;
-	return `${prefix}-${counter}`;
+	const current = cell();
+	current.value += 1;
+	return `${prefix}-${current.value}`;
 }
 
 /**
@@ -38,7 +75,7 @@ export function uid(prefix = "aurora"): string {
  * yourself before a `renderToString` whose markup will be hydrated.
  */
 export function resetIds(): void {
-	counter = 0;
+	cell().value = 0;
 }
 
 /**
