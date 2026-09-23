@@ -6,6 +6,7 @@ import {
 	onMount,
 	renderToString,
 	signal,
+	type TemplateResult,
 } from "../../src/index.js";
 
 /** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
@@ -100,6 +101,79 @@ describe("aurora > hydrate > mount hooks after the first pass", () => {
 		shown(true);
 
 		expect(connected).toEqual([true]);
+	});
+
+	it("runs onMount for a component reached through a children prop", () => {
+		// Where a component actually sits: in the content of a badge, a cell or
+		// a card, never alone at the top of a page.
+		const mounted: string[] = [];
+		const Child = component(() => {
+			onMount(() => {
+				mounted.push("child");
+			});
+			return html`<span>child</span>`;
+		});
+		const Box = component(
+			(props: { children: unknown }) => html`<div>${props.children}</div>`,
+		);
+		const Page = component(
+			() => html`<main>${Box({ children: Child() })}</main>`,
+		);
+
+		container.innerHTML = renderToString(Page());
+		hydrate(container, Page);
+
+		expect(mounted).toEqual(["child"]);
+	});
+
+	it("keeps BOTH lifecycles when a component returns another one's result", () => {
+		// `const TextField = component((props) => Field({ ... }))` — a component
+		// whose body is another component, which is how a compound set is built.
+		// The lifecycle rides on the returned object, so the outer wrap used to
+		// assign over the inner one: the inner component's setup ran, its
+		// bindings worked, and its `onMount` never fired. A floating surface
+		// reached through such a wrapper never opened, silently.
+		const mounted: string[] = [];
+		const Child = component(() => {
+			onMount(() => {
+				mounted.push("child");
+			});
+			return html`<span>child</span>`;
+		});
+		const Wrapper = component(() => {
+			onMount(() => {
+				mounted.push("wrapper");
+			});
+			return Child();
+		});
+		const Page = component(() => html`<main>${Wrapper()}</main>`);
+
+		container.innerHTML = renderToString(Page());
+		hydrate(container, Page);
+
+		// Outer first, the order the renderer drains the queue in everywhere else.
+		expect(mounted).toEqual(["wrapper", "child"]);
+	});
+
+	it("keeps the lifecycle of a children prop handed straight back", () => {
+		const mounted: string[] = [];
+		const Child = component(() => {
+			onMount(() => {
+				mounted.push("child");
+			});
+			return html`<span>child</span>`;
+		});
+		const Passthrough = component(
+			(props: { children: TemplateResult }) => props.children,
+		);
+		const Page = component(
+			() => html`<main>${Passthrough({ children: Child() })}</main>`,
+		);
+
+		container.innerHTML = renderToString(Page());
+		hydrate(container, Page);
+
+		expect(mounted).toEqual(["child"]);
 	});
 
 	it("tears the hook down when the slot replaces what it mounted", () => {

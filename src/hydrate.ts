@@ -23,6 +23,7 @@
 import { readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
+import { resetIds } from "./id.js";
 import { effect, isSignal } from "./reactive.js";
 import {
 	type Disposer,
@@ -391,6 +392,9 @@ export function hydrate(
 	// Announce the phase around the work, not inside it: `aurora:hydrate` fires
 	// for this root either way, and `aurora:load` once the page settles. A
 	// signal withheld on failure would turn a race into a silent hang.
+	// The browser pass starts here, so the id sequence starts here too — the
+	// server reset before its own pass, and the two only line up if both do.
+	resetIds();
 	beginHydration();
 	try {
 		return hydrateRoot(container, factory);

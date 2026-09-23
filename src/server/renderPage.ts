@@ -26,6 +26,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setCookieStoreReader } from "../browser.js";
 import { AuroraError } from "../errors.js";
+import { resetIds } from "../id.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
 import { setRouteManifestReader } from "../url.js";
@@ -226,6 +227,10 @@ async function renderPageInScope<P>(
 	props: P,
 	options: RenderPageOptions,
 ): Promise<void> {
+	// One page, one id sequence. A server process is long-lived: without this
+	// the counter climbs across requests and the markup stops matching what the
+	// browser mints when it hydrates from zero.
+	resetIds();
 	const factory = await pages.resolve(name);
 	const shared = await resolveSharedProps(ctx, options.shared);
 	const pageProps = mergeProps(shared, props);

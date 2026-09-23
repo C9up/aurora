@@ -187,12 +187,29 @@ function wrapWithLifecycle(
 	result: TemplateResult,
 	ctx: ComponentContext,
 ): TemplateResult {
-	(result as { [COMPONENT_LIFECYCLE]?: ComponentLifecycle })[
-		COMPONENT_LIFECYCLE
-	] = {
-		mountHooks: ctx.mountHooks,
-		cleanups: ctx.cleanups,
-	};
+	const carrier = result as { [COMPONENT_LIFECYCLE]?: ComponentLifecycle };
+	// MERGE, never overwrite. A component is free to return another one's
+	// result rather than a template of its own —
+	//
+	//     const TextField = component((props) => Field({ ... }))
+	//     const Passthrough = component((props) => props.children)
+	//
+	// and both hand back an object that ALREADY carries a lifecycle. Assigning
+	// over it dropped the inner component's hooks on the floor: its setup ran,
+	// its bindings worked, and its `onMount` never fired — so a component whose
+	// whole job happens on mount did nothing at all, silently. A floating
+	// surface reached through such a wrapper never opened.
+	//
+	// This one's hooks go FIRST: it is the outer component, and the renderer
+	// drains the queue outermost-first everywhere else.
+	const existing = carrier[COMPONENT_LIFECYCLE];
+	carrier[COMPONENT_LIFECYCLE] =
+		existing === undefined
+			? { mountHooks: ctx.mountHooks, cleanups: ctx.cleanups }
+			: {
+					mountHooks: [...ctx.mountHooks, ...existing.mountHooks],
+					cleanups: [...ctx.cleanups, ...existing.cleanups],
+				};
 	return result;
 }
 

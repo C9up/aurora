@@ -94,6 +94,7 @@ export {
 	hydrationState,
 	whenHydrated,
 } from "./hydrationSignal.js";
+export { byId, resetIds, uid } from "./id.js";
 export {
 	type LiveComponentDefinition,
 	type LiveSession,
