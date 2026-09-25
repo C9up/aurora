@@ -45,6 +45,20 @@ function moduleUnderTest(): string {
 		: join(packageRoot, "src", "devPageReload.ts");
 }
 
+/** What a failed child actually printed, whatever shape the rejection has. */
+function childReport(error: unknown): string {
+	if (typeof error !== "object" || error === null) return String(error);
+	const stderr = Reflect.get(error, "stderr");
+	const stdout = Reflect.get(error, "stdout");
+	const parts = [
+		typeof stderr === "string" && stderr !== "" ? `stderr: ${stderr}` : "",
+		typeof stdout === "string" && stdout !== "" ? `stdout: ${stdout}` : "",
+	].filter((part) => part !== "");
+	return parts.length > 0
+		? parts.join("\n")
+		: String(Reflect.get(error, "message") ?? error);
+}
+
 const temporary: string[] = [];
 
 afterEach(() => {
@@ -99,16 +113,36 @@ console.log(JSON.stringify({ first: first.render(), second: second.render() }));
 `,
 	);
 
-	const { stdout } = await run(process.execPath, [script], { cwd: dir });
+	const module = moduleUnderTest();
+	let stdout: string;
+	try {
+		({ stdout } = await run(process.execPath, [script], { cwd: dir }));
+	} catch (error) {
+		// Everything the child had to say, and which file it was actually
+		// running. Without this the failure reads as `JSON.parse` choking on an
+		// empty string, which says nothing about a child that died on an import
+		// — least of all when the module under test is a stale `dist/` build
+		// rather than the source next to it.
+		throw new Error(`child failed running ${module}\n${childReport(error)}`, {
+			cause: error,
+		});
+	}
 	const line = stdout.trim().split("\n").at(-1) ?? "";
-	const parsed: unknown = JSON.parse(line);
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(line);
+	} catch {
+		throw new Error(
+			`child running ${module} printed no result.\nstdout: ${stdout}`,
+		);
+	}
 	if (
 		typeof parsed !== "object" ||
 		parsed === null ||
 		typeof Reflect.get(parsed, "first") !== "string" ||
 		typeof Reflect.get(parsed, "second") !== "string"
 	) {
-		throw new Error(`unreadable child output: ${stdout}`);
+		throw new Error(`unreadable output from ${module}: ${stdout}`);
 	}
 	return {
 		first: String(Reflect.get(parsed, "first")),
