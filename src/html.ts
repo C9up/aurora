@@ -64,6 +64,9 @@ function classifySlots(strings: readonly string[]): RawSlot[] {
 	const result: RawSlot[] = [];
 	let insideTag = false;
 	let insideComment = false;
+	// Has the tag currently being scanned got a name yet? A slot that lands
+	// while this is false is the tag NAME, which is refused below.
+	let tagNamed = true;
 	for (let i = 0; i < strings.length - 1; i++) {
 		const segment = strings[i];
 		// `i` is bounded by the loop; naming the miss is what carries that
@@ -96,8 +99,39 @@ function classifySlots(strings: readonly string[]): RawSlot[] {
 				continue;
 			}
 			const ch = segment[j];
-			if (!insideTag && ch === "<") insideTag = true;
-			else if (insideTag && ch === ">") insideTag = false;
+			if (!insideTag && ch === "<") {
+				insideTag = true;
+				tagNamed = false;
+			} else if (insideTag && ch === ">") {
+				insideTag = false;
+				tagNamed = true;
+			} else if (insideTag && !tagNamed && ch !== "/") {
+				// The first character after `<` or `</` begins the name.
+				tagNamed = true;
+			}
+		}
+		if (insideTag && !tagNamed) {
+			// `html`<${tag}>`` and `html`</${tag}>``.
+			//
+			// Refused rather than supported, and the two reasons are separate.
+			//
+			// It cannot work: the template is compiled ONCE into a DOM fragment
+			// and the slots are node positions inside it. A tag name is not a
+			// position — changing it would mean recompiling the template, which
+			// is the one thing this design does not do. The client renderer
+			// already failed here, with an internal-invariant message that told
+			// the author nothing.
+			//
+			// And it was not safe: server-side rendering interpolated the value
+			// straight into the markup, so `<${userInput}>` emitted whatever it
+			// was given — `<img src=x onerror=...>` came out intact. Every other
+			// slot position escapes. This one silently did not, and produced a
+			// page the browser then refused to hydrate, so the injection shipped
+			// and the repair never ran.
+			throw new AuroraError(
+				"E_AURORA_SLOT_IN_TAG_NAME",
+				"[aurora] a ${} cannot be a tag name — write the tag out, or pick between two templates.",
+			);
 		}
 		result.push({ region: insideTag ? "attribute" : "text" });
 	}

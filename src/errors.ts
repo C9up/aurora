@@ -39,6 +39,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_RELAY_REQUEST_FAILED"
 	/** A navigation URL failed the same-origin / scheme check. */
 	| "E_AURORA_UNSAFE_URL"
+	/** A `${}` landed where a tag name goes — `html`<${tag}>`` . */
+	| "E_AURORA_SLOT_IN_TAG_NAME"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */
 	| "E_AURORA_INTERNAL";
 

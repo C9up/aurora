@@ -8,6 +8,7 @@
  * lands in the browser.
  */
 
+import { AuroraError } from "./errors.js";
 import { isSignal } from "./reactive.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
 
@@ -100,6 +101,18 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		}
 		if (i < values.length && !skipValue) {
 			const value = values[i];
+			if (scanner.inTagName) {
+				// `html`<${tag}>``. The client renderer cannot do this at all —
+				// the template compiles once and a tag name is not a slot
+				// position — and this side used to splice the value in RAW, so
+				// a tag built from anything a user touched was markup
+				// injection. The page then failed to hydrate, which meant the
+				// injection shipped and the repair never ran.
+				throw new AuroraError(
+					"E_AURORA_SLOT_IN_TAG_NAME",
+					"[aurora] a ${} cannot be a tag name — write the tag out, or pick between two templates.",
+				);
+			}
 			const inAttr = scanner.insideTag;
 			if (inAttr) {
 				const rendered = stringifyValue(value, true);
@@ -152,6 +165,8 @@ class TagScanner {
 	#inTag = false;
 	/** The quote character currently open inside a tag, or empty. */
 	#quote = "";
+	/** Has the tag being scanned got a name yet? */
+	#named = true;
 
 	/** Feed everything appended since the last call. */
 	consume(chunk: string): void {
@@ -163,16 +178,34 @@ class TagScanner {
 			}
 			if (this.#inTag) {
 				if (c === '"' || c === "'") this.#quote = c;
-				else if (c === ">") this.#inTag = false;
+				else if (c === ">") {
+					this.#inTag = false;
+					this.#named = true;
+				} else if (!this.#named && c !== "/") this.#named = true;
 				continue;
 			}
-			if (c === "<") this.#inTag = true;
+			if (c === "<") {
+				this.#inTag = true;
+				this.#named = false;
+			}
 		}
 	}
 
 	/** True when the cursor is inside a tag — an attribute region. */
 	get insideTag(): boolean {
 		return this.#inTag;
+	}
+
+	/**
+	 * True when the cursor is where the tag NAME goes — right after `<` or
+	 * `</`, before any name character.
+	 *
+	 * Not an attribute region, although `insideTag` is also true there. The
+	 * difference is the whole point: an attribute slot is escaped and a tag
+	 * name used to be spliced in raw.
+	 */
+	get inTagName(): boolean {
+		return this.#inTag && !this.#named;
 	}
 }
 
