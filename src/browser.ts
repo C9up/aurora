@@ -14,6 +14,7 @@
 
 import { AuroraError } from "./errors.js";
 import { effect, onCleanup, type Signal, signal } from "./reactive.js";
+import { hasUnsafeScheme } from "./urlGuard.js";
 
 /** Navigate to `url` with a full page load. No-op during SSR. */
 export function redirect(url: string): void {
@@ -365,22 +366,6 @@ export function forward(): void {
 }
 
 /**
- * Drop every C0 control character (U+0000–U+001F).
- *
- * Written as a scan rather than a regex: a character class over control
- * characters is exactly what `noControlCharactersInRegex` flags, and the rule
- * is right in general — here the stripping is the point, so the loop states it
- * without needing a suppression.
- */
-function stripControlChars(value: string): string {
-	let out = "";
-	for (const char of value) {
-		if (char.charCodeAt(0) > 0x1f) out += char;
-	}
-	return out;
-}
-
-/**
  * SPA navigation: push `url` onto history WITHOUT a full page reload (contrast
  * {@link redirect}, which reloads). Emits a `popstate` event so reactive URL
  * consumers — e.g. {@link queryParam} or a router — pick up the change. No-op
@@ -393,17 +378,10 @@ export function navigate(url: string): void {
 }
 
 function safeNavigationUrl(url: string): string {
-	// Browsers strip ASCII tab/newline/CR from ANYWHERE in a URL and trim leading
-	// control chars + whitespace before resolving the scheme, so `java\tscript:`
-	// (or a leading NUL) is evaluated as `javascript:`. A guard that only
-	// `trimStart()`s is trivially bypassed — mirror the browser and strip every
-	// C0 control char before comparing the scheme.
-	const normalized = stripControlChars(url).trimStart().toLowerCase();
-	if (
-		normalized.startsWith("javascript:") ||
-		normalized.startsWith("vbscript:") ||
-		normalized.startsWith("data:")
-	) {
+	// `navigate()` throws where the markup guard neutralises, and the difference
+	// is deliberate: this is a call the application made on purpose, so a bad URL
+	// is a bug to surface, not data to render inert.
+	if (hasUnsafeScheme(url)) {
 		throw new AuroraError(
 			"E_AURORA_UNSAFE_URL",
 			`[aurora] blocked unsafe navigation URL: ${url}`,

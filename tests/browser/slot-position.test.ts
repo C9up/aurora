@@ -81,8 +81,7 @@ describe("aurora > browser > a `>` inside a static quoted value", () => {
 		// The client read this `>` as the end of the tag and dropped `class`
 		// entirely — silently, on an element where every other binding worked.
 		const label = signal("X");
-		const factory = () =>
-			html`<div title="a > b" class="${label}">t</div>`;
+		const factory = () => html`<div title="a > b" class="${label}">t</div>`;
 		container.innerHTML = renderToString(factory());
 		hydrate(container, factory);
 		expect(auroraWarnings()).toEqual([]);
@@ -111,7 +110,10 @@ describe("aurora > browser > the two refused name positions", () => {
 	it("refuses a tag name and an attribute name by name", () => {
 		for (const [make, code] of [
 			[() => html`<${"h2"}>hi</h2>`, "E_AURORA_SLOT_IN_TAG_NAME"],
-			[() => html`<img ${"onerror"}="${"alert(1)"}">`, "E_AURORA_SLOT_IN_ATTRIBUTE_NAME"],
+			[
+				() => html`<img ${"onerror"}="${"alert(1)"}">`,
+				"E_AURORA_SLOT_IN_ATTRIBUTE_NAME",
+			],
 		] as const) {
 			// Both render paths, in the browser that used to ship the injection.
 			expect(() => renderToString(make())).toThrowError();

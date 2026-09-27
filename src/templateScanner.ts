@@ -74,15 +74,24 @@ function isSpace(char: string): boolean {
 	);
 }
 
+/**
+ * Which part of a tag the cursor is reading. One enum rather than a pair of
+ * booleans, because the three parts are genuinely exclusive and the pair let a
+ * tag name's own characters be mistaken for an attribute name.
+ */
+type TagPart = "tag-name" | "attribute-name" | "value";
+
 export class TemplateScanner {
 	#inComment = false;
 	#inTag = false;
 	/** The quote character currently open inside a tag, or empty. */
 	#quote = "";
-	/** Has the tag being scanned got a name yet? */
-	#named = true;
-	/** Are we past the `=` of the attribute being scanned? */
-	#afterEquals = false;
+	/** Which part of the tag is being read. Only meaningful inside a tag. */
+	#part: TagPart = "tag-name";
+	/** The attribute name being read, or the one whose value is being read. */
+	#attribute = "";
+	/** Has anything been written into the value being read yet? */
+	#valueStarted = false;
 
 	/** Feed everything appended since the last call. */
 	consume(chunk: string): void {
@@ -103,29 +112,14 @@ export class TemplateScanner {
 			if (this.#quote !== "") {
 				if (char === this.#quote) {
 					this.#quote = "";
-					// The value ended with its quote, so the next thing in the
-					// tag is another attribute name.
-					this.#afterEquals = false;
+					this.#beginAttribute();
+				} else {
+					this.#valueStarted = true;
 				}
 				continue;
 			}
 			if (this.#inTag) {
-				if (this.#afterEquals && (char === '"' || char === "'")) {
-					this.#quote = char;
-				} else if (char === ">") {
-					this.#inTag = false;
-					this.#named = true;
-					this.#afterEquals = false;
-				} else if (!this.#named && char !== "/") {
-					// The first character after `<` or `</` begins the name.
-					this.#named = true;
-				} else if (char === "=") {
-					this.#afterEquals = true;
-				} else if (isSpace(char)) {
-					// Whitespace ends an unquoted value and begins the next
-					// attribute name.
-					this.#afterEquals = false;
-				}
+				this.#consumeInTag(char);
 				continue;
 			}
 			if (
@@ -140,10 +134,47 @@ export class TemplateScanner {
 			}
 			if (char === "<") {
 				this.#inTag = true;
-				this.#named = false;
-				this.#afterEquals = false;
+				this.#part = "tag-name";
+				this.#attribute = "";
 			}
 		}
+	}
+
+	#consumeInTag(char: string): void {
+		if (char === ">") {
+			this.#inTag = false;
+			this.#part = "tag-name";
+			this.#attribute = "";
+			return;
+		}
+		if (isSpace(char)) {
+			// Whitespace ends the tag name, a bare attribute, or an unquoted
+			// value — in every case the next thing is another attribute name.
+			this.#beginAttribute();
+			return;
+		}
+		if (this.#part === "tag-name") return;
+		if (this.#part === "attribute-name") {
+			if (char === "=") {
+				this.#part = "value";
+				this.#valueStarted = false;
+			} else {
+				this.#attribute += char;
+			}
+			return;
+		}
+		// Reading a value with no quotes around it. An opening quote only counts
+		// as one while the value is still empty — `src=a"b` keeps the `"`.
+		if (!this.#valueStarted && (char === '"' || char === "'")) {
+			this.#quote = char;
+			return;
+		}
+		this.#valueStarted = true;
+	}
+
+	#beginAttribute(): void {
+		this.#part = "attribute-name";
+		this.#attribute = "";
 	}
 
 	/** The kind of position the cursor is in right now. */
@@ -152,9 +183,27 @@ export class TemplateScanner {
 		// renders into the comment body and binds nothing.
 		if (this.#inComment) return "text";
 		if (!this.#inTag) return "text";
-		if (!this.#named) return "tag-name";
 		if (this.#quote !== "") return "quoted-value";
-		return this.#afterEquals ? "unquoted-value" : "attribute-name";
+		if (this.#part === "tag-name") return "tag-name";
+		return this.#part === "value" ? "unquoted-value" : "attribute-name";
+	}
+
+	/**
+	 * The attribute whose value the cursor is in, lowercased — HTML attribute
+	 * names are case-insensitive, and a guard that compares them must be too.
+	 * Empty when the cursor is not in a value.
+	 */
+	get attribute(): string {
+		return this.#attribute.toLowerCase();
+	}
+
+	/**
+	 * True when nothing has been written into this value yet, so a slot here
+	 * OPENS the attribute's value. What a URL guard needs: a scheme can only be
+	 * at the start, so a slot with static text before it cannot introduce one.
+	 */
+	get atValueStart(): boolean {
+		return !this.#valueStarted;
 	}
 }
 

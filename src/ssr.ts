@@ -15,6 +15,7 @@ import {
 	TemplateScanner,
 } from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
+import { isNavigationAttribute, neutralizeUnsafeUrl } from "./urlGuard.js";
 
 const VOID_ELEMENTS = new Set([
 	"area",
@@ -108,7 +109,19 @@ function stringifyTemplateResult(result: TemplateResult): string {
 			const position = scanner.position;
 			assertBindable(position);
 			if (position !== "text") {
-				const rendered = stringifyValue(value, position);
+				// Guard only a slot that OPENS the value. A scheme can only be at
+				// the start, so static text before the slot means this value's
+				// scheme was written by the template author, not interpolated.
+				//
+				// The client guards the whole joined value instead, because that is
+				// what it has. The two agree on every shape that matters, including
+				// `href="${a}${b}"` — the first slot still opens the value. They
+				// part only where an author splits an unsafe scheme across the
+				// boundary themselves (`href="java${'script:x'}"`), which needs the
+				// template's own text to spell half the attack.
+				const guarded =
+					scanner.atValueStart && isNavigationAttribute(scanner.attribute);
+				const rendered = stringifyValue(value, position, guarded);
 				out += rendered;
 				scanner.consume(rendered);
 			} else {
@@ -160,30 +173,43 @@ function resolveBooleanValue(value: unknown): boolean {
 	return Boolean(value);
 }
 
-function stringifyValue(value: unknown, context: BindablePosition): string {
+function stringifyValue(
+	value: unknown,
+	context: BindablePosition,
+	urlAttribute = false,
+): string {
 	const inAttribute = context !== "text";
 	if (value === null || value === undefined || value === false) return "";
 	if (value === true) return inAttribute ? "" : "true";
-	if (isSignal(value)) return stringifyValue(value(), context);
+	if (isSignal(value)) return stringifyValue(value(), context, urlAttribute);
 	if (typeof value === "function") {
 		// A function here is a reactive expression — `class="${() => …}"` in an
 		// attribute, `${() => …}` in text — and is evaluated eagerly
 		// server-side. Directive values (`@click`, `?disabled`, `.prop`) never
 		// reach this point: the scanner skips them, whatever quoting they use.
 		try {
-			return stringifyValue((value as () => unknown)(), context);
+			return stringifyValue((value as () => unknown)(), context, urlAttribute);
 		} catch {
 			return "";
 		}
 	}
 	if (Array.isArray(value)) {
 		let out = "";
-		for (const item of value) out += stringifyValue(item, context);
+		for (const item of value)
+			out += stringifyValue(item, context, urlAttribute);
 		return out;
 	}
 	if (isTemplateResult(value)) return stringifyTemplateResult(value);
-	// Plain value — escaped for the context it is being written into.
-	const text = String(value);
+	// Plain value — guarded, then escaped for the context it is written into.
+	//
+	// In that order, and the order is the whole point. An unquoted value encodes
+	// a tab as `&#9;`, which the browser decodes back to a tab and then strips
+	// when it resolves the scheme — so `java\tscript:` checked AFTER escaping
+	// reads as the harmless literal `java&#9;script:` and sails through, while the
+	// browser still executes it. The guard has to see what the browser will see.
+	const text = urlAttribute
+		? neutralizeUnsafeUrl(String(value))
+		: String(value);
 	if (context === "text") return escapeText(text);
 	return context === "quoted-value"
 		? escapeAttr(text)
@@ -205,12 +231,21 @@ function escapeAttr(s: string): string {
 	// attribute. `>` isn't strictly required inside a quoted value but is
 	// escaped to stay safe under stray scanners that hunt tag boundaries
 	// before resolving the quote context.
-	return s
-		.replaceAll("&", "&amp;")
-		.replaceAll('"', "&quot;")
-		.replaceAll("'", "&#39;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;");
+	return (
+		s
+			.replaceAll("&", "&amp;")
+			.replaceAll('"', "&quot;")
+			.replaceAll("'", "&#39;")
+			.replaceAll("<", "&lt;")
+			.replaceAll(">", "&gt;")
+			// A raw CR in an attribute value does not survive being parsed: the
+			// tokenizer normalises it to a newline, so the DOM built from this
+			// markup held a different string than the one the client's
+			// `setAttribute` wrote, and hydration reported a mismatch on a value
+			// that was never wrong. A character reference is decoded after that
+			// normalisation, which is how a CR is kept.
+			.replaceAll("\r", "&#13;")
+	);
 }
 
 /**

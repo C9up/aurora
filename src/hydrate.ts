@@ -41,6 +41,7 @@ import {
 	type Slot,
 	type TemplateResult,
 } from "./types.js";
+import { guardUrlAttribute } from "./urlGuard.js";
 
 /**
  * Process-scoped flag so the "reactive nested template not reactive
@@ -556,7 +557,10 @@ function applyMultiAttrGroup(
 		// keeps the statics in place when only one part changes.
 		cleanups.push(
 			effect(() => {
-				group.el.setAttribute(group.name, join());
+				group.el.setAttribute(
+					group.name,
+					guardUrlAttribute(group.name, join()),
+				);
 			}),
 		);
 	}
@@ -843,14 +847,14 @@ function hydrateAttrSlot(
 		} else if (v === true) {
 			el.setAttribute(slot.name, "");
 		} else {
-			el.setAttribute(slot.name, String(v));
+			el.setAttribute(slot.name, guardUrlAttribute(slot.name, String(v)));
 		}
 	}
 	if (isSignal(value) || typeof value === "function") {
 		const dispose = effect(() => apply((value as () => unknown)()));
 		cleanups.push(dispose);
 	}
-	// Static attrs need no hydration — SSR already wrote them.
+	// Static attrs need no hydration — SSR already wrote them, guarded.
 }
 
 function hydrateBooleanAttrSlot(

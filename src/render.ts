@@ -28,6 +28,7 @@ import {
 	type TemplateResult,
 	type TextSlot,
 } from "./types.js";
+import { guardUrlAttribute } from "./urlGuard.js";
 
 export type Disposer = () => void;
 
@@ -358,7 +359,7 @@ function applyAttrSlot(
 		} else if (v === true) {
 			el.setAttribute(slot.name, "");
 		} else {
-			el.setAttribute(slot.name, String(v));
+			el.setAttribute(slot.name, guardUrlAttribute(slot.name, String(v)));
 		}
 	}
 	if (isSignal(value) || typeof value === "function") {
@@ -407,13 +408,15 @@ function applyMultiAttrGroup(
 	const hasReactive = group.values.some(
 		(v) => isSignal(v) || typeof v === "function",
 	);
+	// The guard sees the WHOLE value here — static parts and slots joined — which
+	// is what a scheme check needs: it can only be at the start.
+	const write = (): void => {
+		group.el.setAttribute(group.name, guardUrlAttribute(group.name, join()));
+	};
 	if (hasReactive) {
-		const dispose = effect(() => {
-			group.el.setAttribute(group.name, join());
-		});
-		cleanups.push(dispose);
+		cleanups.push(effect(write));
 	} else {
-		group.el.setAttribute(group.name, join());
+		write();
 	}
 }
 
