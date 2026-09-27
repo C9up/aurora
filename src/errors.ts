@@ -43,6 +43,12 @@ export type AuroraErrorCode =
 	| "E_AURORA_SLOT_IN_TAG_NAME"
 	/** A `${}` landed where an attribute name goes — `html`<img ${name}="v">`` . */
 	| "E_AURORA_SLOT_IN_ATTRIBUTE_NAME"
+	/** A `${}` landed inside `<script>`, `<style>`, `<textarea>`, `<title>`… */
+	| "E_AURORA_SLOT_IN_RAW_TEXT"
+	/** A `${}` landed in an `on*` attribute, whose value is JavaScript. */
+	| "E_AURORA_SLOT_IN_EVENT_ATTRIBUTE"
+	/** A `${}` landed in `srcdoc`, which an iframe parses as a whole document. */
+	| "E_AURORA_SLOT_IN_SRCDOC"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */
 	| "E_AURORA_INTERNAL";
 

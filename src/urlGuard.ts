@@ -36,8 +36,15 @@ const NAVIGATION_ATTRIBUTES: ReadonlySet<string> = new Set([
 /** The schemes that execute, plus the one that can carry a whole document. */
 const UNSAFE_SCHEMES = ["javascript:", "vbscript:", "data:"];
 
-/** What a neutralised URL is prefixed with, leaving it inert but readable. */
-const NEUTRALISED = "unsafe:";
+/**
+ * What a neutralised URL is prefixed with, leaving it inert but readable.
+ *
+ * Exported because server-side rendering prefixes the MARKUP of a value rather
+ * than the value — it has to hold the whole attribute back and judge it once —
+ * and this string needs no escaping, so prepending it to markup is the same
+ * operation.
+ */
+export const UNSAFE_URL_PREFIX = "unsafe:";
 
 /**
  * Drop every C0 control character.
@@ -77,7 +84,7 @@ export function isNavigationAttribute(attribute: string): boolean {
  * knows it from the scanner before it escapes the value.
  */
 export function neutralizeUnsafeUrl(url: string): string {
-	return hasUnsafeScheme(url) ? NEUTRALISED + url : url;
+	return hasUnsafeScheme(url) ? UNSAFE_URL_PREFIX + url : url;
 }
 
 /**

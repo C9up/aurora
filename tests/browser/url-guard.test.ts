@@ -77,6 +77,81 @@ describe("aurora > browser > a neutralised URL", () => {
 	});
 });
 
+describe("aurora > browser > a scheme split across the template", () => {
+	it("is inert in the SERVER's markup, before any hydration", () => {
+		// This is the whole point of holding the value back. The client always
+		// neutralised it, but only after hydrating — and the server's HTML is live
+		// from the moment the parser reaches it, so the link worked in between.
+		container.innerHTML = renderToString(
+			html`<a href="java${"script:alert(1)"}">x</a>`,
+		);
+		const link = container.querySelector("a");
+		if (link === null) throw new Error("expected the SSR link");
+		expect(link.protocol).toBe("unsafe:");
+		let ran = false;
+		Reflect.set(window, "__auroraSplitProbe", () => {
+			ran = true;
+		});
+		link.click();
+		expect(ran).toBe(false);
+	});
+
+	it("is inert when the halves are array items", () => {
+		// `href="${parts}"` concatenates server-side, so the scheme appears only
+		// once the items meet — the same shape, reachable from data rather than
+		// from an odd template.
+		container.innerHTML = renderToString(
+			html`<a href="${["java", "script:alert(1)"]}">x</a>`,
+		);
+		expect(container.querySelector("a")?.protocol).toBe("unsafe:");
+	});
+
+	it("still resolves a value the template only partly supplies", () => {
+		container.innerHTML = renderToString(
+			html`<a href="/go?next=${"javascript:x"}">x</a>`,
+		);
+		const link = container.querySelector("a");
+		expect(link?.pathname).toBe("/go");
+		expect(link?.search).toBe("?next=javascript:x");
+	});
+
+	it("judges each href on the page separately", () => {
+		container.innerHTML = renderToString(
+			html`<a id="ok" href="${"/a"}">x</a><a id="bad" href="${"javascript:x"}">y</a>`,
+		);
+		expect(container.querySelector("#ok")?.getAttribute("href")).toBe("/a");
+		expect(container.querySelector("#bad")?.getAttribute("href")).toBe(
+			"unsafe:javascript:x",
+		);
+	});
+
+	it("hydrates a held value without a mismatch", () => {
+		const factory = () => html`<a href="/items/${42}?tab=${"x"}">go</a>`;
+		container.innerHTML = renderToString(factory());
+		hydrate(container, factory);
+		expect(auroraWarnings()).toEqual([]);
+		expect(container.querySelector("a")?.getAttribute("href")).toBe(
+			"/items/42?tab=x",
+		);
+	});
+});
+
+describe("aurora > browser > srcdoc, which escaping does not protect", () => {
+	it("is refused rather than escaped", () => {
+		// The server escaped it to `&lt;script&gt;`; an iframe decodes its srcdoc
+		// and then parses it as a document, so the escaping bought nothing. Proven
+		// here with the parser that actually does the decoding.
+		expect(() =>
+			renderToString(html`<iframe srcdoc="${"<script>x</script>"}"></iframe>`),
+		).toThrowError(/srcdoc/);
+		const decoded = document.createElement("div");
+		decoded.innerHTML =
+			'<iframe srcdoc="&lt;script&gt;x&lt;/script&gt;"></iframe>';
+		// What the old markup handed the iframe, once the browser decoded it.
+		expect(decoded.querySelector("iframe")?.srcdoc).toBe("<script>x</script>");
+	});
+});
+
 describe("aurora > browser > what the guard must not break", () => {
 	it("leaves the URLs an application uses resolvable", () => {
 		// Each case names the property to read, because what proves a URL survived

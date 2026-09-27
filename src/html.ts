@@ -22,11 +22,7 @@
  */
 
 import { AuroraError } from "./errors.js";
-import {
-	assertBindable,
-	type SlotPosition,
-	TemplateScanner,
-} from "./templateScanner.js";
+import { assertBindable, TemplateScanner } from "./templateScanner.js";
 
 import {
 	type AttrSlot,
@@ -74,7 +70,7 @@ function classifySlots(strings: readonly string[]): RawSlot[] {
 		// bound into the scan.
 		if (segment === undefined) continue;
 		scanner.consume(segment);
-		result.push({ region: regionOf(scanner.position) });
+		result.push({ region: regionOf(scanner) });
 	}
 	return result;
 }
@@ -85,9 +81,8 @@ function classifySlots(strings: readonly string[]): RawSlot[] {
  * the reasons; everything else is either a text region or an attribute region,
  * which is the only distinction {@link buildMarkup} needs.
  */
-function regionOf(position: SlotPosition): "text" | "attribute" {
-	assertBindable(position);
-	return position === "text" ? "text" : "attribute";
+function regionOf(scanner: TemplateScanner): "text" | "attribute" {
+	return assertBindable(scanner) === "text" ? "text" : "attribute";
 }
 
 /**

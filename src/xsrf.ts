@@ -16,6 +16,8 @@
  */
 
 /** The cookie the server seeds. */
+import { isSameOriginAsPage } from "./requestOrigin.js";
+
 export const XSRF_COOKIE_NAME = "XSRF-TOKEN";
 
 /** The header it is echoed in (the Axios/Angular convention the server reads). */
@@ -55,27 +57,6 @@ export function readXsrfCookie(
 		if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
 	}
 	return undefined;
-}
-
-/**
- * Is this URL served by the page's own origin?
- *
- * The question is not "does it match the client's baseURL" — a client whose
- * baseURL IS a third-party API would pass that one. A CSRF token authenticates
- * the page's session; sending it anywhere else hands a working token to whoever
- * runs that host.
- *
- * A relative URL is same-origin by construction. Outside a browser there is no
- * page and no cookie, so the answer is no.
- */
-export function isSameOriginAsPage(url: string): boolean {
-	if (typeof window === "undefined") return false;
-	if (!/^[a-z][a-z\d+\-.]*:\/\//i.test(url)) return true;
-	try {
-		return new URL(url).origin === window.location.origin;
-	} catch {
-		return false;
-	}
 }
 
 /**

@@ -15,7 +15,11 @@ import {
 	TemplateScanner,
 } from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
-import { isNavigationAttribute, neutralizeUnsafeUrl } from "./urlGuard.js";
+import {
+	hasUnsafeScheme,
+	isNavigationAttribute,
+	UNSAFE_URL_PREFIX,
+} from "./urlGuard.js";
 
 const VOID_ELEMENTS = new Set([
 	"area",
@@ -47,9 +51,94 @@ export function renderToString(result: TemplateResult): string {
 	return stringifyTemplateResult(result);
 }
 
+/**
+ * A navigation attribute's value, held back until it is complete.
+ *
+ * `href` cannot be judged one slot at a time. `href="java${'script:alert(1)'}"`
+ * is safe in each half and a running script once they meet, and an array value
+ * concatenates into one in the same way — so the earlier per-slot guard passed
+ * both through and the server shipped live markup that the client then
+ * neutralised, too late, after hydration. The client never had this problem: it
+ * writes the whole value at once. The server has to hold it to get the same
+ * answer.
+ */
+interface HeldValue {
+	/** The attribute this value belongs to, lowercased. */
+	attribute: string;
+	/** The value's markup so far. */
+	markup: string;
+	/**
+	 * Has a slot contributed to it?
+	 *
+	 * A value made only of the template's own text is authored code, and the
+	 * client does not guard those either — it only ever sees slots. Agreeing with
+	 * the client matters more here than guarding a string nobody interpolated.
+	 */
+	fromSlot: boolean;
+}
+
 function stringifyTemplateResult(result: TemplateResult): string {
 	const { strings, values } = result;
 	let out = "";
+	let held: HeldValue | undefined;
+	const scanner = new TemplateScanner();
+
+	/** Emit the held value, guarded once, and go back to writing straight out. */
+	const release = (): void => {
+		if (held === undefined) return;
+		const { markup, fromSlot } = held;
+		held = undefined;
+		out += needsNeutralising(markup, fromSlot)
+			? UNSAFE_URL_PREFIX + markup
+			: markup;
+	};
+
+	/**
+	 * Append markup and move the scanner with it, splitting at the boundaries of
+	 * a navigation attribute's value.
+	 *
+	 * Whole chunks everywhere except inside such a value, where it steps
+	 * character by character. It has to: one reading after a chunk cannot say
+	 * WHICH value ended if another one opened behind it, and `href="/a" id="b"`
+	 * arrives as a single chunk.
+	 */
+	const write = (text: string): void => {
+		if (text === "") return;
+		if (held !== undefined) {
+			const end = scanner.valueEndIn(text);
+			if (end === -1) {
+				// The value runs past this chunk; all of it is value.
+				scanner.consume(text);
+				held.markup += text;
+				return;
+			}
+			// The value and the character that ends it, in one step.
+			scanner.consume(text.slice(0, end + 1));
+			held.markup += text.slice(0, end);
+			release();
+			// The character that ended the value belongs after it, and the rest of
+			// the chunk is ordinary markup again.
+			out += text.charAt(end);
+			write(text.slice(end + 1));
+			return;
+		}
+		scanner.consume(text);
+		const position = scanner.position;
+		if (
+			(position === "quoted-value" || position === "unquoted-value") &&
+			isNavigationAttribute(scanner.attribute)
+		) {
+			const attribute = scanner.attribute;
+			// The value opened inside this chunk, so its characters are the chunk's
+			// tail and `valueLength` says how many.
+			const kept = Math.max(text.length - scanner.valueLength, 0);
+			out += text.slice(0, kept);
+			held = { attribute, markup: text.slice(kept), fromSlot: false };
+			return;
+		}
+		out += text;
+	};
+
 	// When a segment ends with a directive (` @click="`, ` ?disabled="`,
 	// ` .value="`), we drop the directive prefix from that segment, skip
 	// the matching value, and consume the closing `"` from the next
@@ -58,7 +147,6 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	// Which quote closes the directive currently being skipped, so the closing
 	// one consumed is the one that was opened. Undefined when none is pending.
 	let pendingClosingQuote: '"' | "'" | undefined;
-	const scanner = new TemplateScanner();
 	for (const [i, raw] of strings.entries()) {
 		let segment = raw;
 		if (pendingClosingQuote !== undefined) {
@@ -92,38 +180,21 @@ function stringifyTemplateResult(result: TemplateResult): string {
 			pendingClosingQuote =
 				quote === '"' ? '"' : quote === "'" ? "'" : undefined;
 		}
-		out += segment;
-		scanner.consume(segment);
+		write(segment);
 		if (booleanAttrName !== undefined && i < values.length) {
 			// Present-and-empty when truthy, absent otherwise — byte-for-byte
 			// what applyBooleanAttrSlot writes on the client, so hydration
 			// re-applying the effect is a no-op instead of a correction.
-			if (resolveBooleanValue(values[i])) {
-				const rendered = ` ${booleanAttrName}=""`;
-				out += rendered;
-				scanner.consume(rendered);
-			}
+			if (resolveBooleanValue(values[i])) write(` ${booleanAttrName}=""`);
 		}
 		if (i < values.length && !skipValue) {
 			const value = values[i];
-			const position = scanner.position;
-			assertBindable(position);
+			const position = assertBindable(scanner);
 			if (position !== "text") {
-				// Guard only a slot that OPENS the value. A scheme can only be at
-				// the start, so static text before the slot means this value's
-				// scheme was written by the template author, not interpolated.
-				//
-				// The client guards the whole joined value instead, because that is
-				// what it has. The two agree on every shape that matters, including
-				// `href="${a}${b}"` — the first slot still opens the value. They
-				// part only where an author splits an unsafe scheme across the
-				// boundary themselves (`href="java${'script:x'}"`), which needs the
-				// template's own text to spell half the attack.
-				const guarded =
-					scanner.atValueStart && isNavigationAttribute(scanner.attribute);
-				const rendered = stringifyValue(value, position, guarded);
-				out += rendered;
-				scanner.consume(rendered);
+				if (held !== undefined) held.fromSlot = true;
+				// Escaped for its context; the URL decision waits for the whole
+				// value, in `release`.
+				write(stringifyValue(value, position));
 			} else {
 				// Text-region slot — ALWAYS wrap in boundary markers so the SSR
 				// node structure matches the client template, which keeps exactly
@@ -137,6 +208,9 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				// anchors scalar text updates and nested-template swaps. Same
 				// part-marker approach as lit-html / Solid.
 				const rendered = stringifyValue(value, "text");
+				// The markers are aurora's own and must stay invisible to the
+				// scanner, so they go straight out rather than through `write`.
+				// A text slot is never inside a held value anyway.
 				out += `<!--${SLOT_START}-->`;
 				out += rendered;
 				out += `<!--${SLOT_END}-->`;
@@ -145,6 +219,65 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				scanner.consume(rendered);
 			}
 		}
+	}
+	// A template that ends inside an attribute value — `<a href="${x}` with no
+	// closing quote — still has to emit what it held, guarded.
+	release();
+	return out;
+}
+
+/**
+ * Undo exactly the escapes written above, and nothing else.
+ *
+ * NOT an HTML entity decoder, and it must not be mistaken for one. It exists so
+ * the URL check reads a held value the way the browser will: `escapeUnquotedAttr`
+ * writes a tab as `&#9;`, the browser decodes it and then strips it while
+ * resolving the scheme, so `java<TAB>script:` checked against the MARKUP would
+ * read as the harmless literal `java&#9;script:` and sail through.
+ *
+ * It covers what this module emits. An exotic named entity the template author
+ * typed by hand is left alone, and that is the right boundary: the static text
+ * of a template is authored code, not data — for it to matter, the author would
+ * have to spell half the attack themselves.
+ */
+const OWN_ESCAPES: ReadonlyArray<readonly [string, string]> = [
+	["&quot;", '"'],
+	["&#39;", "'"],
+	["&lt;", "<"],
+	["&gt;", ">"],
+	["&#32;", " "],
+	["&#9;", "\t"],
+	["&#10;", "\n"],
+	["&#13;", "\r"],
+	["&#12;", "\f"],
+	["&#47;", "/"],
+	["&#61;", "="],
+	["&#96;", "`"],
+	// Last, mirroring `escapeAttr`, which writes `&` first. Undoing it earlier
+	// would let `&amp;#9;` — an author's literal `&#9;` — decode to a tab.
+	["&amp;", "&"],
+];
+
+/**
+ * Does this held value have to be made inert?
+ *
+ * The two cheap tests come first and carry almost every call. A scheme needs a
+ * `:`, and the only way one can hide from a plain reading is inside a character
+ * reference, which needs an `&` — so a value with neither cannot be unsafe, and
+ * that is what `/items/42` looks like. Without this, every link on the page paid
+ * for thirteen passes of {@link decodeOwnEscapes} plus a scheme comparison, and a
+ * page of four hundred links rendered 57% slower for it.
+ */
+function needsNeutralising(markup: string, fromSlot: boolean): boolean {
+	if (!fromSlot) return false;
+	if (!markup.includes(":") && !markup.includes("&")) return false;
+	return hasUnsafeScheme(decodeOwnEscapes(markup));
+}
+
+function decodeOwnEscapes(markup: string): string {
+	let out = markup;
+	for (const [encoded, decoded] of OWN_ESCAPES) {
+		out = out.replaceAll(encoded, decoded);
 	}
 	return out;
 }
@@ -173,43 +306,32 @@ function resolveBooleanValue(value: unknown): boolean {
 	return Boolean(value);
 }
 
-function stringifyValue(
-	value: unknown,
-	context: BindablePosition,
-	urlAttribute = false,
-): string {
+function stringifyValue(value: unknown, context: BindablePosition): string {
 	const inAttribute = context !== "text";
 	if (value === null || value === undefined || value === false) return "";
 	if (value === true) return inAttribute ? "" : "true";
-	if (isSignal(value)) return stringifyValue(value(), context, urlAttribute);
+	if (isSignal(value)) return stringifyValue(value(), context);
 	if (typeof value === "function") {
 		// A function here is a reactive expression — `class="${() => …}"` in an
 		// attribute, `${() => …}` in text — and is evaluated eagerly
 		// server-side. Directive values (`@click`, `?disabled`, `.prop`) never
 		// reach this point: the scanner skips them, whatever quoting they use.
 		try {
-			return stringifyValue((value as () => unknown)(), context, urlAttribute);
+			return stringifyValue((value as () => unknown)(), context);
 		} catch {
 			return "";
 		}
 	}
 	if (Array.isArray(value)) {
 		let out = "";
-		for (const item of value)
-			out += stringifyValue(item, context, urlAttribute);
+		for (const item of value) out += stringifyValue(item, context);
 		return out;
 	}
 	if (isTemplateResult(value)) return stringifyTemplateResult(value);
-	// Plain value — guarded, then escaped for the context it is written into.
-	//
-	// In that order, and the order is the whole point. An unquoted value encodes
-	// a tab as `&#9;`, which the browser decodes back to a tab and then strips
-	// when it resolves the scheme — so `java\tscript:` checked AFTER escaping
-	// reads as the harmless literal `java&#9;script:` and sails through, while the
-	// browser still executes it. The guard has to see what the browser will see.
-	const text = urlAttribute
-		? neutralizeUnsafeUrl(String(value))
-		: String(value);
+	// Plain value — escaped for the context it is written into. The URL decision
+	// is NOT made here: it needs the whole attribute value, and only the caller
+	// has that, once it has held the value to its end.
+	const text = String(value);
 	if (context === "text") return escapeText(text);
 	return context === "quoted-value"
 		? escapeAttr(text)

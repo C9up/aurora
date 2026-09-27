@@ -21,6 +21,7 @@
  * Workers, Bun, Deno). Part of the client barrel.
  */
 
+import { carriesOwnAuthority, isCrossOriginRequest } from "./requestOrigin.js";
 import { type XsrfOptions, xsrfHeaderFor } from "./xsrf.js";
 
 export interface HttpClientOptions extends XsrfOptions {
@@ -162,28 +163,6 @@ function deleteHeader(headers: Record<string, string>, name: string): void {
 	for (const key of Object.keys(headers)) {
 		if (key.toLowerCase() === lower) delete headers[key];
 	}
-}
-
-function originOf(value: string): string | null {
-	try {
-		if (/^[a-z][a-z\d+\-.]*:\/\//i.test(value)) return new URL(value).origin;
-		if (typeof window !== "undefined")
-			return new URL(value, window.location.href).origin;
-		return null;
-	} catch {
-		return null;
-	}
-}
-
-function isCrossOriginAbsoluteUrl(url: string, baseURL: string): boolean {
-	if (!/^[a-z][a-z\d+\-.]*:\/\//i.test(url)) return false;
-	const targetOrigin = originOf(url);
-	if (targetOrigin === null) return true;
-	const baseOrigin = baseURL ? originOf(baseURL) : null;
-	if (baseOrigin !== null) return targetOrigin !== baseOrigin;
-	if (typeof window !== "undefined")
-		return targetOrigin !== window.location.origin;
-	return true;
 }
 
 /** Merge abort signals into one (whichever fires first wins). `undefined` if none. */
@@ -358,9 +337,11 @@ export class HttpClient {
 	}
 
 	#buildUrl(url: string, query?: HttpRequestOptions["query"]): string {
-		const base = /^[a-z][a-z\d+\-.]*:\/\//i.test(url)
-			? url
-			: this.#baseURL + url;
+		// A URL that names its own host is already complete — and that is more
+		// than "starts with a scheme": `//host/x` names one too, and prefixing the
+		// baseURL to it would send the request somewhere neither the caller nor
+		// the client meant.
+		const base = carriesOwnAuthority(url) ? url : this.#baseURL + url;
 		if (!query) return base;
 		const params = new URLSearchParams();
 		for (const [key, value] of Object.entries(query)) {
@@ -369,7 +350,15 @@ export class HttpClient {
 		}
 		const qs = params.toString();
 		if (qs === "") return base;
-		return `${base}${base.includes("?") ? "&" : "?"}${qs}`;
+		// Before the fragment, not after it. Appended at the end, `/items#tab`
+		// became `/items#tab?q=x` — the whole query swallowed by the fragment,
+		// which is never sent to the server, so the parameters silently did
+		// nothing. Split here rather than round-tripping through `URL`, which
+		// would absolutise and normalise a relative URL the caller wrote.
+		const hash = base.indexOf("#");
+		const head = hash === -1 ? base : base.slice(0, hash);
+		const fragment = hash === -1 ? "" : base.slice(hash);
+		return `${head}${head.includes("?") ? "&" : "?"}${qs}${fragment}`;
 	}
 
 	#send(
@@ -379,7 +368,7 @@ export class HttpClient {
 		options: HttpRequestOptions,
 	): Promise<Response> {
 		const finalUrl = this.#buildUrl(url, options.query);
-		const crossOrigin = isCrossOriginAbsoluteUrl(finalUrl, this.#baseURL);
+		const crossOrigin = isCrossOriginRequest(finalUrl, this.#baseURL);
 		const allowCrossOriginAuth =
 			options.allowCrossOriginAuth ?? this.#allowCrossOriginAuth;
 		const explicitRequestAuth =
