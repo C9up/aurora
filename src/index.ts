@@ -86,7 +86,7 @@ export {
 	isAbortError,
 	isHttpError,
 } from "./http.js";
-export { hydrate, type HydrateOptions } from "./hydrate.js";
+export { type HydrateOptions, hydrate } from "./hydrate.js";
 export {
 	type HydrationDetail,
 	type HydrationState,

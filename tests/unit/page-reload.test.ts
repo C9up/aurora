@@ -19,6 +19,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,17 +33,23 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, "..", "..");
 
 /**
- * `dist` when it exists, `src` otherwise.
+ * The built file when it is current, the source otherwise.
  *
  * CI builds before it tests, so the child normally exercises the file an
  * application installs. From a checkout with no build it falls back to the
  * source, which Node reads directly from 22.18 on.
+ *
+ * "Current", not merely "present", and the difference is what made an external
+ * reviewer report this suite as red: a stale `dist/` does not trigger a
+ * presence check, so the child ran a build from before the change and failed on
+ * behaviour the source no longer has. A build that is older than its source is
+ * not the thing under test.
  */
 function moduleUnderTest(): string {
+	const source = join(packageRoot, "src", "devPageReload.ts");
 	const built = join(packageRoot, "dist", "devPageReload.js");
-	return existsSync(built)
-		? built
-		: join(packageRoot, "src", "devPageReload.ts");
+	if (!existsSync(built)) return source;
+	return statSync(built).mtimeMs >= statSync(source).mtimeMs ? built : source;
 }
 
 /** What a failed child actually printed, whatever shape the rejection has. */

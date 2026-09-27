@@ -73,8 +73,20 @@ function typecheck(source: string): { ok: boolean; output: string } {
 		);
 		return { ok: true, output: "" };
 	} catch (error) {
-		const shown = error as { stdout?: string; stderr?: string };
-		return { ok: false, output: `${shown.stdout ?? ""}${shown.stderr ?? ""}` };
+		// tsc reports diagnostics on stdout. When there are none, the child failed
+		// for a reason of its own — it could not be spawned, the binary is missing
+		// — and dropping that leaves `output` empty, so the assertion on it PASSES
+		// and only `ok` fails, with nothing said about why. Name it instead.
+		const stdout = Reflect.get(Object(error), "stdout");
+		const stderr = Reflect.get(Object(error), "stderr");
+		const said = [stdout, stderr]
+			.filter((part): part is string => typeof part === "string" && part !== "")
+			.join("");
+		return {
+			ok: false,
+			output:
+				said !== "" ? said : String(Reflect.get(Object(error), "message")),
+		};
 	}
 }
 
