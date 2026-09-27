@@ -225,6 +225,64 @@ describe("slot refusals > inside SVG, where the rules do not apply", () => {
 		).not.toThrow();
 	});
 
+	it("refuses again at an HTML integration point, where HTML resumes", () => {
+		// `foreignObject`, `desc` and `title` put the parser back into HTML, so a
+		// script there is a real script. Suspending the rules for everything under
+		// `<svg>` let the server emit executable JavaScript — proven in Chromium.
+		for (const make of [
+			() =>
+				html`<svg><foreignObject><script>${"var a"}</script></foreignObject></svg>`,
+			() => html`<svg><desc><script>${"var a"}</script></desc></svg>`,
+			() => html`<svg><title><script>${"var a"}</script></title></svg>`,
+			() =>
+				html`<svg><foreignObject><textarea>${"v"}</textarea></foreignObject></svg>`,
+			() =>
+				html`<math><annotation-xml><script>${"var a"}</script></annotation-xml></math>`,
+		]) {
+			expect(codeFromSsr(make)).toBe("E_AURORA_SLOT_IN_RAW_TEXT");
+		}
+	});
+
+	it("still takes ordinary HTML inside an integration point", () => {
+		expect(() =>
+			renderToString(
+				html`<svg><foreignObject><div>${"ok"}</div></foreignObject></svg>`,
+			),
+		).not.toThrow();
+	});
+
+	it("suspends the rules again for an svg nested inside one", () => {
+		// The case a pair of counters cannot tell apart: HTML resumes in the
+		// foreignObject, and the `<svg>` inside it suspends the rules once more, so
+		// the innermost `<title>` is an SVG element again.
+		expect(() =>
+			renderToString(
+				html`<svg><foreignObject><svg><title>${"T"}</title></svg></foreignObject></svg>`,
+			),
+		).not.toThrow();
+	});
+
+	it("pops only what it pushed, so a stray closing tag does not unwind", () => {
+		// `</title>` closing an HTML title must not unwind an open `<svg>`.
+		expect(() =>
+			renderToString(html`<svg></title><title>${"T"}</title></svg>`),
+		).not.toThrow();
+	});
+
+	it("does not treat a self-closing integration point as open", () => {
+		// `<desc/>` opens nothing, so a `<title>` after it is still SVG content.
+		expect(() =>
+			renderToString(html`<svg><desc/><title>${"T"}</title></svg>`),
+		).not.toThrow();
+	});
+
+	it("keeps a `/` that belongs to an unquoted attribute value", () => {
+		// The self-closing check must not eat one: `src=/a/b.png` is a path.
+		expect(renderToString(html`<img src=/a/b.png alt="${"x"}">`)).toContain(
+			'alt="x"',
+		);
+	});
+
 	it("goes back to refusing once the svg closes", () => {
 		expect(
 			codeFromSsr(() => html`<svg><rect/></svg><title>${"Page"}</title>`),

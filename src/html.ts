@@ -111,9 +111,36 @@ function buildMarkup(
  * records the integer path so `render()` can re-walk a clone without any
  * string parsing.
  */
+/**
+ * The property name as the AUTHOR wrote it, for a `.prop` binding.
+ *
+ * `attr.name` comes from the parsed template, and the HTML parser lowercases
+ * every attribute name — so `.textContent="${x}"` arrived as `.textcontent` and
+ * the renderer set an own property of that name on the element. `textContent`
+ * stayed empty, `className` stayed empty, and nothing warned: the binding wrote
+ * SOMETHING, just not the property anyone asked for. `.value` worked only because
+ * it is already lowercase, which is why the documented example never showed it.
+ *
+ * The case survives in the template's own text, so that is where it is read
+ * from — located by the slot number in the placeholder rather than by counting,
+ * so it cannot drift from the walk's order.
+ */
+function writtenPropertyName(
+	attr: Attr,
+	strings: readonly string[],
+): string | undefined {
+	const marker = /__aurora_slot_(\d+)__/.exec(attr.value);
+	const index =
+		marker === undefined || marker === null ? -1 : Number(marker[1]);
+	const before = strings[index];
+	if (before === undefined) return undefined;
+	return /\.([A-Za-z_$][\w$-]*)=("|'|)$/.exec(before)?.[1];
+}
+
 function collectSlots(
 	root: HTMLTemplateElement,
 	classification: readonly RawSlot[],
+	strings: readonly string[],
 ): Slot[] {
 	const slots: Slot[] = [];
 	let slotIndex = 0;
@@ -155,7 +182,8 @@ function collectSlots(
 			const slot: PropSlot = {
 				kind: "prop",
 				path: localPath,
-				name: attr.name.slice(1),
+				// The parsed name is lowercased; the template's text is not.
+				name: writtenPropertyName(attr, strings) ?? attr.name.slice(1),
 			};
 			slots.push(slot);
 			slotIndex++;
@@ -331,7 +359,7 @@ function compile(strings: TemplateStringsArray): Template {
 		}
 	}
 
-	const slots = collectSlots(tpl, classification);
+	const slots = collectSlots(tpl, classification, strings);
 	return { element: tpl, slots };
 }
 

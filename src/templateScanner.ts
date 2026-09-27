@@ -136,6 +136,34 @@ const RAW_TEXT_ELEMENTS: ReadonlyMap<string, "code" | "text"> = new Map([
 const FOREIGN_CONTENT_ELEMENTS: ReadonlySet<string> = new Set(["svg", "math"]);
 
 /**
+ * The elements inside foreign content whose children the parser reads as HTML
+ * AGAIN — the spec calls them HTML integration points.
+ *
+ * Suspending the raw-text rules for everything under `<svg>` was too broad, and
+ * the gap was a hole: inside `<svg><foreignObject><script>` the script is a real
+ * HTML script with real raw text, and the server emitted the slot into it. What
+ * made it RUN rather than merely land is worth knowing — a text slot is anchored
+ * with `<!--$-->`, and inside a script `<!--` opens a legacy HTML-like comment
+ * that ends at the LINE break, so a value beginning with a newline closed the
+ * comment and the rest executed. Proven in Chromium before it was fixed.
+ *
+ * `desc` and `title` are integration points too, which is why this is a set and
+ * not a special case for `foreignObject`.
+ *
+ * `annotation-xml` only counts when its `encoding` is `text/html` or
+ * `application/xhtml+xml`. The scanner does not read attribute VALUES, so it is
+ * treated as one either way: that refuses a slot MathML might have allowed, and
+ * refusing too much is the direction to be wrong in.
+ */
+const HTML_INTEGRATION_POINTS: ReadonlySet<string> = new Set([
+	// Lowercased, like every name this scanner compares.
+	"foreignobject",
+	"desc",
+	"title",
+	"annotation-xml",
+]);
+
+/**
  * Every prefix of those names.
  *
  * The name of a tag is only built while it could still be one of them, and this
@@ -148,8 +176,24 @@ const FOREIGN_CONTENT_ELEMENTS: ReadonlySet<string> = new Set(["svg", "math"]);
  * `table` and `span` all pass it, and they are most of a real page. Measured, not
  * assumed — `#consumeInTag` was 5.7x its old cost until this was right.
  */
+/**
+ * Elements whose `.value` property has a place in server-rendered markup.
+ *
+ * Tracked so the renderer can ask which element it is in. `textarea` is here
+ * already for its raw text; `input` is only here for this.
+ */
+export const VALUE_BEARING_ELEMENTS: ReadonlySet<string> = new Set([
+	"input",
+	"textarea",
+]);
+
 const TRACKED_PREFIXES: ReadonlySet<string> = new Set(
-	[...RAW_TEXT_ELEMENTS.keys(), ...FOREIGN_CONTENT_ELEMENTS].flatMap((name) =>
+	[
+		...RAW_TEXT_ELEMENTS.keys(),
+		...FOREIGN_CONTENT_ELEMENTS,
+		...HTML_INTEGRATION_POINTS,
+		...VALUE_BEARING_ELEMENTS,
+	].flatMap((name) =>
 		Array.from({ length: name.length }, (_, i) => name.slice(0, i + 1)),
 	),
 );
@@ -175,13 +219,17 @@ export class TemplateScanner {
 	/** The raw-text element the cursor is inside, or empty. */
 	#rawText = "";
 	/**
-	 * How deep inside `<svg>` / `<math>` the cursor is.
+	 * The open foreign-content elements and HTML integration points, innermost
+	 * last. Undefined until the first one, which is most templates.
 	 *
-	 * Foreign content suspends the raw-text rules rather than replacing them, so
-	 * a counter is enough: a `<title>` at depth 0 is RCDATA, and the same tag
-	 * inside an `<svg>` is an ordinary element with ordinary children.
+	 * A stack rather than a counter, because these nest in both directions:
+	 * `<svg>` suspends the HTML rules, a `foreignObject` inside it restores them,
+	 * an `<svg>` inside THAT suspends them again. A pair of counters cannot tell
+	 * those apart and would refuse a slot in the innermost `<title>`.
 	 */
-	#foreignDepth = 0;
+	#modes: { name: string; html: boolean }[] | undefined;
+	/** Was the last significant character in this tag a `/`, as in `<desc/>`? */
+	#solidus = false;
 	/** The attribute name being read, or the one whose value is being read. */
 	#attribute = "";
 	/** Has anything been written into the value being read yet? */
@@ -262,12 +310,25 @@ export class TemplateScanner {
 			this.#beginAttribute();
 			return;
 		}
-		if (this.#part === "tag-name") {
-			// `<` then `/` is a closing tag; the name starts after it.
-			if (!this.#sawNameChar && char === "/") {
+		if (char === "/") {
+			// The FIRST `/` of a tag opens a closing one. Checked before the
+			// self-closing case, which used to swallow it — so `</svg>` stopped
+			// being read as a closing tag and pushed a second `<svg>` instead,
+			// leaving every following `<title>` inside foreign content.
+			if (this.#part === "tag-name" && !this.#sawNameChar) {
 				this.#closing = true;
 				return;
 			}
+			// Anywhere else outside a value it self-closes the tag, so `<desc/>`
+			// opens nothing to close later. Inside a value it is an ordinary
+			// character — a static `src=/a/b.png` must keep it.
+			if (this.#part !== "value") {
+				this.#solidus = true;
+				return;
+			}
+		}
+		this.#solidus = false;
+		if (this.#part === "tag-name") {
 			this.#sawNameChar = true;
 			if (!this.#tagMayBeRaw) return;
 			// Lowercased only when it has to be: a template's tag names are almost
@@ -349,22 +410,45 @@ export class TemplateScanner {
 		this.#inTag = false;
 		// `#tag` only ever holds a name worth tracking, lowercased as it was read.
 		const name = this.#tagMayBeRaw ? this.#tag : "";
-		if (FOREIGN_CONTENT_ELEMENTS.has(name)) {
-			// A stray `</svg>` would take this negative, so it floors.
-			this.#foreignDepth = this.#closing
-				? Math.max(this.#foreignDepth - 1, 0)
-				: this.#foreignDepth + 1;
-		} else if (!this.#closing && this.#foreignDepth === 0) {
+		if (this.#closing) {
+			// Only the element that pushed pops, so a `</title>` that closes an
+			// HTML `<title>` does not unwind an `<svg>`.
+			const modes = this.#modes;
+			if (name !== "" && modes !== undefined) {
+				const top = modes[modes.length - 1];
+				if (top?.name === name) modes.pop();
+			}
+		} else if (this.#solidus) {
+			// `<desc/>` opens nothing, so there is nothing to push.
+		} else if (FOREIGN_CONTENT_ELEMENTS.has(name)) {
+			this.#push(name, false);
+		} else if (!this.#htmlRules() && HTML_INTEGRATION_POINTS.has(name)) {
+			this.#push(name, true);
+		} else if (this.#htmlRules()) {
 			// A start tag for one of these puts the parser in a state where `<` is
 			// not markup. A CLOSING tag never does — `</script>` is how we got out —
-			// and inside foreign content the tokenizer never switches at all.
+			// and in foreign content the tokenizer never switches at all.
 			this.#rawText = RAW_TEXT_ELEMENTS.has(name) ? name : "";
 		}
 		this.#beginTagName();
 		this.#attribute = "";
 	}
 
+	#push(name: string, html: boolean): void {
+		const modes = this.#modes ?? [];
+		modes.push({ name, html });
+		this.#modes = modes;
+	}
+
+	/** Does the parser read this position's content as HTML? */
+	#htmlRules(): boolean {
+		const modes = this.#modes;
+		if (modes === undefined || modes.length === 0) return true;
+		return modes[modes.length - 1]?.html === true;
+	}
+
 	#beginTagName(): void {
+		this.#solidus = false;
 		this.#part = "tag-name";
 		this.#tag = "";
 		this.#tagMayBeRaw = true;
@@ -387,6 +471,19 @@ export class TemplateScanner {
 		if (this.#quote !== "") return "quoted-value";
 		if (this.#part === "tag-name") return "tag-name";
 		return this.#part === "value" ? "unquoted-value" : "attribute-name";
+	}
+
+	/**
+	 * The element whose tag is being read, lowercased — or empty when it is not
+	 * one this scanner tracks, which is most of them.
+	 */
+	get element(): string {
+		return this.#tagMayBeRaw ? this.#tag : "";
+	}
+
+	/** Is the cursor inside a tag, anywhere between `<` and `>`? */
+	get inTag(): boolean {
+		return this.#inTag;
 	}
 
 	/** The raw-text element the cursor is inside, and what kind, or undefined. */

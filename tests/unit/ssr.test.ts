@@ -246,7 +246,7 @@ describe("aurora > ssr > a handler never runs on the server", () => {
 		expect(out).toBe("<button>x</button>");
 	});
 
-	it("does the same for .prop in single quotes, and still renders ?attr", () => {
+	it("does the same for a .prop with no markup, and still renders ?attr", () => {
 		let propCalls = 0;
 		const prop = (): string => {
 			propCalls++;
@@ -254,14 +254,38 @@ describe("aurora > ssr > a handler never runs on the server", () => {
 		};
 
 		const out = renderToString(
-			html`<input ?disabled='${() => true}' .value='${prop}'>`,
+			html`<input ?disabled='${() => true}' .placeholder='${prop}'>`,
 		);
 
-		// A property has no markup — reading it server-side would run author
-		// code for a value that cannot be serialised anyway.
+		// A property with nowhere to be written is not read at all — doing so
+		// would run author code for a value that cannot be serialised anyway.
 		expect(propCalls).toBe(0);
-		// A boolean attribute does, and single quoting must not change that.
+		// A boolean attribute does have markup, and single quoting must not change
+		// that.
 		expect(out).toBe('<input disabled="">');
+	});
+
+	it("reads .value, which is the one property with a server-side spelling", () => {
+		// Deliberately unlike every other `.prop`: an `<input>` carries its value
+		// as an attribute and a `<textarea>` as its content, so there IS markup for
+		// it — and without it a server-rendered form arrived empty and a submit
+		// before hydration sent nothing.
+		let reads = 0;
+		const value = (): string => {
+			reads++;
+			return "Draft";
+		};
+		expect(renderToString(html`<input .value='${value}'>`)).toBe(
+			'<input value="Draft">',
+		);
+		expect(reads).toBe(1);
+		expect(
+			renderToString(html`<textarea .value="${"Bio & <b>"}"></textarea>`),
+		).toBe("<textarea>Bio &amp; &lt;b&gt;</textarea>");
+		// `select` has neither spelling, so it stays client-only.
+		expect(renderToString(html`<select .value="${"x"}"></select>`)).toBe(
+			"<select></select>",
+		);
 	});
 
 	it("keeps evaluating a reactive expression in text position", () => {

@@ -81,6 +81,17 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	const { strings, values } = result;
 	let out = "";
 	let held: HeldValue | undefined;
+	/**
+	 * A `<textarea .value="${v}">`'s text, waiting for the tag to close.
+	 *
+	 * A textarea has no `value` ATTRIBUTE — its value is its content — so this is
+	 * the only place the server can put it, and it is past the `>`. Held until
+	 * then rather than dropped: `.value` is where the refusal for a slot inside
+	 * `<textarea>` sends the author, so it had better reach the markup. Without
+	 * it, a server-rendered form arrived with empty fields, and a submit before
+	 * hydration sent nothing.
+	 */
+	let pendingContent: string | undefined;
 	const scanner = new TemplateScanner();
 
 	/** Emit the held value, guarded once, and go back to writing straight out. */
@@ -104,6 +115,24 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	 */
 	const write = (text: string): void => {
 		if (text === "") return;
+		if (pendingContent !== undefined && scanner.inTag) {
+			// Step to the `>` so the content lands right after it. Character by
+			// character rather than looking for the `>`, because one inside a
+			// later quoted attribute value is not the end of the tag — and asking
+			// the scanner is how that stays a single rule.
+			for (let k = 0; k < text.length; k++) {
+				const char = text.charAt(k);
+				scanner.consume(char);
+				out += char;
+				if (!scanner.inTag) {
+					out += pendingContent;
+					pendingContent = undefined;
+					write(text.slice(k + 1));
+					return;
+				}
+			}
+			return;
+		}
 		if (held !== undefined) {
 			const end = scanner.valueEndIn(text);
 			if (end === -1) {
@@ -165,6 +194,10 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		// Set when the skipped directive is a boolean attribute, which — unlike
 		// the other two — still has markup to emit. See below.
 		let booleanAttrName: string | undefined;
+		// Set when the skipped directive is `.value`. WHICH element it belongs to is
+		// read after the segment is written, not here: until the scanner has
+		// consumed `<textarea `, it does not know what tag this is.
+		let valueDirective = false;
 		if (directiveMatch) {
 			const [whole = "", directive = "", quote] = directiveMatch;
 			segment = segment.slice(0, segment.length - whole.length);
@@ -176,6 +209,11 @@ function stringifyTemplateResult(result: TemplateResult): string {
 			// first client render: a `?hidden` panel arrived visible and
 			// blinked away once hydration caught up.
 			if (directive.startsWith("?")) booleanAttrName = directive.slice(1);
+			// `.value` is the one property with a server-side spelling, and it
+			// differs by element: an `<input>` carries it as an attribute, a
+			// `<textarea>` as its content. Every other `.prop` stays client-only —
+			// it has no markup to be written into.
+			valueDirective = directive === ".value";
 			// Only a quoted directive leaves a closing quote to swallow.
 			pendingClosingQuote =
 				quote === '"' ? '"' : quote === "'" ? "'" : undefined;
@@ -186,6 +224,16 @@ function stringifyTemplateResult(result: TemplateResult): string {
 			// what applyBooleanAttrSlot writes on the client, so hydration
 			// re-applying the effect is a no-op instead of a correction.
 			if (resolveBooleanValue(values[i])) write(` ${booleanAttrName}=""`);
+		}
+		if (valueDirective && i < values.length) {
+			const valueElement = scanner.element;
+			if (valueElement === "input") {
+				write(` value="${stringifyValue(values[i], "quoted-value")}"`);
+			} else if (valueElement === "textarea") {
+				// Escaped for text, not for an attribute, and emitted once the tag
+				// closes — see `pendingContent`.
+				pendingContent = stringifyValue(values[i], "text");
+			}
 		}
 		if (i < values.length && !skipValue) {
 			const value = values[i];
