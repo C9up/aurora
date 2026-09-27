@@ -83,10 +83,12 @@ export function createLiveRegistry(): LiveRegistry {
 				);
 			}
 			const id = crypto.randomUUID();
+			// The session id namespaces this component's ids, here and on the
+			// client, which reads it back off the mount response.
 			const handle: LiveSessionHandle = {
 				id,
 				ownerId,
-				session: mountLiveSession(factory),
+				session: mountLiveSession(factory, id),
 			};
 			sessions.set(id, handle);
 			const owned = byOwner.get(ownerId) ?? new Set<string>();

@@ -86,7 +86,7 @@ export {
 	isAbortError,
 	isHttpError,
 } from "./http.js";
-export { hydrate } from "./hydrate.js";
+export { hydrate, type HydrateOptions } from "./hydrate.js";
 export {
 	type HydrationDetail,
 	type HydrationState,
@@ -94,7 +94,7 @@ export {
 	hydrationState,
 	whenHydrated,
 } from "./hydrationSignal.js";
-export { byId, resetIds, uid } from "./id.js";
+export { byId, resetIds, uid, withIdScope } from "./id.js";
 export {
 	type LiveComponentDefinition,
 	type LiveSession,

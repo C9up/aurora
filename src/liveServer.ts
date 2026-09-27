@@ -37,17 +37,27 @@ export interface LiveHttpContext {
 export interface WireLiveEventsOptions {
 	/** Route path for inbound events (must match the client transport). */
 	path?: string;
-	/**
-	 * Optional per-request guard. Return `false` to reject the event with 403.
-	 * Use this to enforce the same auth/CSRF/owner policy as the page that mounted
-	 * the live session. When omitted, aurora preserves the framework-agnostic
-	 * legacy behavior and expects the host route/middleware to guard the endpoint.
-	 */
-	authorize?: (
-		ctx: LiveHttpContext,
-		body: LiveEventBody,
-	) => boolean | Promise<boolean>;
 }
+
+/**
+ * Per-request guard. Return `false` to reject the event with 403.
+ *
+ * Required, and that is the point. It used to be optional and its absence meant
+ * "allowed", so the endpoint that drives every live session shipped open unless
+ * someone thought to close it — and the showcase app itself did not. A session
+ * id is a `randomUUID`, so an attacker needs it to do anything, but an
+ * unguessable identifier is a secret, and a secret is not an authorisation
+ * check: it leaks through a referrer, a log line, a shared screenshot.
+ *
+ * Required rather than defaulted to deny, so the omission is a type error at
+ * build rather than a 403 discovered in production. Enforce the same
+ * auth / CSRF / ownership policy as the page that mounted the session; return
+ * `true` deliberately if the route is already guarded by host middleware.
+ */
+export type AuthorizeLiveEvent = (
+	ctx: LiveHttpContext,
+	body: LiveEventBody,
+) => boolean | Promise<boolean>;
 
 export interface LiveEventBody {
 	id: string;
@@ -68,10 +78,13 @@ export const DEFAULT_LIVE_EVENT_PATH = "/__live/event";
 /**
  * Register the inbound live-event route on the host router. Call once at boot
  * (e.g. from a provider that resolved the router + relay from the container).
+ *
+ * `authorize` is required — see {@link AuthorizeLiveEvent}.
  */
 export function wireLiveEvents(
 	router: LiveHttpRouter,
 	live: LiveRouter,
+	authorize: AuthorizeLiveEvent,
 	options: WireLiveEventsOptions = {},
 ): void {
 	const path = options.path ?? DEFAULT_LIVE_EVENT_PATH;
@@ -82,13 +95,12 @@ export function wireLiveEvents(
 			ctx.response.json({ error: "live event requires { id, event }" });
 			return;
 		}
-		let authorized = true;
-		if (options.authorize) {
-			try {
-				authorized = await options.authorize(ctx, body);
-			} catch {
-				authorized = false;
-			}
+		let authorized = false;
+		try {
+			authorized = await authorize(ctx, body);
+		} catch {
+			// A guard that throws is a guard that did not say yes.
+			authorized = false;
 		}
 		if (!authorized) {
 			ctx.response.status(403);

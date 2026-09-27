@@ -41,10 +41,30 @@
  */
 interface Counter {
 	value: number;
+	/**
+	 * What this render pass's ids are namespaced under, or empty for none.
+	 *
+	 * A counter alone is not enough once a page has more than one hydration
+	 * root, and a page with a live component HAS more than one: `renderPage`
+	 * builds the page root and `liveClient` hydrates its own container. Both
+	 * used to restart the same counter, so the second root minted the ids the
+	 * first was already using. Two elements then shared an id — `byId` answered
+	 * with whichever came first in the document, and `aria-controls` pointed at
+	 * a node in the other root.
+	 *
+	 * The namespace has to be the same on both sides for an id to survive
+	 * hydration, so it is never invented locally: the page root uses its own
+	 * element id (which the hydrate bootstrap reads back off the container), and
+	 * a live component uses its session id, which the mount response already
+	 * carries to the client.
+	 */
+	scope: string;
 }
 
-const fallback: Counter = { value: 0 };
+const fallback: Counter = { value: 0, scope: "" };
 let readCounter: (() => Counter | undefined) | undefined;
+/** Set while a scoped pass is running; takes precedence over everything. */
+let override: Counter | undefined;
 
 /**
  * @internal Point the ids at a per-render cell. Called by the server; the
@@ -54,28 +74,55 @@ export function setIdCounterReader(reader: () => Counter | undefined): void {
 	readCounter = reader;
 }
 
-/** @internal A fresh cell for one render pass. */
-export function createIdCounter(): Counter {
-	return { value: 0 };
+/** @internal A fresh cell for one render pass, namespaced under `scope`. */
+export function createIdCounter(scope = ""): Counter {
+	return { value: 0, scope };
 }
 
 function cell(): Counter {
-	return readCounter?.() ?? fallback;
+	return override ?? readCounter?.() ?? fallback;
 }
 
-/** Mint an id unique within this render pass. */
+/** Mint an id unique within this render pass, and within its root. */
 export function uid(prefix = "aurora"): string {
 	const current = cell();
 	current.value += 1;
-	return `${prefix}-${current.value}`;
+	const name = `${prefix}-${current.value}`;
+	return current.scope === "" ? name : `${current.scope}-${name}`;
 }
 
 /**
- * Restart the sequence. Called by `renderPage` and by `hydrate`; call it
- * yourself before a `renderToString` whose markup will be hydrated.
+ * Run `work` against a fresh counter namespaced under `scope`, then put back
+ * whatever was there.
+ *
+ * This is what `hydrate` uses, and it replaced a `resetIds()` call because
+ * resetting is the collision: a shared counter that every root restarts hands
+ * the same ids to each of them. A pass that borrows its own cell cannot
+ * interfere with another root whatever order they run in.
+ *
+ * Synchronous on purpose — no `AsyncHooks`, so it holds in a browser. The ids a
+ * component mints are minted while its template is built, which is inside this
+ * call; nothing mints one later.
  */
-export function resetIds(): void {
-	cell().value = 0;
+export function withIdScope<T>(scope: string, work: () => T): T {
+	const previous = override;
+	override = createIdCounter(scope);
+	try {
+		return work();
+	} finally {
+		override = previous;
+	}
+}
+
+/**
+ * Restart the sequence, optionally under a namespace. For an application that
+ * calls `renderToString` itself and will hydrate the result: pass the same
+ * `scope` to both sides, or let `hydrate` take it from the container's id.
+ */
+export function resetIds(scope = ""): void {
+	const current = cell();
+	current.value = 0;
+	current.scope = scope;
 }
 
 /**

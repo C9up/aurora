@@ -172,7 +172,7 @@ interface RenderScope {
 	 * race between two responses, and the losing one ships markup whose ids
 	 * the browser will never find.
 	 */
-	ids: { value: number };
+	ids: ReturnType<typeof createIdCounter>;
 	cookies: Record<string, string>;
 	routes: Record<string, string>;
 }
@@ -220,7 +220,12 @@ export async function renderPage<P>(
 	const scope: RenderScope = {
 		// One counter per render, created before the scope is entered: every
 		// `uid()` below, however many awaits deep, lands in this one.
-		ids: createIdCounter(),
+		//
+		// Namespaced under the root element's id, which is the same string the
+		// hydrate bootstrap reads back off the container — so the two passes agree
+		// without anything extra in the payload, and a second root on the page
+		// cannot mint the ids this one is using.
+		ids: createIdCounter(rootIdOf(options)),
 		cookies: options.cookies
 			? readRequestCookies(ctx.request, options.cookies)
 			: {},
@@ -230,6 +235,15 @@ export async function renderPage<P>(
 	return renderScope.run(scope, () =>
 		renderPageInScope(ctx, pages, name, props, options),
 	);
+}
+
+/**
+ * The mount root's element id. Read in two places — the id namespace is built
+ * from it before the render scope is entered, and the markup and bootstrap are
+ * written inside it — so the default lives here rather than twice.
+ */
+function rootIdOf(options: RenderPageOptions): string {
+	return options.rootId ?? "aurora-root";
 }
 
 async function renderPageInScope<P>(
@@ -251,7 +265,7 @@ async function renderPageInScope<P>(
 		"@c9up/aurora": "/__assets/aurora/index.js",
 		...options.importmap,
 	};
-	const rootId = options.rootId ?? "aurora-root";
+	const rootId = rootIdOf(options);
 	const rootTag = normalizeRootTag(options.rootTag ?? "div");
 	const rootClass = options.rootClass;
 	const lang = options.lang ?? "en";

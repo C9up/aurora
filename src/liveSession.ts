@@ -15,6 +15,7 @@
  * Node-free / isomorphic: uses only `signal`/`effect`/`renderToString`.
  */
 
+import { withIdScope } from "./id.js";
 import { effect, isSignal } from "./reactive.js";
 import { renderToString } from "./ssr.js";
 import type { TemplateResult } from "./types.js";
@@ -62,8 +63,13 @@ export interface LiveSession {
  */
 export function mountLiveSession(
 	factory: () => LiveComponentDefinition,
+	idScope = "",
 ): LiveSession {
-	const { view, handlers = {} } = factory();
+	// The session owns its id namespace, so every pass that can mint one — the
+	// factory here, and any render below — is inside it. The client rebuilds the
+	// same view under the same namespace, keyed off the session id it was handed
+	// in the mount response.
+	const { view, handlers = {} } = withIdScope(idScope, factory);
 	const listeners = new Set<(patch: SlotPatch[]) => void>();
 	// slot → latest value. `pending` = current (un-flushed) batch; `buffer` =
 	// accumulated for pull consumers. Both keyed by slot so repeated writes in
@@ -105,7 +111,10 @@ export function mountLiveSession(
 	priming = false;
 
 	return {
-		renderToString: () => renderToString(view),
+		// Scoped as well as the factory: a reactive slot holding a component
+		// (`${() => Card()}`) is invoked at render time, not at construction, so
+		// its ids are minted here.
+		renderToString: () => withIdScope(idScope, () => renderToString(view)),
 		dispatch(event, payload) {
 			const handler = handlers[event];
 			if (!handler) return;

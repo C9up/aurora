@@ -23,7 +23,7 @@
 import { readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
-import { resetIds } from "./id.js";
+import { withIdScope } from "./id.js";
 import { effect, isSignal } from "./reactive.js";
 import {
 	type Disposer,
@@ -386,23 +386,43 @@ function hydrateArrayItems(
  * Returns a `Disposer` that detaches every effect and event listener,
  * leaving the DOM in place.
  */
+export interface HydrateOptions {
+	/**
+	 * The namespace for the ids this root mints, when it is not the container's
+	 * own element id.
+	 *
+	 * The default suits a page: `renderPage` namespaces by the root element's id
+	 * and its bootstrap hydrates that same element, so both sides agree without
+	 * anything being passed. A live component's container is named by the
+	 * application, not the server, so `liveClient` passes its session id instead
+	 * — the one string the mount response already carries to both sides.
+	 */
+	idScope?: string;
+}
+
 export function hydrate(
 	container: Element,
 	factory: () => TemplateResult,
+	options: HydrateOptions = {},
 ): Disposer {
-	// Announce the phase around the work, not inside it: `aurora:hydrate` fires
-	// for this root either way, and `aurora:load` once the page settles. A
-	// signal withheld on failure would turn a race into a silent hang.
-	// The browser pass starts here, so the id sequence starts here too — the
-	// server reset before its own pass, and the two only line up if both do.
-	resetIds();
-	beginHydration();
-	try {
-		return hydrateRoot(container, factory);
-	} catch (error) {
-		endHydration(container, error);
-		throw error;
-	}
+	// The browser pass mints ids here, so it borrows a counter namespaced the way
+	// the server's pass was. It BORROWS one rather than resetting the ambient one,
+	// which is what let a second root on the page mint the ids the first was
+	// already using: `resetIds()` on a shared counter hands every root the same
+	// sequence, so two elements ended up with one id and `byId` answered with
+	// whichever came first in the document.
+	return withIdScope(options.idScope ?? container.id, () => {
+		// Announce the phase around the work, not inside it: `aurora:hydrate` fires
+		// for this root either way, and `aurora:load` once the page settles. A
+		// signal withheld on failure would turn a race into a silent hang.
+		beginHydration();
+		try {
+			return hydrateRoot(container, factory);
+		} catch (error) {
+			endHydration(container, error);
+			throw error;
+		}
+	});
 }
 
 function hydrateRoot(

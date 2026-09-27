@@ -21,6 +21,7 @@
  */
 
 import { hydrate } from "./hydrate.js";
+import { withIdScope } from "./id.js";
 import type { SlotPatch } from "./liveSession.js";
 import { isSignal } from "./reactive.js";
 import type { TemplateResult } from "./types.js";
@@ -58,8 +59,14 @@ export interface LiveClientOptions {
  * which hydration cannot re-split; isolating the slot keeps adopt + patch exact.
  */
 export function liveClient(opts: LiveClientOptions): () => void {
-	const view = opts.factory();
-	const disposeHydrate = hydrate(opts.container, () => view);
+	// The session id is the id namespace: the server rendered this component's
+	// markup under it, and it is already in the mount response, so both sides
+	// agree without the container needing a name the server chose. The view is
+	// built inside the scope because that is when its components mint their ids.
+	const view = withIdScope(opts.mount.id, () => opts.factory());
+	const disposeHydrate = hydrate(opts.container, () => view, {
+		idScope: opts.mount.id,
+	});
 
 	const off = opts.transport.subscribe(opts.mount.channel, (patch) => {
 		for (const { slot, value } of patch) {

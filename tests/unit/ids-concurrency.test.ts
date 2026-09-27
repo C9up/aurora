@@ -82,9 +82,10 @@ describe("aurora > ids under concurrent SSR", () => {
 		await firstRender;
 
 		// Both start at 1: neither reset the other's counter, and neither
-		// carried on from it.
-		expect(first.body()).toContain('id="trigger-1"');
-		expect(second.body()).toContain('id="trigger-1"');
+		// carried on from it. Namespaced by the root element's id, which is what
+		// the hydrate bootstrap reads back off the container.
+		expect(first.body()).toContain('id="aurora-root-trigger-1"');
+		expect(second.body()).toContain('id="aurora-root-trigger-1"');
 	});
 
 	it("keeps counting within one render, across its awaits", async () => {
@@ -97,7 +98,25 @@ describe("aurora > ids under concurrent SSR", () => {
 		const ctx = fakeContext();
 		await renderPage(ctx.ctx, pages, "Page", {});
 
-		expect(ctx.body()).toContain('id="a-1"');
-		expect(ctx.body()).toContain('id="a-2"');
+		expect(ctx.body()).toContain('id="aurora-root-a-1"');
+		expect(ctx.body()).toContain('id="aurora-root-a-2"');
+	});
+
+	it("namespaces by the root element, so two roots on a page cannot collide", async () => {
+		// The reason the namespace exists. A page with a live component has two
+		// hydration roots, and both used to restart the same counter — so the
+		// second minted the ids the first was already using, two elements shared
+		// an id, and `byId` answered with whichever came first in the document.
+		const Page = component(() => html`<i id="${uid("a")}"></i>`);
+		const pages = new Pages({ root: "/tmp/unused" });
+		Object.defineProperty(pages, "resolve", { value: async () => Page });
+
+		const page = fakeContext();
+		const widget = fakeContext();
+		await renderPage(page.ctx, pages, "Page", {});
+		await renderPage(widget.ctx, pages, "Page", {}, { rootId: "widget" });
+
+		expect(page.body()).toContain('id="aurora-root-a-1"');
+		expect(widget.body()).toContain('id="widget-a-1"');
 	});
 });
