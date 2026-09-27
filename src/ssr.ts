@@ -8,8 +8,12 @@
  * lands in the browser.
  */
 
-import { AuroraError } from "./errors.js";
 import { isSignal } from "./reactive.js";
+import {
+	assertBindable,
+	type BindablePosition,
+	TemplateScanner,
+} from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
 
 const VOID_ELEMENTS = new Set([
@@ -53,7 +57,7 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	// Which quote closes the directive currently being skipped, so the closing
 	// one consumed is the one that was opened. Undefined when none is pending.
 	let pendingClosingQuote: '"' | "'" | undefined;
-	const scanner = new TagScanner();
+	const scanner = new TemplateScanner();
 	for (const [i, raw] of strings.entries()) {
 		let segment = raw;
 		if (pendingClosingQuote !== undefined) {
@@ -101,21 +105,10 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		}
 		if (i < values.length && !skipValue) {
 			const value = values[i];
-			if (scanner.inTagName) {
-				// `html`<${tag}>``. The client renderer cannot do this at all —
-				// the template compiles once and a tag name is not a slot
-				// position — and this side used to splice the value in RAW, so
-				// a tag built from anything a user touched was markup
-				// injection. The page then failed to hydrate, which meant the
-				// injection shipped and the repair never ran.
-				throw new AuroraError(
-					"E_AURORA_SLOT_IN_TAG_NAME",
-					"[aurora] a ${} cannot be a tag name — write the tag out, or pick between two templates.",
-				);
-			}
-			const inAttr = scanner.insideTag;
-			if (inAttr) {
-				const rendered = stringifyValue(value, true);
+			const position = scanner.position;
+			assertBindable(position);
+			if (position !== "text") {
+				const rendered = stringifyValue(value, position);
 				out += rendered;
 				scanner.consume(rendered);
 			} else {
@@ -130,7 +123,7 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				// (collapseMarkerRanges) so paths align exactly; the range also
 				// anchors scalar text updates and nested-template swaps. Same
 				// part-marker approach as lit-html / Solid.
-				const rendered = stringifyValue(value, false);
+				const rendered = stringifyValue(value, "text");
 				out += `<!--${SLOT_START}-->`;
 				out += rendered;
 				out += `<!--${SLOT_END}-->`;
@@ -146,68 +139,6 @@ function stringifyTemplateResult(result: TemplateResult): string {
 /** Boundary-marker comment payloads (kept in sync with hydrate.ts). */
 const SLOT_START = "$";
 const SLOT_END = "/$";
-
-/**
- * Tracks whether the cursor sits inside a tag, scanning FORWARD as the output
- * grows.
- *
- * The obvious version walked backwards looking for the nearest `<` or `>`, but
- * a `>` inside a quoted attribute value — `title="a > b"` — reads as the end of
- * the tag, so the next interpolation is treated as a text slot and gets wrapped
- * in `<!--$-->` markers INSIDE an attribute. That corrupts the markup and
- * desyncs every following slot path at hydration. Quotes are what disambiguate,
- * and they can only be resolved by reading forward.
- *
- * State is carried across appends instead of re-derived, so the whole render
- * stays linear.
- */
-class TagScanner {
-	#inTag = false;
-	/** The quote character currently open inside a tag, or empty. */
-	#quote = "";
-	/** Has the tag being scanned got a name yet? */
-	#named = true;
-
-	/** Feed everything appended since the last call. */
-	consume(chunk: string): void {
-		for (let i = 0; i < chunk.length; i++) {
-			const c = chunk[i];
-			if (this.#quote !== "") {
-				if (c === this.#quote) this.#quote = "";
-				continue;
-			}
-			if (this.#inTag) {
-				if (c === '"' || c === "'") this.#quote = c;
-				else if (c === ">") {
-					this.#inTag = false;
-					this.#named = true;
-				} else if (!this.#named && c !== "/") this.#named = true;
-				continue;
-			}
-			if (c === "<") {
-				this.#inTag = true;
-				this.#named = false;
-			}
-		}
-	}
-
-	/** True when the cursor is inside a tag — an attribute region. */
-	get insideTag(): boolean {
-		return this.#inTag;
-	}
-
-	/**
-	 * True when the cursor is where the tag NAME goes — right after `<` or
-	 * `</`, before any name character.
-	 *
-	 * Not an attribute region, although `insideTag` is also true there. The
-	 * difference is the whole point: an attribute slot is escaped and a tag
-	 * name used to be spliced in raw.
-	 */
-	get inTagName(): boolean {
-		return this.#inTag && !this.#named;
-	}
-}
 
 /**
  * Read a boolean attribute's value the way the client reads it: a signal or a
@@ -229,30 +160,34 @@ function resolveBooleanValue(value: unknown): boolean {
 	return Boolean(value);
 }
 
-function stringifyValue(value: unknown, inAttribute: boolean): string {
+function stringifyValue(value: unknown, context: BindablePosition): string {
+	const inAttribute = context !== "text";
 	if (value === null || value === undefined || value === false) return "";
 	if (value === true) return inAttribute ? "" : "true";
-	if (isSignal(value)) return stringifyValue(value(), inAttribute);
+	if (isSignal(value)) return stringifyValue(value(), context);
 	if (typeof value === "function") {
 		// A function here is a reactive expression — `class="${() => …}"` in an
 		// attribute, `${() => …}` in text — and is evaluated eagerly
 		// server-side. Directive values (`@click`, `?disabled`, `.prop`) never
 		// reach this point: the scanner skips them, whatever quoting they use.
 		try {
-			return stringifyValue((value as () => unknown)(), inAttribute);
+			return stringifyValue((value as () => unknown)(), context);
 		} catch {
 			return "";
 		}
 	}
 	if (Array.isArray(value)) {
 		let out = "";
-		for (const item of value) out += stringifyValue(item, inAttribute);
+		for (const item of value) out += stringifyValue(item, context);
 		return out;
 	}
 	if (isTemplateResult(value)) return stringifyTemplateResult(value);
-	// Plain value — escape HTML entities (text) or attribute special
-	// characters (attribute value).
-	return inAttribute ? escapeAttr(String(value)) : escapeText(String(value));
+	// Plain value — escaped for the context it is being written into.
+	const text = String(value);
+	if (context === "text") return escapeText(text);
+	return context === "quoted-value"
+		? escapeAttr(text)
+		: escapeUnquotedAttr(text);
 }
 
 function escapeText(s: string): string {
@@ -276,6 +211,49 @@ function escapeAttr(s: string): string {
 		.replaceAll("'", "&#39;")
 		.replaceAll("<", "&lt;")
 		.replaceAll(">", "&gt;");
+}
+
+/**
+ * Escape a value being written into an UNQUOTED attribute — `<img src=${url}>`.
+ *
+ * `escapeAttr` is not enough here, and the gap was a hole. It escapes the two
+ * quote characters, which is exactly what protects a quoted value and does
+ * nothing at all for a value with no quotes around it: the HTML tokenizer ends
+ * an unquoted value at the first whitespace character, so `x onerror=alert(1)`
+ * came out of the server as `src=x onerror=alert(1)` — one attribute in, two
+ * attributes out, the second one a handler. The client renderer was never
+ * affected; it normalises the value into a single quoted attribute, so this was
+ * the server contradicting it as well as injecting.
+ *
+ * The fix is to encode the characters that can END the value rather than the
+ * ones that can end a quoted one. Character references ARE decoded in the
+ * unquoted attribute value state, so `&#32;` reaches the DOM as a space and the
+ * attribute keeps the value it was given — byte-different from the client's
+ * markup, identical once parsed, which is what hydration compares.
+ *
+ * `>` and `/` are in the set for the same reason as the whitespace: `>` ends the
+ * tag, and a trailing `/` merges with the `>` of a self-closing void element and
+ * silently joins the value. `=` and a backtick are parse errors rather than
+ * terminators, encoded because the value is hostile by assumption and it costs
+ * nothing.
+ */
+const UNQUOTED_ESCAPES: ReadonlyMap<string, string> = new Map([
+	[" ", "&#32;"],
+	["\t", "&#9;"],
+	["\n", "&#10;"],
+	["\r", "&#13;"],
+	["\f", "&#12;"],
+	["/", "&#47;"],
+	["=", "&#61;"],
+	["`", "&#96;"],
+]);
+
+function escapeUnquotedAttr(s: string): string {
+	let out = "";
+	// escapeAttr first, so `&` is encoded once and before these expansions add
+	// their own — otherwise `&#32;` would come back out as `&amp;#32;`.
+	for (const char of escapeAttr(s)) out += UNQUOTED_ESCAPES.get(char) ?? char;
+	return out;
 }
 
 // VOID_ELEMENTS exported for downstream tooling (hydration heuristics).

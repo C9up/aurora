@@ -22,6 +22,11 @@
  */
 
 import { AuroraError } from "./errors.js";
+import {
+	assertBindable,
+	type SlotPosition,
+	TemplateScanner,
+} from "./templateScanner.js";
 
 import {
 	type AttrSlot,
@@ -62,80 +67,27 @@ interface RawSlot {
 
 function classifySlots(strings: readonly string[]): RawSlot[] {
 	const result: RawSlot[] = [];
-	let insideTag = false;
-	let insideComment = false;
-	// Has the tag currently being scanned got a name yet? A slot that lands
-	// while this is false is the tag NAME, which is refused below.
-	let tagNamed = true;
+	const scanner = new TemplateScanner();
 	for (let i = 0; i < strings.length - 1; i++) {
 		const segment = strings[i];
 		// `i` is bounded by the loop; naming the miss is what carries that
-		// bound into the character scan below.
+		// bound into the scan.
 		if (segment === undefined) continue;
-		for (let j = 0; j < segment.length; j++) {
-			if (insideComment) {
-				// Comments swallow everything (including stray `<` / `>`) up
-				// to the literal `-->` terminator; without this guard a
-				// `<!-- > -->` literal would flip the tag scanner mid-stride.
-				if (
-					segment[j] === "-" &&
-					segment[j + 1] === "-" &&
-					segment[j + 2] === ">"
-				) {
-					insideComment = false;
-					j += 2;
-				}
-				continue;
-			}
-			if (
-				!insideTag &&
-				segment[j] === "<" &&
-				segment[j + 1] === "!" &&
-				segment[j + 2] === "-" &&
-				segment[j + 3] === "-"
-			) {
-				insideComment = true;
-				j += 3;
-				continue;
-			}
-			const ch = segment[j];
-			if (!insideTag && ch === "<") {
-				insideTag = true;
-				tagNamed = false;
-			} else if (insideTag && ch === ">") {
-				insideTag = false;
-				tagNamed = true;
-			} else if (insideTag && !tagNamed && ch !== "/") {
-				// The first character after `<` or `</` begins the name.
-				tagNamed = true;
-			}
-		}
-		if (insideTag && !tagNamed) {
-			// `html`<${tag}>`` and `html`</${tag}>``.
-			//
-			// Refused rather than supported, and the two reasons are separate.
-			//
-			// It cannot work: the template is compiled ONCE into a DOM fragment
-			// and the slots are node positions inside it. A tag name is not a
-			// position — changing it would mean recompiling the template, which
-			// is the one thing this design does not do. The client renderer
-			// already failed here, with an internal-invariant message that told
-			// the author nothing.
-			//
-			// And it was not safe: server-side rendering interpolated the value
-			// straight into the markup, so `<${userInput}>` emitted whatever it
-			// was given — `<img src=x onerror=...>` came out intact. Every other
-			// slot position escapes. This one silently did not, and produced a
-			// page the browser then refused to hydrate, so the injection shipped
-			// and the repair never ran.
-			throw new AuroraError(
-				"E_AURORA_SLOT_IN_TAG_NAME",
-				"[aurora] a ${} cannot be a tag name — write the tag out, or pick between two templates.",
-			);
-		}
-		result.push({ region: insideTag ? "attribute" : "text" });
+		scanner.consume(segment);
+		result.push({ region: regionOf(scanner.position) });
 	}
 	return result;
+}
+
+/**
+ * Map a scanned position onto what this path can do with it. The two name
+ * positions no path can bind are refused by {@link assertBindable}, which owns
+ * the reasons; everything else is either a text region or an attribute region,
+ * which is the only distinction {@link buildMarkup} needs.
+ */
+function regionOf(position: SlotPosition): "text" | "attribute" {
+	assertBindable(position);
+	return position === "text" ? "text" : "attribute";
 }
 
 /**

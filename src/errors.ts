@@ -41,6 +41,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_UNSAFE_URL"
 	/** A `${}` landed where a tag name goes — `html`<${tag}>`` . */
 	| "E_AURORA_SLOT_IN_TAG_NAME"
+	/** A `${}` landed where an attribute name goes — `html`<img ${name}="v">`` . */
+	| "E_AURORA_SLOT_IN_ATTRIBUTE_NAME"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */
 	| "E_AURORA_INTERNAL";
 
