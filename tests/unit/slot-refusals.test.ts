@@ -216,13 +216,17 @@ describe("slot refusals > inside SVG, where the rules do not apply", () => {
 		expect(codeFromClientOrNull(make)).toBeUndefined();
 	});
 
-	it("accepts one in <svg><script> and <svg><style> too", () => {
+	it("refuses one in <svg><script> and <svg><style>, which still run", () => {
+		// The tokenizer does not switch state for them in foreign content, which
+		// was once read as "their content is harmless". It is not: an SVG script
+		// executes its text and an SVG style applies it. Proven in Chromium — see
+		// tests/browser/execution-contexts.test.ts.
 		expect(() =>
 			renderToString(html`<svg><style>${".a{fill:red}"}</style></svg>`),
-		).not.toThrow();
+		).toThrowError(/cannot go inside <style>/);
 		expect(() =>
 			renderToString(html`<svg><script>${"var a"}</script></svg>`),
-		).not.toThrow();
+		).toThrowError(/cannot go inside <script>/);
 	});
 
 	it("refuses again at an HTML integration point, where HTML resumes", () => {

@@ -41,7 +41,7 @@ import {
 	type Slot,
 	type TemplateResult,
 } from "./types.js";
-import { guardUrlAttribute } from "./urlGuard.js";
+import { guardUrlAttribute, guardUrlProperty } from "./urlGuard.js";
 
 /**
  * Process-scoped flag so the "reactive nested template not reactive
@@ -579,7 +579,7 @@ function applyMultiAttrGroup(
 			effect(() => {
 				group.el.setAttribute(
 					group.name,
-					guardUrlAttribute(group.name, join()),
+					guardUrlAttribute(group.el.localName, group.name, join()),
 				);
 			}),
 		);
@@ -867,7 +867,10 @@ function hydrateAttrSlot(
 		} else if (v === true) {
 			el.setAttribute(slot.name, "");
 		} else {
-			el.setAttribute(slot.name, guardUrlAttribute(slot.name, String(v)));
+			el.setAttribute(
+				slot.name,
+				guardUrlAttribute(el.localName, slot.name, String(v)),
+			);
 		}
 	}
 	if (isSignal(value) || typeof value === "function") {
@@ -903,7 +906,7 @@ function hydratePropSlot(
 		// Reflect.set rather than a cast: writing an arbitrary property onto an
 		// element is exactly what Reflect is for, and it does not require
 		// claiming the element is something it is not.
-		Reflect.set(el, slot.name, v);
+		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
 	}
 	if (isSignal(value) || typeof value === "function") {
 		const dispose = effect(() => apply((value as () => unknown)()));

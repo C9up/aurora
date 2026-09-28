@@ -11,13 +11,14 @@
 import { isSignal } from "./reactive.js";
 import {
 	assertBindable,
+	assertBindableProperty,
 	type BindablePosition,
 	TemplateScanner,
 } from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
 import {
 	hasUnsafeScheme,
-	isNavigationAttribute,
+	isUrlAttribute,
 	UNSAFE_URL_PREFIX,
 } from "./urlGuard.js";
 
@@ -63,8 +64,6 @@ export function renderToString(result: TemplateResult): string {
  * answer.
  */
 interface HeldValue {
-	/** The attribute this value belongs to, lowercased. */
-	attribute: string;
 	/** The value's markup so far. */
 	markup: string;
 	/**
@@ -155,14 +154,13 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		const position = scanner.position;
 		if (
 			(position === "quoted-value" || position === "unquoted-value") &&
-			isNavigationAttribute(scanner.attribute)
+			isUrlAttribute(scanner.element, scanner.attribute)
 		) {
-			const attribute = scanner.attribute;
 			// The value opened inside this chunk, so its characters are the chunk's
 			// tail and `valueLength` says how many.
 			const kept = Math.max(text.length - scanner.valueLength, 0);
 			out += text.slice(0, kept);
-			held = { attribute, markup: text.slice(kept), fromSlot: false };
+			held = { markup: text.slice(kept), fromSlot: false };
 			return;
 		}
 		out += text;
@@ -198,6 +196,9 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		// read after the segment is written, not here: until the scanner has
 		// consumed `<textarea `, it does not know what tag this is.
 		let valueDirective = false;
+		// Set for any `.prop`, checked once the segment is written for the same
+		// reason: whether `.textContent` is harmless depends on the element.
+		let propertyName: string | undefined;
 		if (directiveMatch) {
 			const [whole = "", directive = "", quote] = directiveMatch;
 			segment = segment.slice(0, segment.length - whole.length);
@@ -209,6 +210,7 @@ function stringifyTemplateResult(result: TemplateResult): string {
 			// first client render: a `?hidden` panel arrived visible and
 			// blinked away once hydration caught up.
 			if (directive.startsWith("?")) booleanAttrName = directive.slice(1);
+			if (directive.startsWith(".")) propertyName = directive.slice(1);
 			// `.value` is the one property with a server-side spelling, and it
 			// differs by element: an `<input>` carries it as an attribute, a
 			// `<textarea>` as its content. Every other `.prop` stays client-only —
@@ -219,6 +221,11 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				quote === '"' ? '"' : quote === "'" ? "'" : undefined;
 		}
 		write(segment);
+		if (propertyName !== undefined) {
+			// Refused here too, though the server writes no `.prop` but `.value`: a
+			// template must not render on one path and throw on the other.
+			assertBindableProperty(scanner.element, propertyName);
+		}
 		if (booleanAttrName !== undefined && i < values.length) {
 			// Present-and-empty when truthy, absent otherwise — byte-for-byte
 			// what applyBooleanAttrSlot writes on the client, so hydration

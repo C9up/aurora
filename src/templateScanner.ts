@@ -29,6 +29,7 @@
  */
 
 import { AuroraError } from "./errors.js";
+import { SOURCE_ELEMENTS } from "./urlGuard.js";
 
 /**
  * A literal `${}` for the refusal messages below, written as an escaped
@@ -161,7 +162,108 @@ const HTML_INTEGRATION_POINTS: ReadonlySet<string> = new Set([
 	"desc",
 	"title",
 	"annotation-xml",
+	// MathML's TEXT integration points. Missing from the first list, and the gap
+	// was the same hole again: `<math><mtext><script>${v}</script>` is an HTML
+	// script, and it ran. The spec keeps `mglyph` and `malignmark` in MathML
+	// inside them; treating those as HTML refuses more, never less.
+	"mi",
+	"mo",
+	"mn",
+	"ms",
+	"mtext",
 ]);
+
+/**
+ * The elements whose content EXECUTES even in foreign content.
+ *
+ * The tokenizer does not switch state for them there — which is why
+ * `<svg><title>${label}</title>` is a text slot — but that was taken to mean the
+ * content was harmless, and it is not: an SVG `<script>` runs its text, and an
+ * SVG `<style>` applies it. The `<!--$-->` marker did not even need a newline to
+ * get out of the way, since in foreign content it is a real comment node and
+ * the script's text is what is left around it. Proven in Chromium.
+ */
+const FOREIGN_CODE_ELEMENTS: ReadonlySet<string> = new Set(["script", "style"]);
+
+/**
+ * The HTML start tags that end foreign content wherever they appear in it.
+ *
+ * The tree builder pops every SVG and MathML element off the stack when it meets
+ * one of these, and reads it — and everything after it — as HTML. So after
+ * `<svg><p>`, a `<textarea>` or a `<script>` is the HTML one, raw text and all,
+ * though the markup still looks like it is inside the `<svg>`. `font` only does
+ * it with a `color`, `face` or `size` attribute; the scanner does not read those,
+ * so it always counts, which refuses more rather than less.
+ */
+const FOREIGN_BREAKOUT_ELEMENTS: ReadonlySet<string> = new Set([
+	"b",
+	"big",
+	"blockquote",
+	"body",
+	"br",
+	"center",
+	"code",
+	"dd",
+	"div",
+	"dl",
+	"dt",
+	"em",
+	"embed",
+	"font",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"h5",
+	"h6",
+	"head",
+	"hr",
+	"i",
+	"img",
+	"li",
+	"listing",
+	"menu",
+	"meta",
+	"nobr",
+	"ol",
+	"p",
+	"pre",
+	"ruby",
+	"s",
+	"small",
+	"span",
+	"strong",
+	"strike",
+	"sub",
+	"sup",
+	"table",
+	"tt",
+	"u",
+	"ul",
+	"var",
+]);
+
+/** The END tags that do the same: `</p>` and `</br>`. */
+const FOREIGN_BREAKOUT_END_TAGS: ReadonlySet<string> = new Set(["p", "br"]);
+
+function prefixesOf(names: Iterable<string>): Set<string> {
+	return new Set(
+		Array.from(names).flatMap((name) =>
+			Array.from({ length: name.length }, (_, i) => name.slice(0, i + 1)),
+		),
+	);
+}
+
+/**
+ * Prefixes of the breakout names, consulted only while in foreign content.
+ *
+ * Kept apart from {@link TRACKED_PREFIXES} on purpose: `div`, `span`, `p` and
+ * `table` are most of a real page, and tracking their names everywhere is the
+ * cost the prefix set exists to avoid. Inside an `<svg>` they are rare.
+ */
+const FOREIGN_BREAKOUT_PREFIXES: ReadonlySet<string> = prefixesOf(
+	FOREIGN_BREAKOUT_ELEMENTS,
+);
 
 /**
  * Every prefix of those names.
@@ -187,16 +289,14 @@ export const VALUE_BEARING_ELEMENTS: ReadonlySet<string> = new Set([
 	"textarea",
 ]);
 
-const TRACKED_PREFIXES: ReadonlySet<string> = new Set(
-	[
-		...RAW_TEXT_ELEMENTS.keys(),
-		...FOREIGN_CONTENT_ELEMENTS,
-		...HTML_INTEGRATION_POINTS,
-		...VALUE_BEARING_ELEMENTS,
-	].flatMap((name) =>
-		Array.from({ length: name.length }, (_, i) => name.slice(0, i + 1)),
-	),
-);
+const TRACKED_PREFIXES: ReadonlySet<string> = prefixesOf([
+	...RAW_TEXT_ELEMENTS.keys(),
+	...FOREIGN_CONTENT_ELEMENTS,
+	...HTML_INTEGRATION_POINTS,
+	...VALUE_BEARING_ELEMENTS,
+	// Whose `src` or `data` runs what it loads — see `urlGuard.ts`.
+	...SOURCE_ELEMENTS,
+]);
 
 export class TemplateScanner {
 	#inComment = false;
@@ -227,7 +327,13 @@ export class TemplateScanner {
 	 * an `<svg>` inside THAT suspends them again. A pair of counters cannot tell
 	 * those apart and would refuse a slot in the innermost `<title>`.
 	 */
-	#modes: { name: string; html: boolean }[] | undefined;
+	#modes: { name: string; mode: "foreign" | "html" | "code" }[] | undefined;
+	/**
+	 * Is the innermost mode foreign content (or code inside it)? Cached, because
+	 * the per-character name tracking asks it and the stack only changes at the
+	 * end of a tag.
+	 */
+	#foreign = false;
 	/** Was the last significant character in this tag a `/`, as in `<desc/>`? */
 	#solidus = false;
 	/** The attribute name being read, or the one whose value is being read. */
@@ -308,6 +414,9 @@ export class TemplateScanner {
 			// Whitespace ends the tag name, a bare attribute, or an unquoted
 			// value — in every case the next thing is another attribute name.
 			this.#beginAttribute();
+			// And it cancels a `/` before it: the tokenizer only self-closes on a
+			// `/` IMMEDIATELY followed by `>`. `<svg><script/ >` opens a script.
+			this.#solidus = false;
 			return;
 		}
 		if (char === "/") {
@@ -335,8 +444,14 @@ export class TemplateScanner {
 			// always written lowercase, and `toLowerCase` allocates.
 			const next =
 				this.#tag + (char >= "A" && char <= "Z" ? char.toLowerCase() : char);
-			if (TRACKED_PREFIXES.has(next)) this.#tag = next;
-			else this.#tagMayBeRaw = false;
+			if (
+				TRACKED_PREFIXES.has(next) ||
+				(this.#foreign && FOREIGN_BREAKOUT_PREFIXES.has(next))
+			) {
+				this.#tag = next;
+			} else {
+				this.#tagMayBeRaw = false;
+			}
 			return;
 		}
 		if (this.#part === "attribute-name") {
@@ -373,6 +488,10 @@ export class TemplateScanner {
 		if (chunk[i] !== "<" || chunk[i + 1] !== "/") return 0;
 		// Read off the element BEFORE leaving it: every length below is its own.
 		const element = this.#rawText;
+		// `<plaintext>` has no end tag the parser honours: everything after it, to
+		// the end of the document, is its text. Letting `</plaintext>` out made the
+		// scanner place later slots in elements the browser never builds.
+		if (element === "plaintext") return 0;
 		const nameAt = i + 2;
 		if (
 			chunk.slice(nameAt, nameAt + element.length).toLowerCase() !== element
@@ -410,41 +529,83 @@ export class TemplateScanner {
 		this.#inTag = false;
 		// `#tag` only ever holds a name worth tracking, lowercased as it was read.
 		const name = this.#tagMayBeRaw ? this.#tag : "";
+		if (
+			this.#foreign &&
+			(this.#closing
+				? FOREIGN_BREAKOUT_END_TAGS.has(name)
+				: FOREIGN_BREAKOUT_ELEMENTS.has(name))
+		) {
+			// Checked before everything else, self-closing included: `<br/>` inside
+			// an `<svg>` ends it just as `<br>` does.
+			this.#leaveForeignContent();
+		}
 		if (this.#closing) {
 			// Only the element that pushed pops, so a `</title>` that closes an
 			// HTML `<title>` does not unwind an `<svg>`.
 			const modes = this.#modes;
 			if (name !== "" && modes !== undefined) {
 				const top = modes[modes.length - 1];
-				if (top?.name === name) modes.pop();
+				if (top?.name === name) {
+					modes.pop();
+					this.#syncForeign();
+				}
 			}
-		} else if (this.#solidus) {
-			// `<desc/>` opens nothing, so there is nothing to push.
+		} else if (
+			this.#solidus &&
+			(this.#foreign || FOREIGN_CONTENT_ELEMENTS.has(name))
+		) {
+			// `<desc/>` opens nothing, so there is nothing to push. Only in foreign
+			// content, and for `<svg/>` and `<math/>` themselves: on an HTML element
+			// the parser IGNORES the slash, so `<script/>` opens a script whose raw
+			// text runs to `</script>`. Honouring it everywhere let a slot in there.
 		} else if (FOREIGN_CONTENT_ELEMENTS.has(name)) {
-			this.#push(name, false);
-		} else if (!this.#htmlRules() && HTML_INTEGRATION_POINTS.has(name)) {
-			this.#push(name, true);
-		} else if (this.#htmlRules()) {
+			this.#push(name, "foreign");
+		} else if (this.#foreign) {
+			// No raw text in foreign content — the tokenizer never switches — but an
+			// integration point hands the content back to HTML, and a script or a
+			// style still runs what it holds.
+			if (HTML_INTEGRATION_POINTS.has(name)) this.#push(name, "html");
+			else if (FOREIGN_CODE_ELEMENTS.has(name)) this.#push(name, "code");
+		} else {
 			// A start tag for one of these puts the parser in a state where `<` is
-			// not markup. A CLOSING tag never does — `</script>` is how we got out —
-			// and in foreign content the tokenizer never switches at all.
+			// not markup. A CLOSING tag never does — `</script>` is how we got out.
 			this.#rawText = RAW_TEXT_ELEMENTS.has(name) ? name : "";
 		}
 		this.#beginTagName();
 		this.#attribute = "";
 	}
 
-	#push(name: string, html: boolean): void {
+	#push(name: string, mode: "foreign" | "html" | "code"): void {
 		const modes = this.#modes ?? [];
-		modes.push({ name, html });
+		modes.push({ name, mode });
 		this.#modes = modes;
+		this.#syncForeign();
 	}
 
-	/** Does the parser read this position's content as HTML? */
-	#htmlRules(): boolean {
+	/**
+	 * Pop every foreign element, as the tree builder does for a breakout tag:
+	 * down to the nearest integration point, or out of foreign content entirely.
+	 */
+	#leaveForeignContent(): void {
 		const modes = this.#modes;
-		if (modes === undefined || modes.length === 0) return true;
-		return modes[modes.length - 1]?.html === true;
+		if (modes === undefined) return;
+		while (modes.length > 0 && modes[modes.length - 1]?.mode !== "html") {
+			modes.pop();
+		}
+		this.#syncForeign();
+	}
+
+	#syncForeign(): void {
+		const modes = this.#modes;
+		const top = modes === undefined ? undefined : modes[modes.length - 1];
+		this.#foreign = top !== undefined && top.mode !== "html";
+	}
+
+	/** The foreign script or style the cursor is directly inside, or empty. */
+	#foreignCode(): string {
+		const modes = this.#modes;
+		const top = modes === undefined ? undefined : modes[modes.length - 1];
+		return top?.mode === "code" ? top.name : "";
 	}
 
 	#beginTagName(): void {
@@ -463,7 +624,7 @@ export class TemplateScanner {
 
 	/** The kind of position the cursor is in right now. */
 	get position(): SlotPosition {
-		if (this.#rawText !== "") return "raw-text";
+		if (this.#rawText !== "" || this.#foreignCode() !== "") return "raw-text";
 		// Inside a comment the markup is inert, so a slot there is text — it
 		// renders into the comment body and binds nothing.
 		if (this.#inComment) return "text";
@@ -486,9 +647,16 @@ export class TemplateScanner {
 		return this.#inTag;
 	}
 
-	/** The raw-text element the cursor is inside, and what kind, or undefined. */
+	/**
+	 * The raw-text element the cursor is inside, and what kind, or undefined. An
+	 * SVG or MathML script or style counts, as code: its content is markup to the
+	 * tokenizer, but it runs all the same.
+	 */
 	get rawText(): { name: string; kind: "code" | "text" } | undefined {
-		if (this.#rawText === "") return undefined;
+		if (this.#rawText === "") {
+			const code = this.#foreignCode();
+			return code === "" ? undefined : { name: code, kind: "code" };
+		}
 		const kind = RAW_TEXT_ELEMENTS.get(this.#rawText);
 		return kind === undefined ? undefined : { name: this.#rawText, kind };
 	}
@@ -584,6 +752,60 @@ export function assertBindable(scanner: TemplateScanner): BindablePosition {
 	}
 	return position;
 }
+
+/**
+ * The properties that parse what they are given as HTML — lowercased, since the
+ * check is on the name as written and `.innerhtml` is only harmless by accident.
+ */
+const HTML_PARSING_PROPERTIES: ReadonlySet<string> = new Set([
+	"innerhtml",
+	"outerhtml",
+	"srcdoc",
+]);
+
+/**
+ * Refuse a `.prop` binding to a property that parses its value as HTML.
+ *
+ * `.innerHTML=${v}` bypassed every escape aurora has: the value went through
+ * `Reflect.set` and the browser parsed it as live markup, `onerror` and all. It
+ * was harmless until property names kept their case — before that it set an own
+ * property called `innerhtml` — and then it was a hole on both render paths.
+ * `srcdoc` is refused as an attribute for the same reason; this is its other
+ * spelling.
+ */
+export function assertBindableProperty(
+	element: string,
+	property: string,
+): void {
+	const name = property.toLowerCase();
+	if (HTML_PARSING_PROPERTIES.has(name)) {
+		throw new AuroraError(
+			"E_AURORA_SLOT_IN_HTML_PROPERTY",
+			`[aurora] cannot bind .${property} — it parses its value as HTML, so the value runs as markup, handlers and all. Put the content in the template as a text slot, or pass a nested html\`…\` template.`,
+		);
+	}
+	if (
+		FOREIGN_CODE_ELEMENTS.has(element.toLowerCase()) &&
+		CONTENT_PROPERTIES.has(name)
+	) {
+		throw new AuroraError(
+			"E_AURORA_SLOT_IN_RAW_TEXT",
+			`[aurora] cannot bind .${property} on <${element}> — that writes the ${element}'s source, and the browser runs it once the element is in the document. It is the property spelling of a slot inside <${element}>, refused for the same reason.`,
+		);
+	}
+}
+
+/**
+ * The properties that write an element's text — harmless on a `<p>`, and the
+ * whole program on a `<script>`. `.textContent`, `.text` and `.innerText` each
+ * ran in Chromium once the script was inserted; the slot inside `<script>` they
+ * stand in for was already refused.
+ */
+const CONTENT_PROPERTIES: ReadonlySet<string> = new Set([
+	"text",
+	"textcontent",
+	"innertext",
+]);
 
 function rawTextMessage(scanner: TemplateScanner): string {
 	const raw = scanner.rawText;

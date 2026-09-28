@@ -21,16 +21,58 @@
  */
 
 /**
- * The attributes whose value the browser will NAVIGATE to or submit to. `src`
- * is deliberately not among them: a `data:` URI is how an inline image is
- * written, and blocking it there would break legitimate markup to guard a
- * position that does not navigate.
+ * The attributes whose value the browser will NAVIGATE to or submit to, on
+ * whatever element carries them.
  */
 const NAVIGATION_ATTRIBUTES: ReadonlySet<string> = new Set([
 	"href",
 	"xlink:href",
 	"action",
 	"formaction",
+]);
+
+/**
+ * The attributes that LOAD something which then runs — but only on these
+ * elements.
+ *
+ * `src` used to be left out everywhere, for the image's sake: a `data:` URI is
+ * how an inline image is written, and blocking it on `<img>` breaks legitimate
+ * markup to guard a position that runs nothing. On a script it is the opposite:
+ * `<script src="data:text/javascript,…">` runs in the page, and an iframe's
+ * `javascript:` URL runs in its parent. So the answer depends on the element,
+ * and this map is where that dependency is written down.
+ */
+const EXECUTING_SOURCES: ReadonlyMap<string, string> = new Map([
+	["script", "src"],
+	["iframe", "src"],
+	["frame", "src"],
+	["embed", "src"],
+	["object", "data"],
+]);
+
+/**
+ * The elements whose URL guard depends on their name. The template scanner
+ * tracks their names so the server can ask which one a value belongs to.
+ */
+export const SOURCE_ELEMENTS: ReadonlySet<string> = new Set(
+	EXECUTING_SOURCES.keys(),
+);
+
+/**
+ * The DOM properties that write one of those attributes, by the attribute they
+ * write.
+ *
+ * A `.prop` binding reaches the element by assignment, never through
+ * `setAttribute`, so the attribute guard never saw it: `<a .href=${url}>` took a
+ * `javascript:` URL straight through. Keyed by the property's own spelling —
+ * property names are case-sensitive, and `formaction` is not `formAction`.
+ */
+const URL_PROPERTIES: ReadonlyMap<string, string> = new Map([
+	["href", "href"],
+	["src", "src"],
+	["action", "action"],
+	["formAction", "formaction"],
+	["data", "data"],
 ]);
 
 /** The schemes that execute, plus the one that can carry a whole document. */
@@ -73,9 +115,18 @@ export function hasUnsafeScheme(url: string): boolean {
 	return UNSAFE_SCHEMES.some((scheme) => normalized.startsWith(scheme));
 }
 
-/** True when this attribute's value is somewhere the browser navigates to. */
-export function isNavigationAttribute(attribute: string): boolean {
-	return NAVIGATION_ATTRIBUTES.has(attribute.toLowerCase());
+/**
+ * True when `attribute`'s value, on `element`, is somewhere the browser
+ * navigates to or loads code from. Both names are compared lowercased, as HTML
+ * compares them; an empty `element` is one whose name nobody tracked, which only
+ * the navigation attributes can match.
+ */
+export function isUrlAttribute(element: string, attribute: string): boolean {
+	const name = attribute.toLowerCase();
+	return (
+		NAVIGATION_ATTRIBUTES.has(name) ||
+		EXECUTING_SOURCES.get(element.toLowerCase()) === name
+	);
 }
 
 /**
@@ -88,11 +139,39 @@ export function neutralizeUnsafeUrl(url: string): string {
 }
 
 /**
- * The value to write for `attribute`, neutralised if it would navigate to a
- * scheme that executes. Anything else is returned untouched. For a caller that
- * has the attribute name and the whole value — both client render paths, which
- * read the name off the parsed DOM.
+ * The value to write for `attribute` on `element`, neutralised if it would
+ * navigate to or load a scheme that executes. Anything else is returned
+ * untouched. For a caller that has both names and the whole value — both client
+ * render paths, which read them off the parsed DOM.
  */
-export function guardUrlAttribute(attribute: string, value: string): string {
-	return isNavigationAttribute(attribute) ? neutralizeUnsafeUrl(value) : value;
+export function guardUrlAttribute(
+	element: string,
+	attribute: string,
+	value: string,
+): string {
+	return isUrlAttribute(element, attribute)
+		? neutralizeUnsafeUrl(value)
+		: value;
+}
+
+/**
+ * The value to assign to `property` on `element`, neutralised when the property
+ * writes a URL attribute that {@link guardUrlAttribute} would have guarded.
+ *
+ * Anything else — another property, or a value whose text is a safe URL — comes
+ * back as it was given, object and all: a `.data` on a custom element is often
+ * an object, and turning it into a string would break it for nothing.
+ */
+export function guardUrlProperty(
+	element: string,
+	property: string,
+	value: unknown,
+): unknown {
+	const attribute = URL_PROPERTIES.get(property);
+	if (attribute === undefined || value === null || value === undefined) {
+		return value;
+	}
+	if (!isUrlAttribute(element, attribute)) return value;
+	const url = String(value);
+	return hasUnsafeScheme(url) ? UNSAFE_URL_PREFIX + url : value;
 }

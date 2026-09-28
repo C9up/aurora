@@ -22,7 +22,11 @@
  */
 
 import { AuroraError } from "./errors.js";
-import { assertBindable, TemplateScanner } from "./templateScanner.js";
+import {
+	assertBindable,
+	assertBindableProperty,
+	TemplateScanner,
+} from "./templateScanner.js";
 
 import {
 	type AttrSlot,
@@ -179,12 +183,10 @@ function collectSlots(
 			return;
 		}
 		if (attr.name.startsWith(".")) {
-			const slot: PropSlot = {
-				kind: "prop",
-				path: localPath,
-				// The parsed name is lowercased; the template's text is not.
-				name: writtenPropertyName(attr, strings) ?? attr.name.slice(1),
-			};
+			// The parsed name is lowercased; the template's text is not.
+			const name = writtenPropertyName(attr, strings) ?? attr.name.slice(1);
+			assertBindableProperty(attr.ownerElement?.localName ?? "", name);
+			const slot: PropSlot = { kind: "prop", path: localPath, name };
 			slots.push(slot);
 			slotIndex++;
 			toRemove.push(attr.name);

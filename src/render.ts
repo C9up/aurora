@@ -28,7 +28,7 @@ import {
 	type TemplateResult,
 	type TextSlot,
 } from "./types.js";
-import { guardUrlAttribute } from "./urlGuard.js";
+import { guardUrlAttribute, guardUrlProperty } from "./urlGuard.js";
 
 export type Disposer = () => void;
 
@@ -359,7 +359,10 @@ function applyAttrSlot(
 		} else if (v === true) {
 			el.setAttribute(slot.name, "");
 		} else {
-			el.setAttribute(slot.name, guardUrlAttribute(slot.name, String(v)));
+			el.setAttribute(
+				slot.name,
+				guardUrlAttribute(el.localName, slot.name, String(v)),
+			);
 		}
 	}
 	if (isSignal(value) || typeof value === "function") {
@@ -411,7 +414,10 @@ function applyMultiAttrGroup(
 	// The guard sees the WHOLE value here — static parts and slots joined — which
 	// is what a scheme check needs: it can only be at the start.
 	const write = (): void => {
-		group.el.setAttribute(group.name, guardUrlAttribute(group.name, join()));
+		group.el.setAttribute(
+			group.name,
+			guardUrlAttribute(group.el.localName, group.name, join()),
+		);
 	};
 	if (hasReactive) {
 		cleanups.push(effect(write));
@@ -452,7 +458,7 @@ function applyPropSlot(
 ): void {
 	function apply(v: unknown): void {
 		// See hydrate.ts: Reflect.set writes the property without a cast.
-		Reflect.set(el, slot.name, v);
+		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
 	}
 	if (isSignal(value) || typeof value === "function") {
 		const dispose = effect(() => apply((value as () => unknown)()));

@@ -49,6 +49,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_SLOT_IN_EVENT_ATTRIBUTE"
 	/** A `${}` landed in `srcdoc`, which an iframe parses as a whole document. */
 	| "E_AURORA_SLOT_IN_SRCDOC"
+	/** A `.prop` binding names a property that parses its value as HTML. */
+	| "E_AURORA_SLOT_IN_HTML_PROPERTY"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */
 	| "E_AURORA_INTERNAL";
 
