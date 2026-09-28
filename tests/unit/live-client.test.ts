@@ -61,6 +61,26 @@ describe("aurora > live client", () => {
 		dispose();
 	});
 
+	it("patches a slot that shares its element with static text", () => {
+		const count = signal(0);
+		const view = () =>
+			html`<button data-live-click="increment">Count: ${count}!</button>`;
+		const container = document.createElement("div");
+		container.innerHTML = renderToString(view());
+
+		const transport = fakeTransport();
+		const dispose = liveClient({
+			container,
+			factory: view,
+			mount: { id: "abc", channel: "live/abc" },
+			transport,
+		});
+
+		transport.deliver([{ slot: 0, value: "7" }]);
+		expect(container.querySelector("button")?.textContent).toBe("Count: 7!");
+		dispose();
+	});
+
 	it("forwards a data-live-click interaction through the transport", () => {
 		const count = signal(0);
 		const view = () =>

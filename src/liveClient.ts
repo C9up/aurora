@@ -52,11 +52,6 @@ export interface LiveClientOptions {
  * base signals they read (aurora re-evaluates them) — so the server's
  * base-signal patch is enough. (Derived-only slots with no mirrored base are a
  * later refinement.)
- *
- * Authoring rule (aurora hydration): a reactive text slot must be the SOLE
- * content of its element — write `Count: <span>${count}</span>`, not
- * `Count: ${count}`. SSR merges adjacent static+dynamic text into one node,
- * which hydration cannot re-split; isolating the slot keeps adopt + patch exact.
  */
 export function liveClient(opts: LiveClientOptions): () => void {
 	// The session id is the id namespace: the server rendered this component's

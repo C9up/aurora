@@ -31,6 +31,7 @@ import {
 	mount,
 	runMountHooks,
 } from "./render.js";
+import { assertPropertyValue } from "./templateScanner.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
@@ -906,6 +907,7 @@ function hydratePropSlot(
 		// Reflect.set rather than a cast: writing an arbitrary property onto an
 		// element is exactly what Reflect is for, and it does not require
 		// claiming the element is something it is not.
+		assertPropertyValue(el, slot.name, v);
 		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
 	}
 	if (isSignal(value) || typeof value === "function") {

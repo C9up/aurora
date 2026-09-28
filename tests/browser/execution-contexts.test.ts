@@ -191,10 +191,7 @@ describe("aurora > browser > a URL whose danger depends on the element", () => {
 
 	it("is neutralised by the server", async () => {
 		const markup = renderToString(
-			html`<script src=${SCRIPT_URL}></script><iframe src="${FRAME_URL}"></iframe><embed src=${FRAME_URL}><frame src=${FRAME_URL}><object data=${FRAME_URL}></object>`,
-		);
-		expect(parsedAttribute(markup, "script", "src")).toBe(
-			`unsafe:${SCRIPT_URL}`,
+			html`<iframe src="${FRAME_URL}"></iframe><embed src=${FRAME_URL}><frame src=${FRAME_URL}><object data=${FRAME_URL}></object>`,
 		);
 		expect(parsedAttribute(markup, "iframe", "src")).toBe(
 			`unsafe:${FRAME_URL}`,
@@ -208,14 +205,8 @@ describe("aurora > browser > a URL whose danger depends on the element", () => {
 	});
 
 	it("is neutralised by the client render", async () => {
-		render(
-			html`<script src=${SCRIPT_URL}></script><iframe src=${FRAME_URL}></iframe>`,
-			container,
-		);
+		render(html`<iframe src=${FRAME_URL}></iframe>`, container);
 		await settle();
-		expect(container.querySelector("script")?.getAttribute("src")).toBe(
-			`unsafe:${SCRIPT_URL}`,
-		);
 		expect(container.querySelector("iframe")?.getAttribute("src")).toBe(
 			`unsafe:${FRAME_URL}`,
 		);
@@ -242,6 +233,63 @@ describe("aurora > browser > a URL whose danger depends on the element", () => {
 		).toBe(image);
 		render(html`<img src=${image}>`, container);
 		expect(container.querySelector("img")?.getAttribute("src")).toBe(image);
+	});
+});
+
+describe("aurora > browser > the URL a script loads", () => {
+	it("runs whatever it points at, with no scheme a check could catch", async () => {
+		const blob = URL.createObjectURL(
+			new Blob([`window.${PROBE} = 42`], { type: "text/javascript" }),
+		);
+		try {
+			expect(await runsInPage(`<script src="${blob}"></script>`)).toBe(42);
+			// The same through the markup the server used to emit, which only
+			// neutralised javascript:, vbscript: and data:.
+			expect(
+				await runsInPage(`<svg><script href="${blob}"></script></svg>`),
+			).toBe(42);
+		} finally {
+			URL.revokeObjectURL(blob);
+		}
+	});
+
+	it("is refused on both paths, in HTML and in SVG", () => {
+		for (const make of [
+			() => html`<script src=${"blob:x"}></script>`,
+			() =>
+				html`<script type="module" src="${"https://cdn.example/x.js"}"></script>`,
+			() => html`<script src="/assets/${"app"}.js"></script>`,
+			() => html`<svg><script href=${"blob:x"}></script></svg>`,
+			() => html`<svg><script xlink:href=${"blob:x"}></script></svg>`,
+		]) {
+			expect(() => renderToString(make())).toThrowError(
+				/cannot go in "(src|href|xlink:href)" on <script>/,
+			);
+			expect(() => render(make(), container)).toThrowError(
+				/cannot go in "(src|href|xlink:href)" on <script>/,
+			);
+		}
+		expect(probe()).toBeUndefined();
+	});
+
+	it("is refused as a property too", () => {
+		const make = () => html`<script .src=${"blob:x"}></script>`;
+		expect(() => render(make(), container)).toThrowError(
+			/cannot bind \.src on <script>/,
+		);
+		expect(() => renderToString(make())).toThrowError(
+			/cannot bind \.src on <script>/,
+		);
+	});
+
+	it("leaves every other element's src and href to the scheme check", () => {
+		const markup = renderToString(
+			html`<img src=${"https://cdn.example/x.png"}><a href=${"https://example.com/"}>x</a>`,
+		);
+		expect(parsedAttribute(markup, "img", "src")).toBe(
+			"https://cdn.example/x.png",
+		);
+		expect(parsedAttribute(markup, "a", "href")).toBe("https://example.com/");
 	});
 });
 
@@ -288,12 +336,10 @@ describe("aurora > browser > properties that navigate", () => {
 
 	it("depend on the element, as the attributes do", () => {
 		const image = "data:image/png;base64,iVBORw0KGgo=";
-		render(
-			html`<script .src=${"data:text/javascript,1"}></script><img .src=${image}>`,
-			container,
-		);
-		expect(container.querySelector("script")?.getAttribute("src")).toBe(
-			"unsafe:data:text/javascript,1",
+		const frame = `javascript:parent.${PROBE}=42`;
+		render(html`<iframe .src=${frame}></iframe><img .src=${image}>`, container);
+		expect(container.querySelector("iframe")?.getAttribute("src")).toBe(
+			`unsafe:${frame}`,
 		);
 		expect(container.querySelector("img")?.getAttribute("src")).toBe(image);
 	});
@@ -380,5 +426,38 @@ describe("aurora > browser > properties that write a script's source", () => {
 			expect(() => renderToString(make())).toThrowError(/cannot bind/);
 		}
 		expect(probe()).toBeUndefined();
+	});
+});
+
+describe("aurora > browser > .value on a file input", () => {
+	it("throws in the DOM itself for anything but an empty string", () => {
+		const input = document.createElement("input");
+		input.type = "file";
+		expect(() => {
+			input.value = "x";
+		}).toThrowError(/InvalidStateError|value/);
+		input.value = "";
+		expect(input.value).toBe("");
+	});
+
+	it("is refused by aurora on both client paths, naming the binding", () => {
+		const factory = () => html`<input type="file" .value=${"x"}>`;
+		expect(() => render(factory(), container)).toThrowError(
+			/E_AURORA_FILE_INPUT_VALUE|cannot set \.value on <input type="file">/,
+		);
+		container.replaceChildren();
+		container.innerHTML = renderToString(factory());
+		expect(() => hydrate(container, factory)).toThrowError(
+			/cannot set \.value on <input type="file">/,
+		);
+	});
+
+	it("still clears the field with an empty string", () => {
+		const value = signal("");
+		const factory = () => html`<input type="file" .value=${value}>`;
+		container.innerHTML = renderToString(factory());
+		expect(() => hydrate(container, factory)).not.toThrow();
+		value("");
+		expect(container.querySelector("input")?.value).toBe("");
 	});
 });

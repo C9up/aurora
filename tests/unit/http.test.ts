@@ -455,4 +455,23 @@ describe("aurora > http > the CSRF header the server is waiting for", () => {
 		expect(header(calls[0], "X-CSRF-TOKEN")).toBe("zzz");
 		document.cookie = "csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 	});
+
+	it("survives extend(), and extend() can still override it", async () => {
+		document.cookie = "csrf_token=zzz";
+		const calls = stubFetch(() => json({ ok: true }));
+		const base = new HttpClient({
+			xsrfCookieName: "csrf_token",
+			xsrfHeaderName: "X-CSRF-TOKEN",
+		});
+
+		await base.extend({ token: "abc" }).post("/a", {});
+		await base.extend({ xsrfHeaderName: "X-Other" }).post("/b", {});
+		await new HttpClient({ xsrf: false }).extend({}).post("/c", {});
+
+		expect(header(calls[0], "X-CSRF-TOKEN")).toBe("zzz");
+		expect(header(calls[1], "X-Other")).toBe("zzz");
+		expect(header(calls[1], "X-CSRF-TOKEN")).toBeUndefined();
+		expect(header(calls[2], "X-XSRF-TOKEN")).toBeUndefined();
+		document.cookie = "csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+	});
 });

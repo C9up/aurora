@@ -16,6 +16,7 @@
 import { readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
 import { effect, isSignal } from "./reactive.js";
+import { assertPropertyValue } from "./templateScanner.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
@@ -458,6 +459,7 @@ function applyPropSlot(
 ): void {
 	function apply(v: unknown): void {
 		// See hydrate.ts: Reflect.set writes the property without a cast.
+		assertPropertyValue(el, slot.name, v);
 		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
 	}
 	if (isSignal(value) || typeof value === "function") {

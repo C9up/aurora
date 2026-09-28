@@ -328,6 +328,9 @@ export class HttpClient {
 			timeout: options.timeout ?? this.#timeout,
 			allowCrossOriginAuth:
 				options.allowCrossOriginAuth ?? this.#allowCrossOriginAuth,
+			xsrf: options.xsrf ?? this.#xsrf.xsrf,
+			xsrfCookieName: options.xsrfCookieName ?? this.#xsrf.xsrfCookieName,
+			xsrfHeaderName: options.xsrfHeaderName ?? this.#xsrf.xsrfHeaderName,
 		});
 	}
 

@@ -750,7 +750,33 @@ export function assertBindable(scanner: TemplateScanner): BindablePosition {
 			`[aurora] a ${INTERPOLATION} cannot go in "srcdoc" — the iframe decodes that value and parses it as a whole HTML document, so escaping it protects nothing. Point the iframe at a URL you serve.`,
 		);
 	}
+	if (scanner.element === "script" && SCRIPT_SOURCE_ATTRIBUTES.has(attribute)) {
+		throw new AuroraError(
+			"E_AURORA_SLOT_IN_SCRIPT_SOURCE",
+			scriptSourceMessage(`a ${INTERPOLATION} cannot go in "${attribute}"`),
+		);
+	}
 	return position;
+}
+
+/**
+ * The attributes a `<script>` loads its code from: `src` in HTML, `href` and
+ * `xlink:href` on an SVG script.
+ *
+ * Neutralising the executing schemes was not enough here. Every URL in this
+ * position is code with the page's authority — `https://` on another origin
+ * runs, and so does a `blob:` this page minted from someone's upload — and no
+ * scheme test tells the script the author meant from one a value chose. A
+ * refusal, where an `<img src>` or an `<a href>` only needs the scheme checked.
+ */
+const SCRIPT_SOURCE_ATTRIBUTES: ReadonlySet<string> = new Set([
+	"src",
+	"href",
+	"xlink:href",
+]);
+
+function scriptSourceMessage(what: string): string {
+	return `[aurora] ${what} on <script> — whatever URL it holds is loaded and run with the page's authority, and no check on the value can tell the script you meant from one the value picked. Write the URL into the template; a script chosen at runtime is a decision for code that creates the element itself.`;
 }
 
 /**
@@ -784,6 +810,12 @@ export function assertBindableProperty(
 			`[aurora] cannot bind .${property} — it parses its value as HTML, so the value runs as markup, handlers and all. Put the content in the template as a text slot, or pass a nested html\`…\` template.`,
 		);
 	}
+	if (element.toLowerCase() === "script" && name === "src") {
+		throw new AuroraError(
+			"E_AURORA_SLOT_IN_SCRIPT_SOURCE",
+			scriptSourceMessage(`cannot bind .${property}`),
+		);
+	}
 	if (
 		FOREIGN_CODE_ELEMENTS.has(element.toLowerCase()) &&
 		CONTENT_PROPERTIES.has(name)
@@ -791,6 +823,36 @@ export function assertBindableProperty(
 		throw new AuroraError(
 			"E_AURORA_SLOT_IN_RAW_TEXT",
 			`[aurora] cannot bind .${property} on <${element}> — that writes the ${element}'s source, and the browser runs it once the element is in the document. It is the property spelling of a slot inside <${element}>, refused for the same reason.`,
+		);
+	}
+}
+
+/**
+ * Refuse a value the element will not take, before the DOM refuses it less
+ * helpfully.
+ *
+ * A file input's `.value` can only be cleared: the browser throws
+ * `InvalidStateError` for anything but `""`, on every path, and the attribute
+ * the server writes is ignored. Thrown by aurora instead so the error names the
+ * binding and says what to do. The type is read from the attribute, as the
+ * browser reads it — `.type` would need the element to be an `<input>` first.
+ */
+export function assertPropertyValue(
+	element: Element,
+	property: string,
+	value: unknown,
+): void {
+	if (
+		property === "value" &&
+		element.localName === "input" &&
+		element.getAttribute("type")?.trim().toLowerCase() === "file" &&
+		value !== null &&
+		value !== undefined &&
+		String(value) !== ""
+	) {
+		throw new AuroraError(
+			"E_AURORA_FILE_INPUT_VALUE",
+			`[aurora] cannot set .value on <input type="file"> to "${String(value)}" — a file input's value is whatever the user picked, and a script may only clear it. Bind "" to reset the field, or drop the .value binding.`,
 		);
 	}
 }
