@@ -593,3 +593,40 @@ describe("aurora > renderPage seeds from either cookie reader", () => {
 		expect(await render({})).toContain('class="w-60"');
 	});
 });
+
+describe("aurora > renderPage > jsonLd", () => {
+	const product = {
+		"@context": "https://schema.org",
+		"@type": "Product",
+		name: "</script><script>alert(1)</script>\u2028",
+	};
+
+	it("writes the page's JSON-LD in <head>, with the nonce, unbreakable", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = makeCtx();
+		ctx.response.nonce = "n0nce";
+		await renderPage(
+			ctx,
+			pages,
+			"Hello",
+			{ name: "World" },
+			{ jsonLd: product },
+		);
+		const out = getBody();
+		const head = out.slice(0, out.indexOf("</head>"));
+		const match =
+			/<script nonce="n0nce" type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(
+				head,
+			);
+		expect(match).not.toBeNull();
+		expect(match?.[1]).not.toMatch(/[<>&\u2028]/);
+		expect(JSON.parse(match?.[1] ?? "")).toEqual(product);
+	});
+
+	it("writes no JSON-LD script without structured data", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = makeCtx();
+		await renderPage(ctx, pages, "Hello", { name: "World" });
+		expect(getBody()).not.toContain("ld+json");
+	});
+});

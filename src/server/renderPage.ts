@@ -84,6 +84,15 @@ export interface RenderPageOptions {
 	 */
 	headExtra?: string;
 	/**
+	 * The page's structured data, as JSON-LD — a schema.org node, a list, or a
+	 * `{ "@context", "@graph" }` document (what `@c9up/ephemeris` builds, or
+	 * any plain object). Written in `<head>` as one
+	 * `<script type="application/ld+json">` with the request's nonce, escaped
+	 * so no value can end it. Prefer it to building the tag into `headExtra`,
+	 * which is written raw.
+	 */
+	jsonLd?: object | readonly object[];
+	/**
 	 * Outer language tag on the `<html>` element. Defaults to `en`.
 	 */
 	lang?: string;
@@ -284,7 +293,7 @@ async function renderPageInScope<P>(
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <script${nonceAttr} type="importmap">${escapeJsonForScript({ imports: importmap })}</script>
-${options.headExtra ?? ""}
+${options.jsonLd === undefined ? "" : `<script${nonceAttr} type="application/ld+json">${escapeJsonForScript(options.jsonLd)}</script>\n`}${options.headExtra ?? ""}
 </head>
 <body>
 <${rootTag}${rootAttrs(rootId, rootClass)}>${body}</${rootTag}>
