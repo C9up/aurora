@@ -446,9 +446,31 @@ describe("aurora > browser > .value on a file input", () => {
 			/E_AURORA_FILE_INPUT_VALUE|cannot set \.value on <input type="file">/,
 		);
 		container.replaceChildren();
-		container.innerHTML = renderToString(factory());
+		// Markup the server would no longer write, to reach the hydration path.
+		container.innerHTML = '<input type="file">';
 		expect(() => hydrate(container, factory)).toThrowError(
 			/cannot set \.value on <input type="file">/,
+		);
+	});
+
+	it("is refused by the server too, wherever the type is written", () => {
+		const refused = /cannot set \.value on <input type="file">/;
+		expect(() =>
+			renderToString(html`<input type="file" .value=${"x"}>`),
+		).toThrowError(refused);
+		expect(() =>
+			renderToString(html`<input .value=${"x"} type="file">`),
+		).toThrowError(refused);
+		expect(() =>
+			renderToString(html`<input type="${() => "File"}" .value=${"x"}>`),
+		).toThrowError(refused);
+		// The parser keeps the first `type`, and so does the check.
+		expect(
+			renderToString(html`<input type="text" type="file" .value=${"x"}>`),
+		).toContain('value="x"');
+		// The value checked is the next input's business, not this one's.
+		expect(renderToString(html`<input .value=${"x"}><input type="file">`)).toBe(
+			'<input value="x"><input type="file">',
 		);
 	});
 

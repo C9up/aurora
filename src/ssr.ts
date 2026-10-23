@@ -12,6 +12,7 @@ import { isSignal } from "./reactive.js";
 import {
 	assertBindable,
 	assertBindableProperty,
+	assertInputValue,
 	type BindablePosition,
 	TemplateScanner,
 } from "./templateScanner.js";
@@ -91,6 +92,11 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	 * hydration sent nothing.
 	 */
 	let pendingContent: string | undefined;
+	/**
+	 * An `<input .value="${v}">`'s value, waiting for the tag to close before it
+	 * is checked against the input's `type`, which may still be ahead of it.
+	 */
+	let pendingInputValue: { value: unknown } | undefined;
 	const scanner = new TemplateScanner();
 
 	/** Emit the held value, guarded once, and go back to writing straight out. */
@@ -114,7 +120,10 @@ function stringifyTemplateResult(result: TemplateResult): string {
 	 */
 	const write = (text: string): void => {
 		if (text === "") return;
-		if (pendingContent !== undefined && scanner.inTag) {
+		if (
+			(pendingContent !== undefined || pendingInputValue !== undefined) &&
+			scanner.inTag
+		) {
 			// Step to the `>` so the content lands right after it. Character by
 			// character rather than looking for the `>`, because one inside a
 			// later quoted attribute value is not the end of the tag — and asking
@@ -124,8 +133,15 @@ function stringifyTemplateResult(result: TemplateResult): string {
 				scanner.consume(char);
 				out += char;
 				if (!scanner.inTag) {
-					out += pendingContent;
-					pendingContent = undefined;
+					if (pendingInputValue !== undefined) {
+						// The tag is whole: its `type` is the one the browser will read.
+						assertInputValue(scanner.type, pendingInputValue.value);
+						pendingInputValue = undefined;
+					}
+					if (pendingContent !== undefined) {
+						out += pendingContent;
+						pendingContent = undefined;
+					}
 					write(text.slice(k + 1));
 					return;
 				}
@@ -235,7 +251,10 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		if (valueDirective && i < values.length) {
 			const valueElement = scanner.element;
 			if (valueElement === "input") {
-				write(` value="${stringifyValue(values[i], "quoted-value")}"`);
+				// Resolved once, here, so the check and the markup read one value.
+				const value = resolveOnce(values[i]);
+				write(` value="${stringifyValue(value, "quoted-value")}"`);
+				pendingInputValue = { value };
 			} else if (valueElement === "textarea") {
 				// Escaped for text, not for an attribute, and emitted once the tag
 				// closes — see `pendingContent`.
@@ -245,7 +264,30 @@ function stringifyTemplateResult(result: TemplateResult): string {
 		if (i < values.length && !skipValue) {
 			const value = values[i];
 			const position = assertBindable(scanner);
-			if (position !== "text") {
+			const closer =
+				position === "text"
+					? undefined
+					: wholeValueCloser(segment, scanner, strings[i + 1] ?? "");
+			if (closer !== undefined) {
+				// The slot IS the value, so it decides whether the attribute exists
+				// at all — the rule the client applies (`applyAttrSlot`).
+				const resolved = resolveOnce(value);
+				const spelled =
+					resolved === null || resolved === undefined || resolved === false
+						? attributeSpelling(segment, scanner.attribute)
+						: undefined;
+				if (spelled !== undefined && out.endsWith(spelled)) {
+					// Left out, name and all — written empty, it stayed in the DOM,
+					// since a static value is never replayed at hydration.
+					out = out.slice(0, out.length - spelled.length);
+					held = undefined;
+					scanner.discardAttribute();
+					if (closer !== "") pendingClosingQuote = closer;
+				} else {
+					if (held !== undefined) held.fromSlot = true;
+					write(resolved === true ? "" : stringifyValue(resolved, position));
+				}
+			} else if (position !== "text") {
 				if (held !== undefined) held.fromSlot = true;
 				// Escaped for its context; the URL decision waits for the whole
 				// value, in `release`.
@@ -361,10 +403,71 @@ function resolveBooleanValue(value: unknown): boolean {
 	return Boolean(value);
 }
 
+/**
+ * Read a slot's value the way the client does before it writes one: a signal or
+ * a reactive expression is called once. Fail-soft, as everywhere on the server:
+ * an expression that throws reads as absent and leaves the client to decide.
+ */
+function resolveOnce(value: unknown): unknown {
+	try {
+		if (isSignal(value)) return value();
+		if (typeof value === "function") {
+			const resolved: unknown = Reflect.apply(value, undefined, []);
+			return resolved;
+		}
+	} catch {
+		return undefined;
+	}
+	return value;
+}
+
+/**
+ * The quote that closes an attribute value made of this one slot — `""` for an
+ * unquoted one — or undefined when the slot is only part of the value.
+ *
+ * The client tells the two apart by parsing (`html.ts`): a value that is exactly
+ * the slot's placeholder is a whole-value slot, anything else is joined with its
+ * static text. Here that is the value opening in the segment before, with
+ * nothing in it yet, and ending at the very start of the one after.
+ */
+function wholeValueCloser(
+	segment: string,
+	scanner: TemplateScanner,
+	next: string,
+): '"' | "'" | "" | undefined {
+	// An empty segment is a slot right after another one: the value opened before.
+	if (segment === "" || scanner.valueLength !== 0) return undefined;
+	if (scanner.position === "quoted-value") {
+		// Nothing consumed since the value opened, so the segment ends on its quote.
+		const quote = segment.charAt(segment.length - 1);
+		if (quote !== '"' && quote !== "'") return undefined;
+		return next.startsWith(quote) ? quote : undefined;
+	}
+	const first = next.charAt(0);
+	return first === ">" || /^[\t\n\f\r ]$/.test(first) ? "" : undefined;
+}
+
+/**
+ * How `attribute` was spelled at the end of `segment`, from the whitespace
+ * before its name to its opening quote — or undefined if the segment does not
+ * end that way.
+ */
+function attributeSpelling(
+	segment: string,
+	attribute: string,
+): string | undefined {
+	const match = segment.match(
+		/[\t\n\f\r ]*([^\t\n\f\r "'>/=]+)[\t\n\f\r ]*=[\t\n\f\r ]*["']?$/,
+	);
+	if (match === null) return undefined;
+	return match[1]?.toLowerCase() === attribute ? match[0] : undefined;
+}
+
 function stringifyValue(value: unknown, context: BindablePosition): string {
-	const inAttribute = context !== "text";
 	if (value === null || value === undefined || value === false) return "";
-	if (value === true) return inAttribute ? "" : "true";
+	// "true", as the client writes it into a value it joins with static text or
+	// assigns to `.value`. A slot that is the whole value is handled before this.
+	if (value === true) return "true";
 	if (isSignal(value)) return stringifyValue(value(), context);
 	if (typeof value === "function") {
 		// A function here is a reactive expression — `class="${() => …}"` in an

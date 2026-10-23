@@ -79,6 +79,74 @@ describe("aurora > ssr > primitives", () => {
 	});
 });
 
+describe("aurora > ssr > an attribute whose whole value is a slot", () => {
+	it("is left out for null, undefined and false, as the client leaves it out", () => {
+		expect(
+			renderToString(
+				html`<input id="${undefined}" name="${null}" autocomplete="${false}" type="search">`,
+			),
+		).toBe('<input type="search">');
+	});
+
+	it("reads a signal and a reactive expression before deciding", () => {
+		expect(
+			renderToString(
+				html`<p title="${signal(undefined)}" lang="${() => null}" data-a="${() => "v"}">t</p>`,
+			),
+		).toBe('<p data-a="v">t</p>');
+	});
+
+	it("is written empty for true", () => {
+		expect(renderToString(html`<p data-open="${true}">t</p>`)).toBe(
+			'<p data-open="">t</p>',
+		);
+	});
+
+	it("is left out whatever the quoting", () => {
+		expect(renderToString(html`<input name='${undefined}' id='a'>`)).toBe(
+			"<input id='a'>",
+		);
+		expect(renderToString(html`<input name=${undefined} id=b>`)).toBe(
+			"<input id=b>",
+		);
+		expect(renderToString(html`<input name=${null}>`)).toBe("<input>");
+	});
+
+	it("drops a navigation attribute held for the URL guard as well", () => {
+		expect(renderToString(html`<a href="${undefined}" id="x">l</a>`)).toBe(
+			'<a id="x">l</a>',
+		);
+		expect(renderToString(html`<a href="${"javascript:x"}">l</a>`)).toBe(
+			'<a href="unsafe:javascript:x">l</a>',
+		);
+	});
+
+	it("keeps the slots after it aligned", () => {
+		expect(
+			renderToString(html`<p title="${undefined}" class="${"c"}">${"t"}</p>`),
+		).toBe('<p class="c"><!--$-->t<!--/$--></p>');
+	});
+});
+
+describe("aurora > ssr > a slot joined with static text in an attribute", () => {
+	it('joins null, undefined and false as nothing and true as "true", as the client does', () => {
+		expect(
+			renderToString(
+				html`<p class="a ${undefined} ${null} ${false} ${true}">t</p>`,
+			),
+		).toBe('<p class="a    true">t</p>');
+	});
+
+	it("keeps the attribute when it is only slots side by side", () => {
+		expect(renderToString(html`<p title="${undefined}${"x"}">t</p>`)).toBe(
+			'<p title="x">t</p>',
+		);
+		expect(renderToString(html`<p title="${undefined}${null}">t</p>`)).toBe(
+			'<p title="">t</p>',
+		);
+	});
+});
+
 describe("aurora > ssr > reactive snapshots", () => {
 	it("evaluates signals once for the snapshot", () => {
 		const count = signal(7);

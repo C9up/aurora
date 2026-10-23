@@ -349,6 +349,17 @@ export class TemplateScanner {
 	 * halves meet.
 	 */
 	#valueLength = 0;
+	/**
+	 * The value of the tag's `type` attribute, as read so far — undefined when
+	 * the tag has none yet. Kept after the tag closes, until the next one opens.
+	 *
+	 * Server-side rendering needs it for `<input type="file">`, whose `.value`
+	 * the client refuses: the server has to refuse it too, and `type` may come
+	 * before the binding or after it.
+	 */
+	#type: string | undefined;
+	/** Is the value being read the tag's first `type`, the one the parser keeps? */
+	#readingType = false;
 
 	/** Feed everything appended since the last call. */
 	consume(chunk: string): void {
@@ -380,6 +391,7 @@ export class TemplateScanner {
 				} else {
 					this.#valueStarted = true;
 					this.#valueLength += 1;
+					if (this.#readingType) this.#type += char;
 				}
 				continue;
 			}
@@ -401,6 +413,7 @@ export class TemplateScanner {
 				this.#inTag = true;
 				this.#beginTagName();
 				this.#attribute = "";
+				this.#type = undefined;
 			}
 		}
 	}
@@ -461,6 +474,11 @@ export class TemplateScanner {
 				this.#part = "value";
 				this.#valueStarted = false;
 				this.#valueLength = 0;
+				// Only the first: the parser drops a repeated attribute.
+				if (this.#attribute === "type" && this.#type === undefined) {
+					this.#type = "";
+					this.#readingType = true;
+				}
 			} else {
 				this.#attribute += char;
 			}
@@ -474,6 +492,7 @@ export class TemplateScanner {
 		}
 		this.#valueStarted = true;
 		this.#valueLength += 1;
+		if (this.#readingType) this.#type += char;
 	}
 
 	/**
@@ -514,6 +533,7 @@ export class TemplateScanner {
 		this.#closing = true;
 		this.#sawNameChar = true;
 		this.#attribute = "";
+		this.#type = undefined;
 		// `<` and `/` and the name; the terminator is read as part of the tag.
 		return 2 + element.length;
 	}
@@ -615,11 +635,24 @@ export class TemplateScanner {
 		this.#tagMayBeRaw = true;
 		this.#sawNameChar = false;
 		this.#closing = false;
+		this.#readingType = false;
 	}
 
 	#beginAttribute(): void {
 		this.#part = "attribute-name";
 		this.#attribute = "";
+		this.#readingType = false;
+	}
+
+	/**
+	 * Forget the attribute whose value has just opened: the renderer is leaving
+	 * it out of the markup, so the rest of the tag reads as if it never started.
+	 * The closing quote, if any, is the renderer's to drop as well.
+	 */
+	discardAttribute(): void {
+		if (this.#readingType) this.#type = undefined;
+		this.#quote = "";
+		this.#beginAttribute();
 	}
 
 	/** The kind of position the cursor is in right now. */
@@ -668,6 +701,14 @@ export class TemplateScanner {
 	 */
 	get attribute(): string {
 		return this.#attribute;
+	}
+
+	/**
+	 * The `type` attribute of the tag being read, or of the last one closed —
+	 * undefined when it has none. Its markup as written, not decoded.
+	 */
+	get type(): string | undefined {
+		return this.#type;
 	}
 
 	/** Characters of the value currently being read that have been consumed. */
@@ -842,10 +883,22 @@ export function assertPropertyValue(
 	property: string,
 	value: unknown,
 ): void {
+	if (property === "value" && element.localName === "input") {
+		assertInputValue(element.getAttribute("type"), value);
+	}
+}
+
+/**
+ * Refuse a `.value` that an `<input>` of this `type` cannot take. The client
+ * reads `type` off the element; server-side rendering, which has none, off the
+ * scanner — one rule for both, so neither path renders what the other refuses.
+ */
+export function assertInputValue(
+	type: string | null | undefined,
+	value: unknown,
+): void {
 	if (
-		property === "value" &&
-		element.localName === "input" &&
-		element.getAttribute("type")?.trim().toLowerCase() === "file" &&
+		type?.trim().toLowerCase() === "file" &&
 		value !== null &&
 		value !== undefined &&
 		String(value) !== ""
