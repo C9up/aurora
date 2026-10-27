@@ -21,6 +21,7 @@
  * placeholders.
  */
 
+import { rememberContext } from "./component.js";
 import { AuroraError } from "./errors.js";
 import {
 	assertBindable,
@@ -392,6 +393,7 @@ export function html(
 		values,
 		[TEMPLATE_RESULT_BRAND]: true,
 	};
+	rememberContext(result, values);
 	return result;
 }
 

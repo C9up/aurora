@@ -20,7 +20,7 @@
  * hydration mismatch warning.
  */
 
-import { readComponentLifecycle } from "./component.js";
+import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { withIdScope } from "./id.js";
@@ -217,8 +217,11 @@ function hydrateReactiveStructured(
 			// tree, and an `onMount` that reads a sibling must not see a half
 			// hydrated one. One wrapper carries them into the root's flush; it
 			// returns nothing, because the real teardowns go to this slot.
+			// It marks the slot's queue flushed too, for a slot nested in it that
+			// swaps later (see render.ts).
 			const pending = own.hooks;
 			queue.hooks.push(() => {
+				own.flushed = true;
 				runMountHooks(pending.splice(0), localCleanups);
 			});
 			return;
@@ -252,8 +255,13 @@ function hydrateReactiveStructured(
 			// cleanups: the next swap must dispose what it replaces.
 			runMountHooks(own.hooks, localCleanups);
 		} else {
-			// Still building the initial tree — the root's flush is coming.
-			queue.hooks.push(...own.hooks);
+			// Still building the initial tree — the root's flush is coming, and
+			// it marks this queue flushed for the slots nested in it.
+			const pending = own.hooks;
+			queue.hooks.push(() => {
+				own.flushed = true;
+				runMountHooks(pending.splice(0), localCleanups);
+			});
 		}
 	});
 
@@ -518,7 +526,9 @@ function hydrateTemplateResult(
 		hydrateSlot(
 			slot,
 			liveNode,
-			result.values[i],
+			slot.kind === "text"
+				? bindTemplateContext(result, result.values[i])
+				: result.values[i],
 			cleanups,
 			queue,
 			markerCursor,

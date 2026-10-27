@@ -8,6 +8,7 @@
  * lands in the browser.
  */
 
+import { hasTemplateContext, runInTemplateContext } from "./component.js";
 import { isSignal } from "./reactive.js";
 import {
 	assertBindable,
@@ -77,7 +78,13 @@ interface HeldValue {
 	fromSlot: boolean;
 }
 
+/** In the context `result` was written under — see `runInTemplateContext`. */
 function stringifyTemplateResult(result: TemplateResult): string {
+	if (!hasTemplateContext(result)) return stringifyTemplate(result);
+	return runInTemplateContext(result, () => stringifyTemplate(result));
+}
+
+function stringifyTemplate(result: TemplateResult): string {
 	const { strings, values } = result;
 	let out = "";
 	let held: HeldValue | undefined;

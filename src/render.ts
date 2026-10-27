@@ -13,7 +13,7 @@
  * mounted nodes.
  */
 
-import { readComponentLifecycle } from "./component.js";
+import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { getTemplate } from "./html.js";
 import { effect, isSignal } from "./reactive.js";
 import { assertPropertyValue } from "./templateScanner.js";
@@ -183,7 +183,11 @@ export function mount(
 		if (slot.kind === "attr" && slot.staticParts !== undefined) {
 			collectMultiAttr(slot, node as Element, result.values[i], multiGroups);
 		} else {
-			applySlot(slot, node, result.values[i], cleanups, mounted, queue);
+			const value =
+				slot.kind === "text"
+					? bindTemplateContext(result, result.values[i])
+					: result.values[i];
+			applySlot(slot, node, value, cleanups, mounted, queue);
 		}
 	}
 
@@ -300,8 +304,15 @@ function applyTextSlot(
 		// fragment, so defer to the root's flush. One wrapper carries them, and
 		// it returns nothing — the real teardowns go to `localCleanups`, not to
 		// the root.
+		//
+		// The wrapper also marks this render's queue flushed. A slot nested in
+		// it holds that queue, and when it swaps its content later it has to
+		// know the flush already happened — left `false`, its hooks were pushed
+		// onto a list nobody would drain again, and a component it built never
+		// ran its `onMount`.
 		const pending = own.hooks;
 		queue.hooks.push(() => {
+			own.flushed = true;
 			runMountHooks(pending.splice(0), localCleanups);
 		});
 	}

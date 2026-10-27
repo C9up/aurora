@@ -20,7 +20,7 @@
  */
 
 import { AuroraError } from "./errors.js";
-import { setOwner } from "./reactive.js";
+import { isSignal, setOwner } from "./reactive.js";
 import type { Disposer } from "./render.js";
 import type { EffectCallback, TemplateResult } from "./types.js";
 
@@ -29,19 +29,138 @@ import type { EffectCallback, TemplateResult } from "./types.js";
  * surrounding `render()` can dispose everything when the component
  * unmounts. The stack lets `component()` nest safely.
  */
-interface ComponentContext {
+class ComponentContext {
 	/** Cleanup functions to run at unmount. `onUnmount` pushes here. */
-	readonly cleanups: Disposer[];
+	readonly cleanups: Disposer[] = [];
 	/** Mount hooks queued via `onMount` — flushed after setup returns. */
-	readonly mountHooks: Array<EffectCallback>;
+	readonly mountHooks: Array<EffectCallback> = [];
 	/** Values this component provided, by context key. Empty for most. */
-	readonly provided: Map<symbol, unknown>;
+	readonly provided = new Map<symbol, unknown>();
+
+	/**
+	 * @param above The nearest component above this one that provided
+	 *   something, when it was created. `inject` walks these links, and `html`
+	 *   keeps one of them for its accessors — one reference, not a copy of the
+	 *   stack.
+	 */
+	constructor(readonly above: ComponentContext | undefined) {}
 }
 
 const contextStack: ComponentContext[] = [];
 
+/**
+ * The providers an accessor was written under, while the renderer calls it.
+ *
+ * A reactive slot is called LATER than the setup it was written in — when the
+ * renderer mounts it, and again each time what it reads changes — and by then
+ * that setup has returned and its frame is off the stack. `html` records the
+ * nearest provider it was called under (see {@link rememberContext}), and the
+ * renderer puts it back here around each call, so a part built inside the
+ * accessor still reaches it:
+ *
+ *     SelectContent({ children: () => html`${() => roles().map((r) => SelectItem(…))}` })
+ *
+ * Only `inject` reads it. `provide`, `onMount` and `onUnmount` still need a
+ * component of their own: an accessor is not one, and letting it register
+ * hooks on the provider would pile a new set onto it at every re-run.
+ */
+let ambient: ComponentContext | undefined;
+
+/**
+ * How much of the stack belongs to whoever is rendering, under the accessor
+ * running now: frames below it are invisible to the accessor, which was
+ * written somewhere else.
+ */
+let stackBase = 0;
+
+/** The nearest component in reach that provided something. */
+function nearestProvider(): ComponentContext | undefined {
+	const top =
+		contextStack.length > stackBase
+			? contextStack[contextStack.length - 1]
+			: undefined;
+	if (top === undefined) return ambient;
+	return top.provided.size > 0 ? top : top.above;
+}
+
+/**
+ * Where a template keeps the provider its accessors were written under: a
+ * property on the result itself, which the renderer reads once per template
+ * — measurably cheaper there than a WeakMap lookup.
+ */
+const TEMPLATE_PROVIDER: unique symbol = Symbol("aurora:template-provider");
+
+/** The provider `result`'s accessors were written under, if any. */
+function templateProvider(
+	result: TemplateResult,
+): ComponentContext | undefined {
+	const provider: unknown = Reflect.get(result, TEMPLATE_PROVIDER);
+	return provider instanceof ComponentContext ? provider : undefined;
+}
+
+/**
+ * @internal Called by `html`: record the nearest provider, when the template
+ * holds a function the renderer will call later. Nothing is kept under no
+ * provider, nor for a template with no function in it.
+ */
+export function rememberContext(
+	result: TemplateResult,
+	values: readonly unknown[],
+): void {
+	const provider = nearestProvider();
+	if (provider === undefined) return;
+	for (const value of values) {
+		if (typeof value === "function") {
+			Reflect.set(result, TEMPLATE_PROVIDER, provider);
+			return;
+		}
+	}
+}
+
+/** @internal Whether `result`'s accessors were written under a provider. */
+export function hasTemplateContext(result: TemplateResult): boolean {
+	return templateProvider(result) !== undefined;
+}
+
+/** @internal Run `fn` with the providers `result` was written under in reach. */
+export function runInTemplateContext<T>(
+	result: TemplateResult,
+	fn: () => T,
+): T {
+	const provider = templateProvider(result);
+	if (provider === undefined) return fn();
+	const saved = ambient;
+	const savedBase = stackBase;
+	ambient = provider;
+	stackBase = contextStack.length;
+	try {
+		return fn();
+	} finally {
+		ambient = saved;
+		stackBase = savedBase;
+	}
+}
+
+/**
+ * @internal A slot value bound to the template it came from: a plain function
+ * comes back wrapped so every call — the first and each re-run — happens in
+ * that template's context. Anything else comes back as it was.
+ */
+export function bindTemplateContext(
+	result: TemplateResult,
+	value: unknown,
+): unknown {
+	if (typeof value !== "function" || isSignal(value)) return value;
+	if (templateProvider(result) === undefined) return value;
+	return (): unknown =>
+		runInTemplateContext(result, () => Reflect.apply(value, undefined, []));
+}
+
 function activeContext(): ComponentContext {
-	const ctx = contextStack[contextStack.length - 1];
+	const ctx =
+		contextStack.length > stackBase
+			? contextStack[contextStack.length - 1]
+			: undefined;
 	if (!ctx) {
 		throw new AuroraError(
 			"E_AURORA_OUTSIDE_COMPONENT",
@@ -63,11 +182,7 @@ export function component<P = Record<string, never>>(
 	setup: (props: P) => TemplateResult,
 ): (props?: P) => TemplateResult {
 	return (props?: P) => {
-		const ctx: ComponentContext = {
-			cleanups: [],
-			mountHooks: [],
-			provided: new Map(),
-		};
+		const ctx = new ComponentContext(nearestProvider());
 		contextStack.push(ctx);
 		// Own the reactive scope of setup: effects/memos created here register
 		// their disposer into ctx.cleanups and tear down at unmount, instead of
@@ -151,9 +266,12 @@ export function provide<T>(context: Context<T>, value: T): T {
  * for its own subtree, which is what a reader of the markup would expect.
  */
 export function inject<T>(context: Context<T>): T {
-	for (let i = contextStack.length - 1; i >= 0; i -= 1) {
-		const frame = contextStack[i];
-		if (frame?.provided.has(context.key) === true) {
+	for (
+		let frame = nearestProvider();
+		frame !== undefined;
+		frame = frame.above
+	) {
+		if (frame.provided.has(context.key)) {
 			return frame.provided.get(context.key) as T;
 		}
 	}
