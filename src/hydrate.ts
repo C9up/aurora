@@ -21,12 +21,16 @@
  */
 
 import { bindTemplateContext, readComponentLifecycle } from "./component.js";
+import { type EachList, readEach } from "./each.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { withIdScope } from "./id.js";
-import { effect, isSignal } from "./reactive.js";
+import { effect, isSignal, signal } from "./reactive.js";
 import {
+	bindEach,
 	type Disposer,
+	type EachRow,
+	eachNodes,
 	type MountQueue,
 	mount,
 	runMountHooks,
@@ -143,6 +147,12 @@ function renderValueToNodes(
 	doc: Document,
 ): ChildNode[] {
 	if (value === null || value === undefined || value === false) return [];
+	const list = readEach(value);
+	if (list !== undefined) {
+		return eachNodes(list, cleanups, queue, doc, (rowValue, c, q) =>
+			renderValueToNodes(rowValue, c, q, doc),
+		);
+	}
 	if (Array.isArray(value)) {
 		const out: ChildNode[] = [];
 		for (const item of value) {
@@ -154,8 +164,8 @@ function renderValueToNodes(
 		// Collect into the queue we were handed. Whoever calls this owns the
 		// queue, because only they know when the nodes reach the document —
 		// an `onMount` that measures or positions has to see a live node.
-		const frag = mount(value, cleanups, [], queue);
-		return Array.from(frag.childNodes);
+		const { fragment } = mount(value, cleanups, queue);
+		return Array.from(fragment.childNodes);
 	}
 	if (value instanceof Node) return [value as ChildNode];
 	return [doc.createTextNode(String(value))];
@@ -177,11 +187,11 @@ function hydrateReactiveStructured(
 	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
-	const { start, end } = pair;
-	let currentNodes: ChildNode[] = [];
-	for (let n = start.nextSibling; n !== null && n !== end; n = n.nextSibling) {
-		currentNodes.push(n as ChildNode);
-	}
+	const { end } = pair;
+	// Only for the first run, which adopts them; released after it, or the
+	// effect would hold the server's page for as long as the root lives — long
+	// after a swap removed it.
+	let serverNodes = rangeOf(pair);
 	let localCleanups: Disposer[] = [];
 	let firstRun = true;
 
@@ -201,17 +211,28 @@ function hydrateReactiveStructured(
 			// its subscription until the whole page unmounted — and the swap
 			// that removed its nodes never told it so.
 			const own: MountQueue = { hooks: [], flushed: queue.flushed };
-			if (isTemplateResult(next)) {
+			const list = readEach(next);
+			if (list !== undefined) {
+				// A keyed list the accessor returned: adopt the server's rows in this
+				// range and keep them by key until the accessor swaps it out.
+				bindEach(list, end, localCleanups, own, {
+					build: (value, rowCleanups, rowQueue) =>
+						renderValueToNodes(value, rowCleanups, rowQueue, markerCursor.doc),
+					adopt: (items) =>
+						adoptEachRows(list, items, rangeOf(pair), own, markerCursor),
+				});
+			} else if (isTemplateResult(next)) {
 				hydrateTemplateResult(
 					next,
-					currentNodes,
+					serverNodes,
 					localCleanups,
 					own,
 					markerCursor,
 				);
 			} else if (Array.isArray(next)) {
-				hydrateArrayItems(next, currentNodes, localCleanups, own, markerCursor);
+				hydrateArrayItems(next, serverNodes, localCleanups, own, markerCursor);
 			}
+			serverNodes = [];
 			// The nodes are the server's and already in the document, so the
 			// hooks could run now — but the root has not finished adopting the
 			// tree, and an `onMount` that reads a sibling must not see a half
@@ -231,8 +252,7 @@ function hydrateReactiveStructured(
 		// into the same marker range.
 		for (const d of localCleanups) d();
 		localCleanups = [];
-		for (const n of currentNodes) n.remove();
-		currentNodes = [];
+		clearRange(pair);
 		const parent = end.parentNode;
 		if (parent === null) return;
 		// This slot's own queue, inheriting `flushed`. Handing the root's list
@@ -249,7 +269,6 @@ function hydrateReactiveStructured(
 			markerCursor.doc,
 		);
 		for (const n of fresh) parent.insertBefore(n, end);
-		currentNodes = fresh;
 		if (own.flushed) {
 			// After insertion, as at the root. The teardowns go to this slot's
 			// cleanups: the next swap must dispose what it replaces.
@@ -270,6 +289,26 @@ function hydrateReactiveStructured(
 		for (const d of localCleanups) d();
 		localCleanups = [];
 	});
+}
+
+/**
+ * Remove everything between a slot's markers.
+ *
+ * Not only what the slot last rendered: a slot nested at the head of that
+ * content may have swapped its own nodes since, and those sit in the range
+ * too — removing the first render's nodes left them on screen.
+ */
+function clearRange({ start, end }: MarkerPair): void {
+	// Malformed markup can pair markers across parents; walking siblings from
+	// `start` would then run past the slot.
+	if (start.parentNode === null || start.parentNode !== end.parentNode) return;
+	for (
+		let n = start.nextSibling;
+		n !== null && n !== end;
+		n = start.nextSibling
+	) {
+		n.remove();
+	}
 }
 
 /**
@@ -388,6 +427,109 @@ function hydrateArrayItems(
 }
 
 /**
+ * Wire a keyed list to its SSR range: the first run adopts the server's rows,
+ * each against its own nodes, and every later change keeps rows by key (see
+ * `bindEach`) — a row the server rendered is kept like any other.
+ */
+function hydrateEach(
+	list: EachList,
+	pair: MarkerPair,
+	cleanups: Disposer[],
+	queue: MountQueue,
+	markerCursor: MarkerCursor,
+): void {
+	bindEach(list, pair.end, cleanups, queue, {
+		build: (value, rowCleanups, rowQueue) =>
+			renderValueToNodes(value, rowCleanups, rowQueue, markerCursor.doc),
+		// The range is read when the list adopts — synchronously, on its first
+		// run — not captured beforehand: an array of the server's nodes in this
+		// scope would live as long as `build`, which shares its closure context,
+		// and keep every row the list removes later.
+		adopt: (items) =>
+			adoptEachRows(list, items, rangeOf(pair), queue, markerCursor),
+	});
+}
+
+/** The nodes between a slot's markers, as they stand now. */
+function rangeOf({ start, end }: MarkerPair): ChildNode[] {
+	const range: ChildNode[] = [];
+	for (let n = start.nextSibling; n !== null && n !== end; n = n.nextSibling) {
+		range.push(n as ChildNode);
+	}
+	return range;
+}
+
+/**
+ * Hydrate a keyed list's rows against the server's range, and say which nodes
+ * each row owns — the slicing of `hydrateArrayItems`, kept per row.
+ *
+ * A row owns its raw nodes, inner marker ranges included, so moving it later
+ * moves all of it. Where the browser merged the text at a boundary between two
+ * rows into one node, that node goes to the earlier row.
+ */
+function adoptEachRows(
+	list: EachList,
+	items: readonly unknown[],
+	range: ChildNode[],
+	queue: MountQueue,
+	markerCursor: MarkerCursor,
+): EachRow[] {
+	const nodes = collapseMarkerRanges(range);
+	const rawIndex = new Map<Node, number>();
+	for (const [i, n] of range.entries()) rawIndex.set(n, i);
+
+	const rows: EachRow[] = [];
+	/** Where each row's own nodes start in `range`, or undefined for none. */
+	const starts: Array<number | undefined> = [];
+	let offset = 0;
+	let previousLast: number | null = null;
+	for (const [i, item] of items.entries()) {
+		const row: EachRow = {
+			item: signal(item),
+			index: signal(i),
+			nodes: [],
+			cleanups: [],
+		};
+		const value = list.run(() => list.render(row.item, row.index));
+		const count = liveNodeCount(value);
+		const edges = edgeNodeTypes(value);
+		const merged = previousLast === 3 && edges?.first === 3;
+		if (merged) offset -= 1;
+		const slice = nodes.slice(offset, offset + count);
+		const own: MountQueue = { hooks: [], flushed: queue.flushed };
+		if (isTemplateResult(value)) {
+			hydrateTemplateResult(value, slice, row.cleanups, own, markerCursor);
+		} else if (Array.isArray(value)) {
+			hydrateArrayItems(value, slice, row.cleanups, own, markerCursor);
+		}
+		const pending = own.hooks;
+		queue.hooks.push(() => {
+			own.flushed = true;
+			runMountHooks(pending.splice(0), row.cleanups);
+		});
+		const head = slice[0];
+		const start = head === undefined ? undefined : rawIndex.get(head);
+		starts.push(
+			start === undefined || count === 0 ? undefined : start + (merged ? 1 : 0),
+		);
+		offset += count;
+		if (edges) previousLast = edges.last;
+		rows.push(row);
+	}
+
+	// A row's nodes run from its start to the next row's start.
+	let next = range.length;
+	for (let r = rows.length - 1; r >= 0; r--) {
+		const start = starts[r];
+		const row = rows[r];
+		if (start === undefined || row === undefined) continue;
+		row.nodes = range.slice(start, Math.max(start, next));
+		next = start;
+	}
+	return rows;
+}
+
+/**
  * Adopt SSR markup inside `container`. `factory` is the same function
  * that was rendered server-side — its output (a TemplateResult tree)
  * tells hydrate which slots to wire.
@@ -457,6 +599,10 @@ function hydrateRoot(
 		queue,
 		markerCursor,
 	);
+	// Every slot has taken its pair. The cursor stays reachable from the slots
+	// that swap later (for its document), and pairs found inside a page a slot
+	// replaced would hold that page in memory through their markers.
+	markerCursor.pairs = [];
 	runMountHooks(queue.hooks, cleanups);
 	queue.hooks.length = 0;
 	queue.flushed = true;
@@ -716,6 +862,12 @@ function hydrateTextSlot(
 		return;
 	}
 	markerCursor.i += 1;
+
+	const list = readEach(value);
+	if (list !== undefined) {
+		hydrateEach(list, pair, cleanups, queue, markerCursor);
+		return;
+	}
 
 	const reactiveFn =
 		isSignal(value) || typeof value === "function"

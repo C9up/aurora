@@ -19,6 +19,7 @@
  * actually moves on screen.
  */
 
+import { readEach } from "./each.js";
 import { AuroraError } from "./errors.js";
 import { isSignal, setOwner } from "./reactive.js";
 import type { Disposer } from "./render.js";
@@ -129,6 +130,21 @@ export function runInTemplateContext<T>(
 ): T {
 	const provider = templateProvider(result);
 	if (provider === undefined) return fn();
+	return runUnder(provider, fn);
+}
+
+/**
+ * @internal A runner that puts back the providers in reach NOW, for work done
+ * later — how `each` builds a row added long after the list was written.
+ */
+export function captureContext(): <T>(fn: () => T) => T {
+	const provider = nearestProvider();
+	if (provider === undefined) return (fn) => fn();
+	return (fn) => runUnder(provider, fn);
+}
+
+/** Run `fn` with `provider` as the nearest one in reach. */
+function runUnder<T>(provider: ComponentContext, fn: () => T): T {
 	const saved = ambient;
 	const savedBase = stackBase;
 	ambient = provider;
@@ -152,6 +168,9 @@ export function bindTemplateContext(
 ): unknown {
 	if (typeof value !== "function" || isSignal(value)) return value;
 	if (templateProvider(result) === undefined) return value;
+	// A keyed list captured its context when it was written, and the renderer
+	// knows it by its brand — wrapping it would hide that.
+	if (readEach(value) !== undefined) return value;
 	return (): unknown =>
 		runInTemplateContext(result, () => Reflect.apply(value, undefined, []));
 }

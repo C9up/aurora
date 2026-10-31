@@ -55,6 +55,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_SLOT_IN_HTML_PROPERTY"
 	/** `.value` was given a non-empty string on an `<input type="file">`. */
 	| "E_AURORA_FILE_INPUT_VALUE"
+	/** Two elements of an `each()` list share a key, which names one row. */
+	| "E_AURORA_DUPLICATE_KEY"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */
 	| "E_AURORA_INTERNAL";
 

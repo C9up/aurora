@@ -7,6 +7,8 @@ export default defineConfig({
 		// `tests/browser/**` and runs via `vitest.browser.config.ts` (Playwright/
 		// Chromium) — see the `test:browser` script.
 		include: ["tests/unit/**/*.test.ts"],
+		// `gc()` for the test that checks a replaced page can be collected.
+		execArgv: ["--expose-gc"],
 		coverage: {
 			provider: "v8",
 			include: ["src/**"],
