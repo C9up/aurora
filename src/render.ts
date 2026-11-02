@@ -83,23 +83,35 @@ export function render(
 	const cleanups: Disposer[] = [];
 	const queue: MountQueue = { hooks: [], flushed: false };
 
-	const { fragment, owned: mountedNodes } = mount(result, cleanups, queue);
-	container.appendChild(fragment);
+	// Untracked, hooks included: a root is its own even when an effect renders
+	// it. An overlay renders its content into a portal from the effect that
+	// follows its open state, and what the content read while it was built, or
+	// when it mounted, re-ran that effect.
+	const mountedNodes = untrack(() => {
+		const { fragment, owned } = mount(result, cleanups, queue);
+		container.appendChild(fragment);
 
-	// `onMount` hooks fire after the fragment is live in the document so
-	// callbacks that measure / focus / observe see a real DOM. A returned
-	// cleanup function joins the unmount queue.
-	runMountHooks(queue.hooks, cleanups);
-	queue.hooks = [];
-	// From here on the root never flushes again, so a slot that mounts
-	// something later has to run its own hooks.
-	queue.flushed = true;
+		// `onMount` hooks fire after the fragment is live in the document so
+		// callbacks that measure / focus / observe see a real DOM. A returned
+		// cleanup function joins the unmount queue.
+		runMountHooks(queue.hooks, cleanups);
+		queue.hooks = [];
+		// From here on the root never flushes again, so a slot that mounts
+		// something later has to run its own hooks.
+		queue.flushed = true;
+		return owned;
+	});
 
 	let disposed = false;
 	return () => {
 		if (disposed) return;
 		disposed = true;
-		for (const c of cleanups.splice(0)) c();
+		// Untracked too: the effect that rendered a root usually disposes it at
+		// the start of its next run, and what an `onUnmount` or an `onMount`'s
+		// teardown read there subscribed that effect.
+		untrack(() => {
+			for (const c of cleanups.splice(0)) c();
+		});
 		for (const node of mountedNodes.splice(0)) node.remove();
 	};
 }
@@ -346,7 +358,12 @@ function applyTextSlot(
 
 	if (isSignal(value) || typeof value === "function") {
 		const dispose = effect(() => {
-			set((value as () => unknown)());
+			// Only the accessor is a dependency of the slot. What showing its
+			// value reads — the `onMount` of what it swapped in — belongs to that
+			// component, as a list's rows own theirs (see `bindEach`): tracked
+			// here, it rebuilt everything the slot held each time it changed.
+			const next = (value as () => unknown)();
+			untrack(() => set(next));
 		});
 		// Root disposal tears down the slot's own effect AND whatever
 		// subtree is currently mounted.

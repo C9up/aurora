@@ -21,7 +21,7 @@
 
 import { readEach } from "./each.js";
 import { AuroraError } from "./errors.js";
-import { isSignal, setOwner } from "./reactive.js";
+import { isSignal, setOwner, untrack } from "./reactive.js";
 import type { Disposer } from "./render.js";
 import type { EffectCallback, TemplateResult } from "./types.js";
 
@@ -209,7 +209,12 @@ export function component<P = Record<string, never>>(
 		// scope (or none) resumes. Save/restore handles nested component() calls.
 		const prevOwner = setOwner(ctx.cleanups);
 		try {
-			const result = setup((props ?? ({} as P)) as P);
+			// Untracked: a component is built inside the accessor of the slot that
+			// shows it, and a signal its setup read became a dependency of that
+			// slot — the component updating its own state rebuilt everything the
+			// slot held, often the page. Setup runs once; what it shows follows
+			// its signals through the template's own bindings.
+			const result = untrack(() => setup((props ?? ({} as P)) as P));
 			return wrapWithLifecycle(result, ctx);
 		} finally {
 			setOwner(prevOwner);

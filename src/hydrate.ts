@@ -25,7 +25,7 @@ import { type EachList, readEach } from "./each.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { withIdScope } from "./id.js";
-import { effect, isSignal, signal } from "./reactive.js";
+import { effect, isSignal, signal, untrack } from "./reactive.js";
 import {
 	bindEach,
 	type Disposer,
@@ -195,8 +195,9 @@ function hydrateReactiveStructured(
 	let localCleanups: Disposer[] = [];
 	let firstRun = true;
 
-	const dispose = effect(() => {
-		const next = fn();
+	// Only the accessor is a dependency of the slot. What showing its value
+	// reads — the `onMount` of what it swapped in — belongs to that component.
+	const show = (next: unknown): void => {
 		if (firstRun) {
 			firstRun = false;
 			// Reuse SSR markup: hydrate reactive bindings INSIDE the nested
@@ -282,6 +283,10 @@ function hydrateReactiveStructured(
 				runMountHooks(pending.splice(0), localCleanups);
 			});
 		}
+	};
+	const dispose = effect(() => {
+		const next = fn();
+		untrack(() => show(next));
 	});
 
 	cleanups.push(() => {
@@ -591,21 +596,25 @@ function hydrateRoot(
 		i: 0,
 		doc: container.ownerDocument ?? document,
 	};
-	const result = factory();
-	hydrateTemplateResult(
-		result,
-		Array.from(container.childNodes),
-		cleanups,
-		queue,
-		markerCursor,
-	);
-	// Every slot has taken its pair. The cursor stays reachable from the slots
-	// that swap later (for its document), and pairs found inside a page a slot
-	// replaced would hold that page in memory through their markers.
-	markerCursor.pairs = [];
-	runMountHooks(queue.hooks, cleanups);
-	queue.hooks.length = 0;
-	queue.flushed = true;
+	// Untracked, hooks included, as `render()`: a root is its own even when an
+	// effect hydrates it.
+	untrack(() => {
+		hydrateTemplateResult(
+			factory(),
+			Array.from(container.childNodes),
+			cleanups,
+			queue,
+			markerCursor,
+		);
+		// Every slot has taken its pair. The cursor stays reachable from the
+		// slots that swap later (for its document), and pairs found inside a
+		// page a slot replaced would hold that page in memory through their
+		// markers.
+		markerCursor.pairs = [];
+		runMountHooks(queue.hooks, cleanups);
+		queue.hooks.length = 0;
+		queue.flushed = true;
+	});
 	// The root is adopted: mount hooks have run and every effect is wired.
 	endHydration(container);
 
@@ -613,7 +622,11 @@ function hydrateRoot(
 	return () => {
 		if (disposed) return;
 		disposed = true;
-		for (const c of cleanups.splice(0)) c();
+		// Untracked, as `render()`'s: the teardowns run inside whatever effect
+		// disposes the root.
+		untrack(() => {
+			for (const c of cleanups.splice(0)) c();
+		});
 	};
 }
 
