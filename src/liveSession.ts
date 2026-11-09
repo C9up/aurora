@@ -42,8 +42,12 @@ export interface LiveComponentDefinition {
 export interface LiveSession {
 	/** Initial server-side render (the first full-HTML response). */
 	renderToString(): string;
-	/** Run a named handler (mutates signals); emits a patch for the batch. */
-	dispatch(event: string, payload?: unknown): void;
+	/**
+	 * Run a named handler (mutates signals); emits a patch for the batch.
+	 * Returns false, running nothing, when `event` is not one of the
+	 * definition's own handler functions.
+	 */
+	dispatch(event: string, payload?: unknown): boolean;
 	/** Collect + clear the patches accumulated since the last drain (pull model). */
 	drainPatches(): SlotPatch[];
 	/**
@@ -116,10 +120,15 @@ export function mountLiveSession(
 		// its ids are minted here.
 		renderToString: () => withIdScope(idScope, () => renderToString(view)),
 		dispatch(event, payload) {
+			// Own functions only. The name comes from the client, and looked up
+			// through the prototype chain it reached `constructor`, `toString` and
+			// `__defineGetter__` — and every inherited method of a class instance.
+			if (!Object.hasOwn(handlers, event)) return false;
 			const handler = handlers[event];
-			if (!handler) return;
+			if (typeof handler !== "function") return false;
 			handler(payload);
 			flush(); // synchronous — one patch per dispatch (batches the handler's writes)
+			return true;
 		},
 		drainPatches() {
 			flush();

@@ -55,8 +55,11 @@ export interface LiveStore {
 	readonly channel: string;
 	/** Current shared-state HTML — served to each client that joins. */
 	renderToString(): string;
-	/** Run a handler that mutates the shared state → one broadcast patch. */
-	dispatch(event: string, payload?: unknown): void;
+	/**
+	 * Run a handler that mutates the shared state → one broadcast patch. False
+	 * when the store has no handler of its own by that name.
+	 */
+	dispatch(event: string, payload?: unknown): boolean;
 	/** Stop broadcasting + free the underlying session. */
 	dispose(): void;
 }

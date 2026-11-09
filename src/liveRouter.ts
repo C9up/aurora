@@ -28,9 +28,14 @@ export interface LiveMount {
 
 /**
  * What became of an inbound event. `forbidden` when the caller is not the
- * principal the session was mounted for.
+ * principal the session was mounted for; `unknown-event` when the component
+ * has no handler of its own by that name.
  */
-export type LiveEventOutcome = "handled" | "unknown-session" | "forbidden";
+export type LiveEventOutcome =
+	| "handled"
+	| "unknown-session"
+	| "forbidden"
+	| "unknown-event";
 
 export interface LiveRouter {
 	/**
@@ -91,8 +96,7 @@ export function createLiveRouter(
 			if (!session) return "unknown-session";
 			if (!owns(id, callerId)) return "forbidden";
 			registry.claim(id);
-			session.dispatch(event, payload);
-			return "handled";
+			return session.dispatch(event, payload) ? "handled" : "unknown-event";
 		},
 		authorizeChannel(id, callerId) {
 			// Subscribing is how a client claims the session it was rendered.

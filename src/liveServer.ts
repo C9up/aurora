@@ -10,7 +10,11 @@
  * disconnect is wired by the app: relay's disconnect → `liveRouter.disconnect`.
  */
 
-import type { IdentifyLiveCaller, LiveRouter } from "./liveRouter.js";
+import type {
+	IdentifyLiveCaller,
+	LiveEventOutcome,
+	LiveRouter,
+} from "./liveRouter.js";
 
 /** The slice of the host HTTP router this needs. */
 export interface LiveHttpRouter {
@@ -87,10 +91,19 @@ export function wireLiveEvents(
 			// Not knowing who asks is not permission.
 			callerId = undefined;
 		}
-		const outcome =
-			callerId === undefined || callerId === ""
-				? "forbidden"
-				: live.event(body.id, body.event, body.payload, callerId);
+		let outcome: LiveEventOutcome;
+		try {
+			outcome =
+				callerId === undefined || callerId === ""
+					? "forbidden"
+					: live.event(body.id, body.event, body.payload, callerId);
+		} catch {
+			// A handler that throws is the component's bug, not the client's — and
+			// what it threw stays on the server.
+			ctx.response.status(500);
+			ctx.response.json({ error: "live event failed" });
+			return;
+		}
 		if (outcome === "forbidden") {
 			ctx.response.status(403);
 			ctx.response.json({ error: "forbidden live event" });
@@ -99,6 +112,11 @@ export function wireLiveEvents(
 		if (outcome === "unknown-session") {
 			ctx.response.status(404);
 			ctx.response.json({ error: "unknown live session" });
+			return;
+		}
+		if (outcome === "unknown-event") {
+			ctx.response.status(400);
+			ctx.response.json({ error: "unknown live event" });
 			return;
 		}
 		ctx.response.json({ ok: true });
