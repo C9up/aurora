@@ -64,7 +64,14 @@ export type SlotPosition =
 	 * tag ends the phantom tag — which is exactly the kind of accidental
 	 * correctness that hid the earlier bugs.
 	 */
-	| "raw-text";
+	| "raw-text"
+	/**
+	 * Inside a comment, a bogus comment (`<!x …>`, `<?…>`, `</ …>`, a doctype)
+	 * or a CDATA section. A slot there binds nothing, and the comment aurora
+	 * anchors a text slot with ends the one it sits in — see
+	 * {@link assertBindable}.
+	 */
+	| "comment";
 
 /**
  * The positions a value can actually be written into — what is left once the
@@ -74,8 +81,44 @@ export type SlotPosition =
  */
 export type BindablePosition = Exclude<
 	SlotPosition,
-	"tag-name" | "attribute-name" | "raw-text"
+	"tag-name" | "attribute-name" | "raw-text" | "comment"
 >;
+
+/**
+ * The tokenizer states between a `<` and the tag or comment it opens, and the
+ * comment-like states that follow — named after the WHATWG states they stand
+ * for. Empty in plain text, inside a tag and in raw text, which keep their own
+ * fields.
+ *
+ * Each is stepped one character at a time, so a construct split across two
+ * template strings reads the same as a whole one.
+ */
+type MarkupState =
+	| ""
+	/** After `<`: a letter opens a tag, `/` an end tag, `!` a declaration. */
+	| "tag-open"
+	/** After `</`: a letter opens an end tag, `>` is nothing, else bogus. */
+	| "end-tag-open"
+	/** After `<!`, reading what it declares: `--`, `[CDATA[` or anything else. */
+	| "declaration"
+	/** `<!x`, `<?`, `</ `, a doctype: everything up to the first `>`. */
+	| "bogus-comment"
+	| "comment-start"
+	| "comment-start-dash"
+	| "comment"
+	| "comment-end-dash"
+	| "comment-end"
+	| "comment-end-bang"
+	/** `<![CDATA[` in foreign content, up to `]]>`. */
+	| "cdata"
+	| "cdata-bracket"
+	| "cdata-end";
+
+function isAsciiLetter(char: string): boolean {
+	return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
+}
+
+const CDATA_OPEN = "[CDATA[";
 
 /** The characters that end an unquoted attribute value, plus `>` and `/`. */
 function isSpace(char: string): boolean {
@@ -300,7 +343,9 @@ const TRACKED_PREFIXES: ReadonlySet<string> = prefixesOf([
 ]);
 
 export class TemplateScanner {
-	#inComment = false;
+	#markup: MarkupState = "";
+	/** What a declaration has read after `<!`, while it is still undecided. */
+	#declaration = "";
 	#inTag = false;
 	/** The quote character currently open inside a tag, or empty. */
 	#quote = "";
@@ -313,8 +358,6 @@ export class TemplateScanner {
 	#tag = "";
 	/** Could the name being read still be a raw-text element's? */
 	#tagMayBeRaw = true;
-	/** Has any character of the tag name been read yet? */
-	#sawNameChar = false;
 	/** True while the tag being read is a CLOSING one, which opens nothing. */
 	#closing = false;
 	/** The raw-text element the cursor is inside, or empty. */
@@ -376,13 +419,8 @@ export class TemplateScanner {
 				if (consumed > 0) i += consumed - 1;
 				continue;
 			}
-			if (this.#inComment) {
-				// A comment swallows everything — including a stray `<` or `>`
-				// that would otherwise flip the tag state — up to `-->`.
-				if (char === "-" && chunk[i + 1] === "-" && chunk[i + 2] === ">") {
-					this.#inComment = false;
-					i += 2;
-				}
+			if (this.#markup !== "") {
+				this.#consumeMarkup(char);
 				continue;
 			}
 			if (this.#quote !== "") {
@@ -400,23 +438,122 @@ export class TemplateScanner {
 				this.#consumeInTag(char);
 				continue;
 			}
-			if (
-				char === "<" &&
-				chunk[i + 1] === "!" &&
-				chunk[i + 2] === "-" &&
-				chunk[i + 3] === "-"
-			) {
-				this.#inComment = true;
-				i += 3;
-				continue;
-			}
-			if (char === "<") {
-				this.#inTag = true;
-				this.#beginTagName();
-				this.#attribute = "";
-				this.#type = undefined;
-			}
+			// What `<` opens depends on the character after it, which may be in the
+			// next chunk — so it is a state, not a lookahead.
+			if (char === "<") this.#markup = "tag-open";
 		}
+	}
+
+	/**
+	 * Step the tokenizer states that sit between text and a tag.
+	 *
+	 * They follow the spec rather than the obvious reading, because each place
+	 * the two differ is a place the browser leaves a comment, or never opens a
+	 * tag, while a looser scanner still thinks it is inside one — and calls a
+	 * slot "text" that the browser puts in a live `<script>`. `<!-->` and
+	 * `<!--->` end at once, `--!>` ends a comment as `-->` does, `<!x …`, `<?`
+	 * and `</ ` end at the first `>` whatever quotes they hold, and a `<` before
+	 * anything but a letter, `/`, `!` or `?` is plain text.
+	 */
+	#consumeMarkup(char: string): void {
+		switch (this.#markup) {
+			case "tag-open":
+				if (isAsciiLetter(char)) {
+					this.#openTag(false, char);
+				} else if (char === "/") {
+					this.#markup = "end-tag-open";
+				} else if (char === "!") {
+					this.#markup = "declaration";
+					this.#declaration = "";
+				} else if (char === "?") {
+					this.#markup = "bogus-comment";
+				} else {
+					// Text after all; `<<` leaves the second one opening a tag.
+					this.#markup = char === "<" ? "tag-open" : "";
+				}
+				return;
+			case "end-tag-open":
+				if (isAsciiLetter(char)) this.#openTag(true, char);
+				else this.#markup = char === ">" ? "" : "bogus-comment";
+				return;
+			case "declaration":
+				this.#consumeDeclaration(char);
+				return;
+			case "bogus-comment":
+				if (char === ">") this.#markup = "";
+				return;
+			case "comment-start":
+				this.#markup =
+					char === "-" ? "comment-start-dash" : char === ">" ? "" : "comment";
+				return;
+			case "comment-start-dash":
+				this.#markup =
+					char === "-" ? "comment-end" : char === ">" ? "" : "comment";
+				return;
+			case "comment":
+				if (char === "-") this.#markup = "comment-end-dash";
+				return;
+			case "comment-end-dash":
+				this.#markup = char === "-" ? "comment-end" : "comment";
+				return;
+			case "comment-end":
+				if (char === ">") this.#markup = "";
+				else if (char === "!") this.#markup = "comment-end-bang";
+				else if (char !== "-") this.#markup = "comment";
+				return;
+			case "comment-end-bang":
+				this.#markup =
+					char === "-" ? "comment-end-dash" : char === ">" ? "" : "comment";
+				return;
+			case "cdata":
+				if (char === "]") this.#markup = "cdata-bracket";
+				return;
+			case "cdata-bracket":
+				this.#markup = char === "]" ? "cdata-end" : "cdata";
+				return;
+			case "cdata-end":
+				if (char === ">") this.#markup = "";
+				else if (char !== "]") this.#markup = "cdata";
+				return;
+			case "":
+				return;
+		}
+	}
+
+	/**
+	 * After `<!`: `--` opens a comment, `[CDATA[` a CDATA section in foreign
+	 * content only, and anything else — a doctype included, which ends at its
+	 * first `>` too — a bogus comment.
+	 */
+	#consumeDeclaration(char: string): void {
+		const read = this.#declaration + char;
+		if (read === "--") {
+			this.#markup = "comment-start";
+			return;
+		}
+		if (this.#foreign && read === CDATA_OPEN) {
+			this.#markup = "cdata";
+			return;
+		}
+		if (
+			"--".startsWith(read) ||
+			(this.#foreign && CDATA_OPEN.startsWith(read))
+		) {
+			this.#declaration = read;
+			return;
+		}
+		// What was read so far holds no `>`, so only this character can end it.
+		this.#markup = char === ">" ? "" : "bogus-comment";
+	}
+
+	#openTag(closing: boolean, first: string): void {
+		this.#markup = "";
+		this.#inTag = true;
+		this.#beginTagName();
+		this.#closing = closing;
+		this.#attribute = "";
+		this.#type = undefined;
+		this.#consumeInTag(first);
 	}
 
 	#consumeInTag(char: string): void {
@@ -434,17 +571,10 @@ export class TemplateScanner {
 			return;
 		}
 		if (char === "/") {
-			// The FIRST `/` of a tag opens a closing one. Checked before the
-			// self-closing case, which used to swallow it — so `</svg>` stopped
-			// being read as a closing tag and pushed a second `<svg>` instead,
-			// leaving every following `<title>` inside foreign content.
-			if (this.#part === "tag-name" && !this.#sawNameChar) {
-				this.#closing = true;
-				return;
-			}
-			// Anywhere else outside a value it self-closes the tag, so `<desc/>`
-			// opens nothing to close later. Inside a value it is an ordinary
-			// character — a static `src=/a/b.png` must keep it.
+			// Outside a value it self-closes the tag, so `<desc/>` opens nothing to
+			// close later. Inside a value it is an ordinary character — a static
+			// `src=/a/b.png` must keep it. The `/` of an end tag never gets here:
+			// `</` is read before the tag opens.
 			if (this.#part !== "value") {
 				this.#solidus = true;
 				return;
@@ -452,7 +582,6 @@ export class TemplateScanner {
 		}
 		this.#solidus = false;
 		if (this.#part === "tag-name") {
-			this.#sawNameChar = true;
 			if (!this.#tagMayBeRaw) return;
 			// Lowercased only when it has to be: a template's tag names are almost
 			// always written lowercase, and `toLowerCase` allocates.
@@ -532,7 +661,6 @@ export class TemplateScanner {
 		this.#inTag = true;
 		this.#beginTagName();
 		this.#closing = true;
-		this.#sawNameChar = true;
 		this.#attribute = "";
 		this.#type = undefined;
 		// `<` and `/` and the name; the terminator is read as part of the tag.
@@ -634,7 +762,6 @@ export class TemplateScanner {
 		this.#part = "tag-name";
 		this.#tag = "";
 		this.#tagMayBeRaw = true;
-		this.#sawNameChar = false;
 		this.#closing = false;
 		this.#readingType = false;
 	}
@@ -659,9 +786,10 @@ export class TemplateScanner {
 	/** The kind of position the cursor is in right now. */
 	get position(): SlotPosition {
 		if (this.#rawText !== "" || this.#foreignCode() !== "") return "raw-text";
-		// Inside a comment the markup is inert, so a slot there is text — it
-		// renders into the comment body and binds nothing.
-		if (this.#inComment) return "text";
+		if (this.#markup === "tag-open" || this.#markup === "end-tag-open") {
+			return "tag-name";
+		}
+		if (this.#markup !== "") return "comment";
 		if (!this.#inTag) return "text";
 		if (this.#quote !== "") return "quoted-value";
 		if (this.#part === "tag-name") return "tag-name";
@@ -778,6 +906,16 @@ export function assertBindable(scanner: TemplateScanner): BindablePosition {
 	}
 	if (position === "raw-text") {
 		throw new AuroraError("E_AURORA_SLOT_IN_RAW_TEXT", rawTextMessage(scanner));
+	}
+	if (position === "comment") {
+		// Not merely useless: both paths anchor a text slot with a comment, and its
+		// `-->` ends the one it sits in. The browser then reads the rest of the
+		// author's comment as markup — a `<script>` in it included — while the
+		// scanner, still inside the comment, calls every slot there text.
+		throw new AuroraError(
+			"E_AURORA_SLOT_IN_COMMENT",
+			`[aurora] a ${INTERPOLATION} cannot go inside an HTML comment, a <!…> or <?…> declaration or a CDATA section — it binds nothing there, and the marker aurora writes for it would end the comment early. Move it out of the comment.`,
+		);
 	}
 	const attribute = scanner.attribute;
 	if (attribute.startsWith("on")) {
