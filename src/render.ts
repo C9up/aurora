@@ -18,7 +18,7 @@ import { type EachList, readEach, readEachItems } from "./each.js";
 import { AuroraError } from "./errors.js";
 import { getTemplate } from "./html.js";
 import { effect, isSignal, type Signal, signal, untrack } from "./reactive.js";
-import { assertPropertyValue } from "./templateScanner.js";
+import { assertNotMarkup, assertPropertyValue } from "./templateScanner.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
@@ -669,6 +669,7 @@ function applyAttrSlot(
 	cleanups: Disposer[],
 ): void {
 	function apply(v: unknown): void {
+		assertNotMarkup(v);
 		if (v === null || v === undefined || v === false) {
 			el.removeAttribute(slot.name);
 		} else if (v === true) {
@@ -717,6 +718,7 @@ function applyMultiAttrGroup(
 		let out = group.staticParts[0] ?? "";
 		for (let i = 0; i < group.values.length; i++) {
 			const v = resolveReactive(group.values[i]);
+			assertNotMarkup(v);
 			out += v == null || v === false ? "" : String(v);
 			out += group.staticParts[i + 1] ?? "";
 		}

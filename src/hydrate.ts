@@ -35,7 +35,7 @@ import {
 	mount,
 	runMountHooks,
 } from "./render.js";
-import { assertPropertyValue } from "./templateScanner.js";
+import { assertNotMarkup, assertPropertyValue } from "./templateScanner.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
@@ -733,6 +733,7 @@ function applyMultiAttrGroup(
 			const v = group.values[i];
 			const resolved =
 				isSignal(v) || typeof v === "function" ? (v as () => unknown)() : v;
+			assertNotMarkup(resolved);
 			out += resolved == null || resolved === false ? "" : String(resolved);
 			out += group.staticParts[i + 1] ?? "";
 		}
@@ -1038,6 +1039,7 @@ function hydrateAttrSlot(
 	cleanups: Disposer[],
 ): void {
 	function apply(v: unknown): void {
+		assertNotMarkup(v);
 		if (v === null || v === undefined || v === false) {
 			el.removeAttribute(slot.name);
 		} else if (v === true) {

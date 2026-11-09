@@ -53,6 +53,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_SLOT_IN_SCRIPT_SOURCE"
 	/** A `.prop` binding names a property that parses its value as HTML. */
 	| "E_AURORA_SLOT_IN_HTML_PROPERTY"
+	/** A nested `html` template reached an attribute value or `.value`. */
+	| "E_AURORA_TEMPLATE_IN_ATTRIBUTE"
 	/** `.value` was given a non-empty string on an `<input type="file">`. */
 	| "E_AURORA_FILE_INPUT_VALUE"
 	/** Two elements of an `each()` list share a key, which names one row. */

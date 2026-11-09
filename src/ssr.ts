@@ -14,6 +14,7 @@ import {
 	assertBindable,
 	assertBindableProperty,
 	assertInputValue,
+	assertNotMarkup,
 	type BindablePosition,
 	TemplateScanner,
 } from "./templateScanner.js";
@@ -265,7 +266,7 @@ function stringifyTemplate(result: TemplateResult): string {
 			} else if (valueElement === "textarea") {
 				// Escaped for text, not for an attribute, and emitted once the tag
 				// closes — see `pendingContent`.
-				pendingContent = stringifyValue(values[i], "text");
+				pendingContent = stringifyValue(values[i], "text", false);
 			}
 		}
 		if (i < values.length && !skipValue) {
@@ -470,29 +471,45 @@ function attributeSpelling(
 	return match[1]?.toLowerCase() === attribute ? match[0] : undefined;
 }
 
-function stringifyValue(value: unknown, context: BindablePosition): string {
+/**
+ * `markup` says whether a nested template may be written as markup: only in a
+ * text region, which is why it defaults to that. A textarea's `.value` is text
+ * escaped for text, and still no place for markup.
+ */
+function stringifyValue(
+	value: unknown,
+	context: BindablePosition,
+	markup: boolean = context === "text",
+): string {
 	if (value === null || value === undefined || value === false) return "";
 	// "true", as the client writes it into a value it joins with static text or
 	// assigns to `.value`. A slot that is the whole value is handled before this.
 	if (value === true) return "true";
-	if (isSignal(value)) return stringifyValue(value(), context);
+	if (isSignal(value)) return stringifyValue(value(), context, markup);
 	if (typeof value === "function") {
 		// A function here is a reactive expression — `class="${() => …}"` in an
 		// attribute, `${() => …}` in text — and is evaluated eagerly
 		// server-side. Directive values (`@click`, `?disabled`, `.prop`) never
 		// reach this point: the scanner skips them, whatever quoting they use.
+		// Only the call is fail-soft — a refusal of what it returned is not a
+		// render error to swallow.
+		let resolved: unknown;
 		try {
-			return stringifyValue((value as () => unknown)(), context);
+			resolved = Reflect.apply(value, undefined, []);
 		} catch {
 			return "";
 		}
+		return stringifyValue(resolved, context, markup);
 	}
 	if (Array.isArray(value)) {
 		let out = "";
-		for (const item of value) out += stringifyValue(item, context);
+		for (const item of value) out += stringifyValue(item, context, markup);
 		return out;
 	}
-	if (isTemplateResult(value)) return stringifyTemplateResult(value);
+	if (isTemplateResult(value)) {
+		if (!markup) assertNotMarkup(value);
+		return stringifyTemplateResult(value);
+	}
 	// Plain value — escaped for the context it is written into. The URL decision
 	// is NOT made here: it needs the whole attribute value, and only the caller
 	// has that, once it has held the value to its end.

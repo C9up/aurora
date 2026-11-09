@@ -29,6 +29,7 @@
  */
 
 import { AuroraError } from "./errors.js";
+import { isTemplateResult } from "./types.js";
 import { SOURCE_ELEMENTS } from "./urlGuard.js";
 
 /**
@@ -883,9 +884,34 @@ export function assertPropertyValue(
 	property: string,
 	value: unknown,
 ): void {
-	if (property === "value" && element.localName === "input") {
+	if (property !== "value") return;
+	assertNotMarkup(value);
+	if (element.localName === "input") {
 		assertInputValue(element.getAttribute("type"), value);
 	}
+}
+
+/**
+ * Refuse a nested template where only a string can go: an attribute value or
+ * `.value`.
+ *
+ * Markup has no meaning there, and the two paths each did something wrong with
+ * it. The server spliced the template's markup into the value as is — escaped
+ * for TEXT, so a quote in the data ended the attribute and the rest of it became
+ * a handler, live before hydration — and the client wrote "[object Object]".
+ * Arrays are searched, since the server joins one into the value.
+ */
+export function assertNotMarkup(value: unknown): void {
+	if (!holdsTemplate(value)) return;
+	throw new AuroraError(
+		"E_AURORA_TEMPLATE_IN_ATTRIBUTE",
+		"[aurora] a nested html`…` template cannot be an attribute value or a .value — markup has no meaning there. Pass a string; for a prop typed string | template, bind the string form to the attribute.",
+	);
+}
+
+function holdsTemplate(value: unknown): boolean {
+	if (isTemplateResult(value)) return true;
+	return Array.isArray(value) && value.some(holdsTemplate);
 }
 
 /**
