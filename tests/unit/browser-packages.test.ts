@@ -47,6 +47,96 @@ describe("aurora > browser packages", () => {
 		);
 	});
 
+	function writeManifest(name: string, exportsField: unknown): void {
+		writeFileSync(
+			join(pkgRoot, "package.json"),
+			JSON.stringify({ name, exports: exportsField }),
+		);
+	}
+
+	it("maps the browser build a package declares, not its Node entry", () => {
+		// rosetta's shape: `import` listed BEFORE `browser`, and the `import`
+		// file reaches for a loader on disk. Mapping it left the page unable to
+		// load the module at all.
+		writeManifest("@c9up/rosetta", {
+			".": {
+				types: "./dist/index.d.ts",
+				import: "./dist/index.js",
+				browser: "./dist/index.browser.js",
+			},
+			"./provider": { import: "./dist/RosettaProvider.js" },
+		});
+		const pkg = resolveBrowserPackage(
+			"@c9up/rosetta",
+			"/__assets",
+			join(pkgRoot, "dist"),
+		);
+		expect(pkg?.entry).toBe("/__assets/rosetta/dist/index.browser.js");
+	});
+
+	it("falls back to the import entry, then to dist/index.js", () => {
+		writeManifest("@c9up/comet", {
+			".": { types: "./dist/index.d.ts", import: "./dist/main.js" },
+		});
+		expect(
+			resolveBrowserPackage("@c9up/comet", "/__assets", join(pkgRoot, "dist"))
+				?.entry,
+		).toBe("/__assets/comet/dist/main.js");
+
+		// A package linked from a workspace exports TypeScript source, which no
+		// browser runs: the convention stands.
+		writeManifest("@c9up/comet", {
+			".": { types: "./src/index.ts", import: "./src/index.ts" },
+		});
+		expect(
+			resolveBrowserPackage("@c9up/comet", "/__assets", join(pkgRoot, "dist"))
+				?.entry,
+		).toBe("/__assets/comet/dist/index.js");
+
+		// A package whose manifest says nothing usable keeps the convention.
+		writeManifest("@c9up/comet", { "./client": "./dist/client.js" });
+		expect(
+			resolveBrowserPackage("@c9up/comet", "/__assets", join(pkgRoot, "dist"))
+				?.entry,
+		).toBe("/__assets/comet/dist/index.js");
+	});
+
+	it("reads nested conditions, a bare conditions object, and a string", () => {
+		writeManifest("@c9up/atom", {
+			browser: { import: "./dist/browser/index.js", default: "./x.js" },
+			import: "./dist/index.js",
+		});
+		expect(
+			resolveBrowserPackage("@c9up/atom", "/__assets", join(pkgRoot, "dist"))
+				?.entry,
+		).toBe("/__assets/atom/dist/browser/index.js");
+
+		writeManifest("@c9up/atom", "./dist/atom.js");
+		expect(
+			resolveBrowserPackage("@c9up/atom", "/__assets", join(pkgRoot, "dist"))
+				?.entry,
+		).toBe("/__assets/atom/dist/atom.js");
+	});
+
+	it("only reads the manifest that names the package", () => {
+		// A package.json further up that belongs to something else (the app,
+		// a workspace root) must not decide this package's entry.
+		writeManifest("some-app", { ".": { browser: "./dist/app.js" } });
+		expect(
+			resolveBrowserPackage("@c9up/comet", "/__assets", join(pkgRoot, "dist"))
+				?.entry,
+		).toBe("/__assets/comet/dist/index.js");
+	});
+
+	it("refuses a browser entry outside the served dist", () => {
+		// The mount publishes dist/ and nothing else: mapping a file outside it
+		// would hand the browser a URL that 404s.
+		writeManifest("@c9up/atom", { ".": { browser: "./browser/index.js" } });
+		expect(() =>
+			resolveBrowserPackage("@c9up/atom", "/__assets", join(pkgRoot, "dist")),
+		).toThrow(/outside the directory aurora serves/);
+	});
+
 	it("finds a wasm sibling when there is one, and reports none when there is not", () => {
 		const without = resolveBrowserPackage(
 			"@c9up/comet",

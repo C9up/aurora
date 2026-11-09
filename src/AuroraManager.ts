@@ -76,8 +76,11 @@ export interface AuroraManagerConfig {
 	 *   browserPackages: ['@c9up/atom']
 	 *
 	 * Each resolved package gets `<assetsPrefix>/<name>/dist/*`, a `wasm/*`
-	 * route when it has one, and an importmap entry. A package that is not
-	 * installed is skipped in silence, as the built-in two are.
+	 * route when it has one, and an importmap entry. The entry is the file the
+	 * package's `exports["."]` declares under `browser`, else under `import`,
+	 * else `dist/index.js` — so a package with a separate browser build needs no
+	 * hand-written `importmap`. A package that is not installed is skipped in
+	 * silence, as the built-in two are.
 	 */
 	browserPackages?: string[];
 	/**

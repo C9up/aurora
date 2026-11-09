@@ -19,8 +19,16 @@
  * publish `index.*.node` — server-only binaries, tens of megabytes of them.
  */
 
-import { existsSync } from "node:fs";
-import { basename, resolve as resolvePath } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import {
+	basename,
+	dirname,
+	isAbsolute,
+	join,
+	relative,
+	resolve as resolvePath,
+	sep,
+} from "node:path";
 import { packageAssetDir } from "./server/serveAssets.js";
 
 /** A package resolved for browser delivery. */
@@ -35,8 +43,129 @@ export interface BrowserPackage {
 	readonly distRoot: string;
 	/** Absolute `wasm/` sibling, or `null` when the package has none. */
 	readonly wasmRoot: string | null;
-	/** Where the importmap should point: into `dist/`. */
+	/**
+	 * Where the importmap should point: into `dist/`, at the file the package
+	 * declares for the browser (see {@link browserEntryFile}).
+	 */
 	readonly entry: string;
+}
+
+/**
+ * The conditions an importmap entry is resolved with, MOST preferred first.
+ *
+ * Preference, not the order of the package's keys. Node's algorithm takes the
+ * first key of `exports` that is in the active set, so `{ import, browser }`
+ * hands a bundler the `import` file. An importmap is read by a browser and
+ * nothing else, so a `browser` file the package ships wins wherever it is
+ * listed: the `import` entry of a package that has a separate browser build is
+ * the one that reaches for `node:fs`.
+ */
+const ENTRY_CONDITIONS = ["browser", "import", "default"] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A browser runs JavaScript. A package linked from a workspace exports its
+ * TypeScript source (`./src/index.ts`), which is no entry for an importmap, so
+ * such a target is passed over rather than mapped.
+ */
+const JAVASCRIPT = /\.m?js$/;
+
+/** One `exports` target, narrowed by {@link ENTRY_CONDITIONS}. */
+function resolveTarget(target: unknown): string | null {
+	if (typeof target === "string")
+		return JAVASCRIPT.test(target) ? target : null;
+	if (Array.isArray(target)) {
+		for (const candidate of target) {
+			const resolved = resolveTarget(candidate);
+			if (resolved !== null) return resolved;
+		}
+		return null;
+	}
+	if (!isRecord(target)) return null;
+	for (const condition of ENTRY_CONDITIONS) {
+		if (condition in target) {
+			const resolved = resolveTarget(target[condition]);
+			if (resolved !== null) return resolved;
+		}
+	}
+	return null;
+}
+
+/**
+ * The `"."` target of an `exports` field: a bare string, a conditions object,
+ * or a subpath map holding `"."`.
+ */
+function rootExport(exportsField: unknown): string | null {
+	if (!isRecord(exportsField)) return resolveTarget(exportsField);
+	const keys = Object.keys(exportsField);
+	const isSubpathMap = keys.some((key) => key.startsWith("."));
+	return resolveTarget(isSubpathMap ? exportsField["."] : exportsField);
+}
+
+/**
+ * The package's own directory, found by walking up from its served `dist/` to
+ * the `package.json` that names it.
+ *
+ * Not `import.meta.resolve(`${specifier}/package.json`)`: a package whose
+ * `exports` does not list `./package.json` refuses that, and every `@c9up`
+ * package is one of them.
+ */
+function findPackageJson(
+	specifier: string,
+	from: string,
+): { root: string; manifest: Record<string, unknown> } | null {
+	let dir = from;
+	for (;;) {
+		const file = join(dir, "package.json");
+		if (existsSync(file)) {
+			try {
+				const manifest: unknown = JSON.parse(readFileSync(file, "utf8"));
+				if (isRecord(manifest) && manifest.name === specifier) {
+					return { root: dir, manifest };
+				}
+			} catch {
+				// An unreadable manifest on the way up is not this package's.
+			}
+		}
+		const parent = dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
+}
+
+/**
+ * The absolute file the importmap entry must point at, or `null` when the
+ * package says nothing usable (no manifest found, no `exports`).
+ */
+function browserEntryFile(specifier: string, distRoot: string): string | null {
+	const found = findPackageJson(specifier, distRoot);
+	if (found === null) return null;
+	const target = rootExport(found.manifest.exports);
+	return target === null ? null : resolvePath(found.root, target);
+}
+
+/**
+ * The importmap URL for `file`, which has to sit under the served `dist/`:
+ * that directory is all the mount publishes.
+ */
+function entryUrl(
+	specifier: string,
+	assetPath: string,
+	distRoot: string,
+	file: string,
+): string {
+	const inDist = relative(distRoot, file);
+	if (inDist === "" || inDist.startsWith("..") || isAbsolute(inDist)) {
+		throw new Error(
+			`[aurora] "${specifier}" declares its browser entry at "${file}", outside ` +
+				`the directory aurora serves for it ("${distRoot}"). Map it yourself ` +
+				`with \`importmap\` in config/aurora.ts, or ship the entry under dist/.`,
+		);
+	}
+	return `${assetPath}/dist/${inDist.split(sep).join("/")}`;
 }
 
 /**
@@ -59,6 +188,10 @@ export function resolveBrowserPackage(
 	const slug = basename(specifier);
 	const assetPath = `${assetsPrefix}/${slug}`;
 	const wasmCandidate = resolvePath(distRoot, "..", "wasm");
+	// Read out of the package's `exports`, never assumed: `dist/index.js` is
+	// the NODE entry of a package that ships a separate browser build, and
+	// mapping it left the page importing `node:fs`.
+	const entryFile = browserEntryFile(specifier, distRoot);
 	return {
 		specifier,
 		slug,
@@ -68,7 +201,10 @@ export function resolveBrowserPackage(
 		// between releases, and a list here would be one more thing to keep in
 		// step with packages aurora does not own.
 		wasmRoot: existsSync(wasmCandidate) ? wasmCandidate : null,
-		entry: `${assetPath}/dist/index.js`,
+		entry:
+			entryFile === null
+				? `${assetPath}/dist/index.js`
+				: entryUrl(specifier, assetPath, distRoot, entryFile),
 	};
 }
 
