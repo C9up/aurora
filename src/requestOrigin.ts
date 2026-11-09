@@ -101,3 +101,19 @@ export function isSameOriginAsPage(url: string): boolean {
 	if (page === null) return false;
 	return originOf(url) === page;
 }
+
+/**
+ * Do two base URLs send requests to the same origin?
+ *
+ * Two that name no host both resolve against the page, so they agree even
+ * where there is no page to ask. Otherwise both are resolved, and an origin
+ * that cannot be worked out agrees with nothing.
+ */
+export function isSameBaseOrigin(a: string, b: string): boolean {
+	const ownA = carriesOwnAuthority(a);
+	const ownB = carriesOwnAuthority(b);
+	if (!ownA && !ownB) return true;
+	const originA = ownA ? originOf(a) : pageOrigin();
+	const originB = ownB ? originOf(b) : pageOrigin();
+	return originA !== null && originA === originB;
+}

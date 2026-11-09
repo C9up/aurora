@@ -21,7 +21,11 @@
  * Workers, Bun, Deno). Part of the client barrel.
  */
 
-import { carriesOwnAuthority, isCrossOriginRequest } from "./requestOrigin.js";
+import {
+	carriesOwnAuthority,
+	isCrossOriginRequest,
+	isSameBaseOrigin,
+} from "./requestOrigin.js";
 import { type XsrfOptions, xsrfHeaderFor } from "./xsrf.js";
 
 export interface HttpClientOptions extends XsrfOptions {
@@ -318,12 +322,38 @@ export class HttpClient {
 		}
 	}
 
-	/** Derive a new client with merged defaults (e.g. a scope that adds a token). */
+	/**
+	 * Derive a new client with merged defaults (e.g. a scope that adds a token).
+	 *
+	 * The inherited credentials — the token, an `Authorization` /
+	 * `Proxy-Authorization` header, an XSRF header — stay behind when the new
+	 * `baseURL` is on another origin: they were issued for this client's, and
+	 * the child's requests to its own baseURL look same-origin to the
+	 * per-request check. Pass them in `options`, or set `allowCrossOriginAuth`,
+	 * to send them there on purpose. `token: null` means no token.
+	 */
 	extend(options: HttpClientOptions): HttpClient {
+		const baseURL = options.baseURL ?? this.#baseURL;
+		const keepCredentials =
+			options.allowCrossOriginAuth === true ||
+			isSameBaseOrigin(this.#baseURL, baseURL);
+		const inherited = { ...this.#headers };
+		if (!keepCredentials) {
+			for (const name of [
+				"authorization",
+				"proxy-authorization",
+				"x-xsrf-token",
+				"x-csrf-token",
+				this.#xsrf.xsrfHeaderName ?? "",
+			]) {
+				if (name !== "") deleteHeader(inherited, name);
+			}
+		}
+		const inheritedToken = keepCredentials ? this.#token : undefined;
 		return new HttpClient({
-			baseURL: options.baseURL ?? this.#baseURL,
-			headers: { ...this.#headers, ...options.headers },
-			token: options.token ?? this.#token,
+			baseURL,
+			headers: { ...inherited, ...options.headers },
+			token: options.token !== undefined ? options.token : inheritedToken,
 			credentials: options.credentials ?? this.#credentials,
 			timeout: options.timeout ?? this.#timeout,
 			allowCrossOriginAuth:
