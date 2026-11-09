@@ -119,6 +119,7 @@ export {
 export {
 	createLiveRegistry,
 	type LiveRegistry,
+	type LiveRegistryOptions,
 	type LiveSessionHandle,
 } from "./liveRegistry.js";
 export {

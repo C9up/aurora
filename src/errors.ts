@@ -35,6 +35,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_MISSING_ROUTE_PARAMS"
 	/** A live component was mounted before `registry.define()` named it. */
 	| "E_AURORA_UNKNOWN_LIVE_COMPONENT"
+	/** A live session was refused: the registry holds `maxSessions` already. */
+	| "E_AURORA_LIVE_SESSION_LIMIT"
 	/** A relay request came back with a non-2xx status. */
 	| "E_AURORA_RELAY_REQUEST_FAILED"
 	/** A navigation URL failed the same-origin / scheme check. */

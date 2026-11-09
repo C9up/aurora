@@ -90,11 +90,13 @@ export function createLiveRouter(
 			const session = registry.get(id);
 			if (!session) return "unknown-session";
 			if (!owns(id, callerId)) return "forbidden";
+			registry.claim(id);
 			session.dispatch(event, payload);
 			return "handled";
 		},
 		authorizeChannel(id, callerId) {
-			return owns(id, callerId);
+			// Subscribing is how a client claims the session it was rendered.
+			return owns(id, callerId) && registry.claim(id);
 		},
 		ownerOf: (id) => registry.ownerOf(id),
 		disconnect(ownerId) {
