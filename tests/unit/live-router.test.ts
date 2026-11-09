@@ -49,16 +49,18 @@ describe("aurora > live router", () => {
 	it("event routes to the session and broadcasts the patch on its channel", () => {
 		const { router, relay } = setup();
 		const m = router.mount("Counter", "alice");
-		const handled = router.event(m.id, "increment");
-		expect(handled).toBe(true);
+		const handled = router.event(m.id, "increment", undefined, "alice");
+		expect(handled).toBe("handled");
 		expect(relay.sent).toEqual([
 			{ channel: m.channel, data: [{ slot: 0, value: "1" }] },
 		]);
 	});
 
-	it("event for an unknown id returns false and broadcasts nothing", () => {
+	it("event for an unknown id is unknown-session and broadcasts nothing", () => {
 		const { router, relay } = setup();
-		expect(router.event("nope", "increment")).toBe(false);
+		expect(router.event("nope", "increment", undefined, "alice")).toBe(
+			"unknown-session",
+		);
 		expect(relay.sent).toHaveLength(0);
 	});
 
@@ -70,7 +72,10 @@ describe("aurora > live router", () => {
 
 		router.disconnect("alice");
 		expect(reg.size()).toBe(0);
-		expect(router.event(m.id, "increment")).toBe(false); // session gone
+		// Session gone.
+		expect(router.event(m.id, "increment", undefined, "alice")).toBe(
+			"unknown-session",
+		);
 		expect(relay.sent).toHaveLength(0);
 	});
 
@@ -78,9 +83,9 @@ describe("aurora > live router", () => {
 		const { router, relay } = setup();
 		const a = router.mount("Counter", "alice");
 		const b = router.mount("Counter", "bob");
-		router.event(a.id, "increment");
-		router.event(a.id, "increment");
-		router.event(b.id, "increment");
+		router.event(a.id, "increment", undefined, "alice");
+		router.event(a.id, "increment", undefined, "alice");
+		router.event(b.id, "increment", undefined, "bob");
 		// Each session counts independently; broadcasts land on distinct channels.
 		expect(relay.sent).toEqual([
 			{ channel: a.channel, data: [{ slot: 0, value: "1" }] },

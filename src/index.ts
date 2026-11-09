@@ -122,7 +122,10 @@ export {
 	type LiveSessionHandle,
 } from "./liveRegistry.js";
 export {
+	authorizeLiveChannel,
 	createLiveRouter,
+	type IdentifyLiveCaller,
+	type LiveEventOutcome,
 	type LiveMount,
 	type LiveRouter,
 } from "./liveRouter.js";

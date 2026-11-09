@@ -39,6 +39,8 @@ export interface LiveRegistry {
 	mount(name: string, ownerId: string): LiveSessionHandle;
 	/** Look up a live session by instance id. */
 	get(id: string): LiveSession | undefined;
+	/** The owner a session was mounted for, or undefined for an unknown id. */
+	ownerOf(id: string): string | undefined;
 	/** Dispose one session instance (frees its effects). */
 	dispose(id: string): void;
 	/** Dispose EVERY session a given owner opened — call on disconnect. */
@@ -98,6 +100,9 @@ export function createLiveRegistry(): LiveRegistry {
 		},
 		get(id) {
 			return sessions.get(id)?.session;
+		},
+		ownerOf(id) {
+			return sessions.get(id)?.ownerId;
 		},
 		dispose,
 		disposeOwner(ownerId) {

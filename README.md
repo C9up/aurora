@@ -115,9 +115,10 @@ Still intentionally tracked as remaining work:
   cross-origin absolute URLs by default. Set `allowCrossOriginAuth: true` only
   when the external origin is intentional and trusted, or pass an explicit
   per-request `Authorization` header.
-- `wireLiveEvents()` accepts an `authorize(ctx, body)` hook. Use it to bind live
-  event POSTs to the same auth/CSRF/owner policy as the page that mounted the
-  live session.
+- A live session belongs to the principal it was mounted for:
+  `wireLiveEvents(router, live, identify)` answers 403 to any caller `identify`
+  does not resolve to that owner, and `authorizeLiveChannel(live, identify)` is
+  the matching relay authorizer for `live/:id`.
 - `redirect()`, `replace()` and `navigate()` reject `javascript:`, `vbscript:`
   and `data:` URLs.
 - `auroraRoute()` is the legacy low-level route helper. Prefer the provider /

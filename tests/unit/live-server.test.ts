@@ -78,7 +78,7 @@ describe("aurora > wireLiveEvents", () => {
 	it("dispatches a valid POST to the live router and broadcasts", async () => {
 		const { router, relay } = setup();
 		const http = fakeRouter();
-		wireLiveEvents(http, router, () => true);
+		wireLiveEvents(http, router, () => "alice");
 
 		const handler = http.routes.get("/__live/event");
 		expect(handler).toBeDefined();
@@ -96,7 +96,7 @@ describe("aurora > wireLiveEvents", () => {
 	it("rejects a malformed body with 400", async () => {
 		const { router } = setup();
 		const http = fakeRouter();
-		wireLiveEvents(http, router, () => true);
+		wireLiveEvents(http, router, () => "alice");
 		const { ctx, res } = fakeCtx({ nope: true });
 		await http.routes.get("/__live/event")?.(ctx);
 		expect(res.status).toBe(400);
@@ -105,14 +105,14 @@ describe("aurora > wireLiveEvents", () => {
 	it("returns 404 for an unknown session id", async () => {
 		const { router } = setup();
 		const http = fakeRouter();
-		wireLiveEvents(http, router, () => true, { path: "/live" });
+		wireLiveEvents(http, router, () => "alice", { path: "/live" });
 		const { ctx, res } = fakeCtx({ id: "ghost", event: "increment" });
 		await http.routes.get("/live")?.(ctx);
 		expect(res.status).toBe(404);
 	});
 
-	it("rejects the event when the guard throws", async () => {
-		// A guard that throws has not said yes. It used to be able to fail open
+	it("rejects the event when identifying the caller throws", async () => {
+		// Not knowing who asks has not said yes. It used to be able to fail open
 		// through the same branch that treated its absence as permission.
 		const { router, relay } = setup();
 		const http = fakeRouter();
@@ -126,20 +126,18 @@ describe("aurora > wireLiveEvents", () => {
 		expect(relay.sent).toEqual([]);
 	});
 
-	it("rejects a valid live event when the integrated authorize hook denies it", async () => {
+	it("asks the host who the caller is, once per request", async () => {
 		const { router, relay } = setup();
 		const http = fakeRouter();
-		const authorize = vi.fn(() => false);
-		wireLiveEvents(http, router, authorize);
+		const identify = vi.fn((): string | undefined => undefined);
+		wireLiveEvents(http, router, identify);
 		const mount = router.mount("Counter", "alice");
 
 		const { ctx, res } = fakeCtx({ id: mount.id, event: "increment" });
 		await http.routes.get("/__live/event")?.(ctx);
 
-		expect(authorize).toHaveBeenCalledWith(ctx, {
-			id: mount.id,
-			event: "increment",
-		});
+		expect(identify).toHaveBeenCalledWith(ctx);
+		expect(identify).toHaveBeenCalledTimes(1);
 		expect(res.status).toBe(403);
 		expect(res.body).toEqual({ error: "forbidden live event" });
 		expect(relay.sent).toEqual([]);
