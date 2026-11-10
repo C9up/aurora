@@ -53,6 +53,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_SLOT_IN_EVENT_ATTRIBUTE"
 	/** A `${}` landed in `srcdoc`, which an iframe parses as a whole document. */
 	| "E_AURORA_SLOT_IN_SRCDOC"
+	/** A `${}` landed in `<base href>`, which rebases every URL on the page. */
+	| "E_AURORA_SLOT_IN_BASE_URL"
 	/** A `${}` landed in the URL a `<script>` loads its code from. */
 	| "E_AURORA_SLOT_IN_SCRIPT_SOURCE"
 	/** A `.prop` binding names a property that parses its value as HTML. */

@@ -930,6 +930,9 @@ export function assertBindable(scanner: TemplateScanner): BindablePosition {
 			`[aurora] a ${INTERPOLATION} cannot go in "srcdoc" — the iframe decodes that value and parses it as a whole HTML document, so escaping it protects nothing. Point the iframe at a URL you serve.`,
 		);
 	}
+	if (scanner.element === "base" && attribute === "href") {
+		throw new AuroraError("E_AURORA_SLOT_IN_BASE_URL", baseUrlMessage());
+	}
 	if (scanner.element === "script" && SCRIPT_SOURCE_ATTRIBUTES.has(attribute)) {
 		throw new AuroraError(
 			"E_AURORA_SLOT_IN_SCRIPT_SOURCE",
@@ -954,6 +957,15 @@ const SCRIPT_SOURCE_ATTRIBUTES: ReadonlySet<string> = new Set([
 	"href",
 	"xlink:href",
 ]);
+
+/**
+ * `<base href>` decides where every relative URL on the page goes — links,
+ * forms, and the scripts and modules the page loads after it. No scheme check
+ * covers that: an `https://` base on another origin is the attack.
+ */
+function baseUrlMessage(): string {
+	return `[aurora] a ${INTERPOLATION} cannot go in <base href> — it rebases every relative URL on the page, the scripts it loads included, so any value but the one you meant hands the page to whoever chose it. Write the base URL into the template.`;
+}
 
 function scriptSourceMessage(what: string): string {
 	return `[aurora] ${what} on <script> — whatever URL it holds is loaded and run with the page's authority, and no check on the value can tell the script you meant from one the value picked. Write the URL into the template; a script chosen at runtime is a decision for code that creates the element itself.`;
@@ -989,6 +1001,9 @@ export function assertBindableProperty(
 			"E_AURORA_SLOT_IN_HTML_PROPERTY",
 			`[aurora] cannot bind .${property} — it parses its value as HTML, so the value runs as markup, handlers and all. Put the content in the template as a text slot, or pass a nested html\`…\` template.`,
 		);
+	}
+	if (element.toLowerCase() === "base" && name === "href") {
+		throw new AuroraError("E_AURORA_SLOT_IN_BASE_URL", baseUrlMessage());
 	}
 	if (element.toLowerCase() === "script" && name === "src") {
 		throw new AuroraError(

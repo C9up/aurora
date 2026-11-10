@@ -201,3 +201,33 @@ describe("aurora > browser > what the guard must not break", () => {
 		expect(new URL(form.action).pathname).toBe("/search");
 	});
 });
+
+describe("aurora > browser > an SVG animation that sets href", () => {
+	it("animates the link to an inert URL, and a click runs nothing", async () => {
+		const factory = () =>
+			html`<svg width="50" height="50"><a><set attributeName="href" to="${"javascript:window.__auroraSmilProbe()"}" begin="0s"/><rect width="50" height="50"/></a></svg>`;
+		container.innerHTML = renderToString(factory());
+		hydrate(container, factory);
+		expect(auroraWarnings()).toEqual([]);
+		let ran = false;
+		Reflect.set(window, "__auroraSmilProbe", () => {
+			ran = true;
+		});
+		const set = container.querySelector("set");
+		expect(set?.getAttribute("to")).toBe(
+			"unsafe:javascript:window.__auroraSmilProbe()",
+		);
+		// Let the animation apply before reading what the browser animated.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const link = container.querySelector("a");
+		if (!(link instanceof SVGAElement))
+			throw new Error("expected the SVG link");
+		expect(link.href.animVal).toBe(
+			"unsafe:javascript:window.__auroraSmilProbe()",
+		);
+		link.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(ran).toBe(false);
+		Reflect.deleteProperty(window, "__auroraSmilProbe");
+	});
+});

@@ -20,8 +20,10 @@ import {
 } from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
 import {
-	hasUnsafeScheme,
+	isUnsafeUrlValue,
 	isUrlAttribute,
+	isUrlList,
+	neutralizeUrlValue,
 	UNSAFE_URL_PREFIX,
 } from "./urlGuard.js";
 
@@ -69,6 +71,11 @@ export function renderToString(result: TemplateResult): string {
 interface HeldValue {
 	/** The value's markup so far. */
 	markup: string;
+	/** The element and attribute it belongs to, which decide how it is judged. */
+	element: string;
+	attribute: string;
+	/** How its markup is escaped, for a value that has to be rewritten. */
+	context: "quoted-value" | "unquoted-value";
 	/**
 	 * Has a slot contributed to it?
 	 *
@@ -110,11 +117,25 @@ function stringifyTemplate(result: TemplateResult): string {
 	/** Emit the held value, guarded once, and go back to writing straight out. */
 	const release = (): void => {
 		if (held === undefined) return;
-		const { markup, fromSlot } = held;
+		const { markup, fromSlot, element, attribute, context } = held;
 		held = undefined;
-		out += needsNeutralising(markup, fromSlot)
-			? UNSAFE_URL_PREFIX + markup
-			: markup;
+		if (!needsNeutralising(markup, fromSlot, element, attribute)) {
+			out += markup;
+		} else if (isUrlList(element, attribute)) {
+			// Each unsafe item has to be prefixed, so the value is rebuilt — from
+			// what the escapes above stand for, escaped again for where it sits.
+			const value = neutralizeUrlValue(
+				element,
+				attribute,
+				decodeOwnEscapes(markup),
+			);
+			out +=
+				context === "quoted-value"
+					? escapeAttr(value)
+					: escapeUnquotedAttr(value);
+		} else {
+			out += UNSAFE_URL_PREFIX + markup;
+		}
 	};
 
 	/**
@@ -184,7 +205,13 @@ function stringifyTemplate(result: TemplateResult): string {
 			// tail and `valueLength` says how many.
 			const kept = Math.max(text.length - scanner.valueLength, 0);
 			out += text.slice(0, kept);
-			held = { markup: text.slice(kept), fromSlot: false };
+			held = {
+				markup: text.slice(kept),
+				fromSlot: false,
+				element: scanner.element,
+				attribute: scanner.attribute,
+				context: position,
+			};
 			return;
 		}
 		out += text;
@@ -373,10 +400,15 @@ const OWN_ESCAPES: ReadonlyArray<readonly [string, string]> = [
  * for thirteen passes of {@link decodeOwnEscapes} plus a scheme comparison, and a
  * page of four hundred links rendered 57% slower for it.
  */
-function needsNeutralising(markup: string, fromSlot: boolean): boolean {
+function needsNeutralising(
+	markup: string,
+	fromSlot: boolean,
+	element: string,
+	attribute: string,
+): boolean {
 	if (!fromSlot) return false;
 	if (!markup.includes(":") && !markup.includes("&")) return false;
-	return hasUnsafeScheme(decodeOwnEscapes(markup));
+	return isUnsafeUrlValue(element, attribute, decodeOwnEscapes(markup));
 }
 
 function decodeOwnEscapes(markup: string): string {

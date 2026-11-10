@@ -51,12 +51,34 @@ const EXECUTING_SOURCES: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * The SVG animation elements that can set a URL attribute, and the attributes
+ * that carry the value they set it to.
+ *
+ * `<set attributeName="href" to="javascript:…">` gives a link a `javascript:`
+ * target no `href` ever held. Which attribute is animated is not known when the
+ * value is written — `attributeName` may come after it — so these values are
+ * guarded whatever they animate: an opacity never starts with a scheme.
+ */
+const ANIMATION_ELEMENTS: ReadonlySet<string> = new Set(["set", "animate"]);
+const ANIMATION_VALUE_ATTRIBUTES: ReadonlySet<string> = new Set([
+	"to",
+	"from",
+	"by",
+	"values",
+]);
+
+/**
  * The elements whose URL guard depends on their name. The template scanner
  * tracks their names so the server can ask which one a value belongs to.
+ * `meta` for a refresh target in `content`, `base` for the refusal of a dynamic
+ * `href` (see `assertBindable`).
  */
-export const SOURCE_ELEMENTS: ReadonlySet<string> = new Set(
-	EXECUTING_SOURCES.keys(),
-);
+export const SOURCE_ELEMENTS: ReadonlySet<string> = new Set([
+	...EXECUTING_SOURCES.keys(),
+	...ANIMATION_ELEMENTS,
+	"meta",
+	"base",
+]);
 
 /**
  * The DOM properties that write one of those attributes, by the attribute they
@@ -69,6 +91,7 @@ export const SOURCE_ELEMENTS: ReadonlySet<string> = new Set(
  */
 const URL_PROPERTIES: ReadonlyMap<string, string> = new Map([
 	["href", "href"],
+	["content", "content"],
 	["src", "src"],
 	["action", "action"],
 	["formAction", "formaction"],
@@ -123,19 +146,73 @@ export function hasUnsafeScheme(url: string): boolean {
  */
 export function isUrlAttribute(element: string, attribute: string): boolean {
 	const name = attribute.toLowerCase();
+	const tag = element.toLowerCase();
 	return (
 		NAVIGATION_ATTRIBUTES.has(name) ||
-		EXECUTING_SOURCES.get(element.toLowerCase()) === name
+		EXECUTING_SOURCES.get(tag) === name ||
+		(ANIMATION_ELEMENTS.has(tag) && ANIMATION_VALUE_ATTRIBUTES.has(name)) ||
+		(tag === "meta" && name === "content")
+	);
+}
+
+/** Is this an animation's `values`, a `;`-separated list of values? */
+export function isUrlList(element: string, attribute: string): boolean {
+	return (
+		ANIMATION_ELEMENTS.has(element.toLowerCase()) &&
+		attribute.toLowerCase() === "values"
 	);
 }
 
 /**
- * `url` made inert if its scheme executes, untouched otherwise. For a caller
- * that has already established the position navigates — server-side rendering
- * knows it from the scanner before it escapes the value.
+ * The URL a `<meta http-equiv="refresh">` content would navigate to, or null
+ * when the content does not read as a refresh — a description, a viewport.
+ *
+ * Read the way the HTML spec's declarative refresh does, loosely enough to
+ * err towards a refresh: a delay of digits and dots, a `;` or `,`, an optional
+ * `url=`, an optional quote, then the URL. `http-equiv` may come after the
+ * content in the tag, so the content is judged whatever the meta is.
  */
-export function neutralizeUnsafeUrl(url: string): string {
-	return hasUnsafeScheme(url) ? UNSAFE_URL_PREFIX + url : url;
+function refreshTarget(content: string): string | null {
+	const match =
+		/^[\t\n\f\r ]*[0-9.]+[\t\n\f\r ]*[;,]?[\t\n\f\r ]*(?:url[\t\n\f\r ]*=[\t\n\f\r ]*)?["']?([\s\S]*)$/i.exec(
+			content,
+		);
+	return match === null ? null : (match[1] ?? "");
+}
+
+/** Would `value`, in `attribute` on `element`, navigate to a scheme that runs? */
+export function isUnsafeUrlValue(
+	element: string,
+	attribute: string,
+	value: string,
+): boolean {
+	if (isUrlList(element, attribute)) {
+		return value.split(";").some(hasUnsafeScheme);
+	}
+	if (element.toLowerCase() === "meta") {
+		const target = refreshTarget(value);
+		return target !== null && hasUnsafeScheme(target);
+	}
+	return hasUnsafeScheme(value);
+}
+
+/**
+ * `value` made inert if it would navigate to a scheme that runs, untouched
+ * otherwise: prefixed, or, for a list of values, each unsafe item prefixed.
+ */
+export function neutralizeUrlValue(
+	element: string,
+	attribute: string,
+	value: string,
+): string {
+	if (!isUnsafeUrlValue(element, attribute, value)) return value;
+	if (isUrlList(element, attribute)) {
+		return value
+			.split(";")
+			.map((item) => (hasUnsafeScheme(item) ? UNSAFE_URL_PREFIX + item : item))
+			.join(";");
+	}
+	return UNSAFE_URL_PREFIX + value;
 }
 
 /**
@@ -150,7 +227,7 @@ export function guardUrlAttribute(
 	value: string,
 ): string {
 	return isUrlAttribute(element, attribute)
-		? neutralizeUnsafeUrl(value)
+		? neutralizeUrlValue(element, attribute, value)
 		: value;
 }
 
@@ -173,5 +250,7 @@ export function guardUrlProperty(
 	}
 	if (!isUrlAttribute(element, attribute)) return value;
 	const url = String(value);
-	return hasUnsafeScheme(url) ? UNSAFE_URL_PREFIX + url : value;
+	return isUnsafeUrlValue(element, attribute, url)
+		? neutralizeUrlValue(element, attribute, url)
+		: value;
 }
