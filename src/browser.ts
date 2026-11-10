@@ -497,8 +497,13 @@ export const cookie = {
 		}
 		const prefix = `${encodeURIComponent(name)}=`;
 		for (const part of document.cookie.split("; ")) {
-			if (part.startsWith(prefix)) {
+			if (!part.startsWith(prefix)) continue;
+			try {
 				return decodeURIComponent(part.slice(prefix.length));
+			} catch {
+				// A broken escape reads as absent rather than throwing mid-setup —
+				// any script or sibling subdomain can set one. A later cookie of
+				// the same name (another path or domain) may still decode.
 			}
 		}
 		return null;

@@ -99,3 +99,19 @@ describe("aurora > browser > cookie-backed signal hydration (real Chromium)", ()
 		expect(live()).toBe(true);
 	});
 });
+
+describe("aurora > browser > a malformed cookie (real Chromium)", () => {
+	it("reads as absent, so the component hydrates on its initial value", () => {
+		// The broken escape a sibling subdomain could set.
+		document.cookie = "sidebar=%E0%A4%A; path=/";
+		const open = signal(true);
+		const factory = () => {
+			const collapsed = cookieState("sidebar", false, booleanCookie);
+			return html`<aside class="${() => (collapsed() ? "w-16" : "w-64")}"><span>${open}</span></aside>`;
+		};
+		container.innerHTML = renderToString(factory());
+		expect(() => hydrate(container, factory)).not.toThrow();
+		expect(container.querySelector("aside")?.className).toBe("w-64");
+		expect(auroraWarnings()).toEqual([]);
+	});
+});
