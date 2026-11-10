@@ -61,6 +61,14 @@ interface RelayState {
 	uidBound: boolean;
 	/** Channels already warned about for a payload that is not JSON. */
 	undecodable: Set<string>;
+	/**
+	 * Has a stream been reopened for `E_RELAY_NOT_OWNER` since a handshake last
+	 * succeeded? One reopen per refusal, so a server that keeps refusing is not
+	 * hammered with streams.
+	 */
+	reopenedForOwner: boolean;
+	/** The connection caps already warned about since the last `connected`. */
+	capWarned: Set<string>;
 }
 
 const STATE: RelayState = {
@@ -73,7 +81,19 @@ const STATE: RelayState = {
 	reconnectAttempts: 0,
 	uidBound: false,
 	undecodable: new Set(),
+	reopenedForOwner: false,
+	capWarned: new Set(),
 };
+
+/**
+ * The `error` frames relay sends before ending a stream it will not hold: the
+ * instance's cap and the cap per owner. One behaviour for both — the stream
+ * ends, and the reconnect that follows counts as a failed attempt.
+ */
+const CAP_CODES: ReadonlySet<string> = new Set([
+	"E_RELAY_MAX_CLIENTS",
+	"E_RELAY_MAX_CLIENTS_PER_OWNER",
+]);
 
 /** The shape of the uid relay issues: a `randomUUID()`. */
 const UID_PATTERN =
@@ -216,6 +236,8 @@ const CLIENT: RelayClient = {
 		STATE.channels.clear();
 		STATE.attached.clear();
 		STATE.undecodable.clear();
+		STATE.capWarned.clear();
+		STATE.reopenedForOwner = false;
 		STATE.reconnectAttempts = 0;
 	},
 };
@@ -229,6 +251,8 @@ function open(): void {
 	changeStatus("connecting");
 
 	sse.addEventListener("connected", (ev) => {
+		// A stream this client has replaced or given up on speaks for nothing.
+		if (STATE.sse !== sse) return;
 		// One uid per connection: the first `connected` frame of it. A later one
 		// on the same stream is not the server's — a broadcast written raw into
 		// the frame can forge it — and obeying it re-subscribed every channel,
@@ -244,6 +268,7 @@ function open(): void {
 		if (typeof uid === "string" && UID_PATTERN.test(uid)) {
 			STATE.uid = uid;
 			STATE.uidBound = true;
+			STATE.capWarned.clear();
 			// A successful (re)connect clears the failure counter and flips the
 			// status back to `connected`.
 			STATE.reconnectAttempts = 0;
@@ -269,7 +294,28 @@ function open(): void {
 	// `disconnected` → `reconnecting` transition, count attempts, and once the
 	// cap is reached close the stream (stopping the native retry loop) and fire
 	// `onReconnectFailed`.
-	sse.addEventListener("error", () => {
+	sse.addEventListener("error", (ev) => {
+		if (STATE.sse !== sse) return;
+		// A frame the SERVER named `error` arrives on the same listener as the
+		// connection failing, but carries data. It explains the end of the
+		// stream that follows, and that end is what counts as the attempt —
+		// counting both spent the reconnect budget twice as fast.
+		const frame = messageData(ev);
+		if (frame !== null) {
+			const decoded = decodeJson(frame);
+			const code = decoded.ok
+				? Reflect.get(Object(decoded.value), "code")
+				: undefined;
+			if (typeof code === "string" && CAP_CODES.has(code)) {
+				if (!STATE.capWarned.has(code)) {
+					STATE.capWarned.add(code);
+					console.warn(
+						`[aurora/relay] the relay refused the connection (${code}); retrying within the reconnect limit`,
+					);
+				}
+			}
+			return;
+		}
 		// The connection is gone, and its uid with it: the browser's reconnect
 		// reaches a server that issues a new one in its own `connected` frame.
 		// Until then nothing posts under the old uid.
@@ -367,6 +413,9 @@ function postUnsubscribe(channel: string): Promise<void> {
  * which `HttpClient` uses too.
  */
 async function postHandshake(url: string, channel: string): Promise<void> {
+	// The uid this request speaks for, read before the await: the stream may
+	// be replaced while it is in flight.
+	const uid = STATE.uid;
 	const headers: Record<string, string> = {
 		"content-type": "application/json",
 	};
@@ -375,14 +424,53 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 	const res = await fetch(url, {
 		method: "POST",
 		headers,
-		body: JSON.stringify({ uid: STATE.uid, channel }),
+		body: JSON.stringify({ uid, channel }),
 		credentials: "include",
 	});
-	if (!res.ok) {
-		throw new AuroraError(
-			"E_AURORA_RELAY_REQUEST_FAILED",
-			`[aurora:relay] HTTP ${res.status}`,
+	if (res.ok) {
+		STATE.reopenedForOwner = false;
+		return;
+	}
+	const code = await errorCode(res);
+	if (res.status === 403 && code === "E_RELAY_NOT_OWNER") {
+		// Answered for a stream already replaced: the new one subscribes its
+		// channels itself.
+		if (uid !== STATE.uid) return;
+		// The stream is bound to who opened it — here, someone this page no
+		// longer is: it opened before a login, or before the session cookie
+		// existed. A new stream is bound to the current credentials, and its
+		// `connected` frame subscribes every channel again. Once: if that one
+		// is refused too, the refusal is reported rather than retried.
+		if (!STATE.reopenedForOwner) {
+			STATE.reopenedForOwner = true;
+			reopen();
+			return;
+		}
+	}
+	throw new AuroraError(
+		"E_AURORA_RELAY_REQUEST_FAILED",
+		`[aurora:relay] HTTP ${res.status}${code === undefined ? "" : ` ${code}`}`,
+	);
+}
+
+/** Close the stream and open a new one, keeping the channels. */
+function reopen(): void {
+	STATE.sse?.close();
+	STATE.sse = null;
+	open();
+}
+
+/** The `error.code` of a relay error body, if it has one. */
+async function errorCode(res: Response): Promise<string | undefined> {
+	try {
+		const body: unknown = await res.json();
+		const code = Reflect.get(
+			Object(Reflect.get(Object(body), "error")),
+			"code",
 		);
+		return typeof code === "string" ? code : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
