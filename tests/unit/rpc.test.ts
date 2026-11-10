@@ -40,8 +40,20 @@ describe("aurora/rpc > createRpcClient", () => {
 		}));
 		const rpc = createRpcClient();
 
-		const out = await rpc.call<{ valid: boolean }>("task.validate", { id: 7 });
-		expect(out).toEqual({ valid: true });
+		// The result is typed only by a validator that checked it.
+		const out = await rpc.call(
+			"task.validate",
+			{ id: 7 },
+			{
+				parse: (data) => {
+					if (typeof data !== "object" || data === null || !("valid" in data)) {
+						throw new TypeError("not a validation result");
+					}
+					return { valid: data.valid === true };
+				},
+			},
+		);
+		expect(out.valid).toBe(true);
 
 		const init = defined(fetchMock.mock.calls[0])[1];
 		expect(defined(fetchMock.mock.calls[0])[0]).toBe("/rpc");

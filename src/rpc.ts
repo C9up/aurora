@@ -11,8 +11,9 @@
  * importing everything from `@c9up/aurora`.
  *
  *   const rpc = createRpcClient()                              // POST /rpc, same-origin
- *   const result = await rpc.call('task.validate', { id })     // typed via call<T>()
- *   const user = await rpc.call('user.find', { id }, { parse: isUser }) // validated, cast-free
+ *   const result = await rpc.call('task.validate', { id })     // unknown: narrow it
+ *   const user = await rpc.call('user.find', { id }, { parse: toUser }) // typed by parse
+ *   await rpc.notify('audit.log', { event: 'login' })          // no id, no answer
  *   await rpc.call('slow.op', p, { signal: ac.signal })        // abortable
  *
  * Pairs with aurora's `command()` for reactive calls:
