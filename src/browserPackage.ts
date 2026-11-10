@@ -140,8 +140,9 @@ function findPackageJson(
  * The absolute file the importmap entry must point at, or `null` when the
  * package says nothing usable (no manifest found, no `exports`).
  */
-function browserEntryFile(specifier: string, distRoot: string): string | null {
-	const found = findPackageJson(specifier, distRoot);
+function browserEntryFile(
+	found: { root: string; manifest: Record<string, unknown> } | null,
+): string | null {
 	if (found === null) return null;
 	const target = rootExport(found.manifest.exports);
 	return target === null ? null : resolvePath(found.root, target);
@@ -187,11 +188,24 @@ export function resolveBrowserPackage(
 	}
 	const slug = basename(specifier);
 	const assetPath = `${assetsPrefix}/${slug}`;
+	const found = findPackageJson(specifier, distRoot);
+	if (found !== null && resolvePath(found.root) === resolvePath(distRoot)) {
+		// The directory of the entry is what gets mounted, and here it is the
+		// whole package: its manifest, CLI code, `.node` binaries and, for a
+		// workspace-linked package, whatever local files sit beside them. Its
+		// `wasm/` probe would also have looked in node_modules itself.
+		throw new Error(
+			`[aurora] "${specifier}" has its entry at the package root ("${found.root}"), ` +
+				"so serving it would publish the whole package. Leave it out of " +
+				"browserPackages and map it with `importmap` in config/aurora.ts, " +
+				"onto a mount of just the files the browser needs.",
+		);
+	}
 	const wasmCandidate = resolvePath(distRoot, "..", "wasm");
 	// Read out of the package's `exports`, never assumed: `dist/index.js` is
 	// the NODE entry of a package that ships a separate browser build, and
 	// mapping it left the page importing `node:fs`.
-	const entryFile = browserEntryFile(specifier, distRoot);
+	const entryFile = browserEntryFile(found);
 	return {
 		specifier,
 		slug,

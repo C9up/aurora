@@ -154,6 +154,46 @@ describe("aurora > browser packages", () => {
 		expect(basename(String(with_?.wasmRoot))).toBe("wasm");
 	});
 
+	it("refuses a package whose entry sits at its root, which would publish all of it", () => {
+		// playwright's shape: `./index.mjs` beside package.json, cli.js and the
+		// rest. Its "dist" mount was the package root.
+		writeFileSync(join(pkgRoot, "index.mjs"), "export default 1\n");
+		writeManifest("@c9up/atom", { ".": { import: "./index.mjs" } });
+		expect(() =>
+			resolveBrowserPackage("@c9up/atom", "/__assets", pkgRoot),
+		).toThrow(/package root/);
+	});
+
+	it("refuses a real installed package with a root-level entry", () => {
+		expect(() => resolveBrowserPackage("playwright", "/__assets")).toThrow(
+			/package root/,
+		);
+	});
+
+	it("keeps serving a package whose entry is in a subdirectory", () => {
+		writeManifest("@c9up/atom", { ".": { import: "./dist/index.js" } });
+		const pkg = resolveBrowserPackage(
+			"@c9up/atom",
+			"/__assets",
+			join(pkgRoot, "dist"),
+		);
+		expect(pkg?.distRoot).toBe(join(pkgRoot, "dist"));
+		expect(pkg?.entry).toBe("/__assets/atom/dist/index.js");
+	});
+
+	it("only finds a wasm directory inside the package", () => {
+		// dist/esm: `../wasm` is dist/wasm, inside the package.
+		mkdirSync(join(pkgRoot, "dist", "esm"), { recursive: true });
+		mkdirSync(join(pkgRoot, "dist", "wasm"), { recursive: true });
+		writeManifest("@c9up/atom", { ".": { import: "./dist/esm/index.js" } });
+		const inside = resolveBrowserPackage(
+			"@c9up/atom",
+			"/__assets",
+			join(pkgRoot, "dist", "esm"),
+		);
+		expect(inside?.wasmRoot).toBe(join(pkgRoot, "dist", "wasm"));
+	});
+
 	it("skips a package that is not installed rather than failing the boot", () => {
 		// Optional peers: an app that never imports chronos must not be made to
 		// install it.
