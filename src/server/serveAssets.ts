@@ -12,7 +12,14 @@
 
 import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, extname, join, resolve as resolvePath, sep } from "node:path";
+import {
+	dirname,
+	extname,
+	join,
+	relative,
+	resolve as resolvePath,
+	sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -104,6 +111,25 @@ export interface ServeAssetsOptions {
 	 * revalidation nearly free.
 	 */
 	cacheControl?: string;
+	/**
+	 * What to do with a path that has a segment starting with `.` — `.env`,
+	 * `.git/config`, an editor's `.Page.js.swp`. `"ignore"` (the default)
+	 * answers 404 as if they were not there; `"allow"` serves them.
+	 *
+	 * The pages mount serves the app's own source directory, ahead of every
+	 * app middleware, so nothing downstream could filter them.
+	 */
+	dotFiles?: "ignore" | "allow";
+}
+
+/** Does `path` have a segment that starts with `.`, `.` and `..` aside? */
+function hasDotSegment(path: string): boolean {
+	return path
+		.split(/[\\/]/)
+		.some(
+			(segment) =>
+				segment.startsWith(".") && segment !== "." && segment !== "..",
+		);
 }
 
 export function serveAssets(
@@ -114,6 +140,7 @@ export function serveAssets(
 	// segment would never match the resolved request path → spurious 403s.
 	const root = resolvePath(options.root);
 	const cacheControl = options.cacheControl ?? "public, max-age=60";
+	const ignoreDotFiles = (options.dotFiles ?? "ignore") === "ignore";
 	// Canonicalize the root ONCE at handler creation. The realpath check
 	// below compares against this canonical form so a symlinked root
 	// (e.g. `/var/www/current → /var/www/release-42`) still resolves
@@ -146,6 +173,11 @@ export function serveAssets(
 			ctx.response.status(403).send("forbidden");
 			return;
 		}
+		// Before touching the filesystem, so a dotfile and a miss look the same.
+		if (ignoreDotFiles && hasDotSegment(relative(root, absolute))) {
+			ctx.response.status(404).send("asset not found");
+			return;
+		}
 
 		// Second gate: dereference any symlinks under the root and
 		// re-check containment against the canonical root. Without this
@@ -170,6 +202,15 @@ export function serveAssets(
 			canonicalAbsolute !== canonicalRootNow
 		) {
 			ctx.response.status(403).send("forbidden");
+			return;
+		}
+		// Again on what the path really names: `config.js` may be a link to
+		// `.env` in the same root.
+		if (
+			ignoreDotFiles &&
+			hasDotSegment(relative(canonicalRootNow, canonicalAbsolute))
+		) {
+			ctx.response.status(404).send("asset not found");
 			return;
 		}
 
