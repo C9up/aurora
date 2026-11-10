@@ -21,6 +21,7 @@ import {
 } from "./browserPackage.js";
 import { Pages, type PagesConfig } from "./Pages.js";
 import {
+	type ClientRoutesFilter,
 	type RenderHttpContext,
 	type RenderPageOptions,
 	renderPage,
@@ -46,6 +47,11 @@ export interface AuroraManagerConfig {
 	};
 	/** Default asset/version marker serialized into the page payload. */
 	assetsVersion?: string;
+	/**
+	 * Which named routes every page carries to the browser — see
+	 * `RenderPageOptions.clientRoutes`. A per-call `clientRoutes` wins.
+	 */
+	clientRoutes?: ClientRoutesFilter;
 	/**
 	 * Filesystem path to aurora's pre-built `dist/`. Defaults to the
 	 * dist directory shipped with the installed `@c9up/aurora` package.
@@ -146,6 +152,7 @@ export class AuroraManager {
 	readonly root?: AuroraManagerConfig["root"];
 	/** App-level asset/version marker. */
 	readonly assetsVersion?: string;
+	readonly clientRoutes?: ClientRoutesFilter;
 
 	constructor(config: AuroraManagerConfig) {
 		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/__assets");
@@ -169,6 +176,7 @@ export class AuroraManager {
 		this.shared = config.shared;
 		this.root = config.root;
 		this.assetsVersion = config.assetsVersion;
+		this.clientRoutes = config.clientRoutes;
 		// Pages serve their compiled JS from the same prefix unless the app
 		// pins an explicit urlPrefix.
 		this.pages = new Pages({
@@ -196,6 +204,7 @@ export class AuroraManager {
 			rootTag: options?.rootTag ?? this.root?.tag,
 			rootClass: options?.rootClass ?? this.root?.class,
 			assetsVersion: options?.assetsVersion ?? this.assetsVersion,
+			clientRoutes: options?.clientRoutes ?? this.clientRoutes,
 			shared: mergeSharedResolvers(this.shared, options?.shared),
 			importmap: {
 				"@c9up/aurora": `${this.auroraAssetPath}/index.js`,

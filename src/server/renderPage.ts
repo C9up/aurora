@@ -29,7 +29,7 @@ import { AuroraError } from "../errors.js";
 import { createIdCounter, setIdCounterReader } from "../id.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
-import { setRouteManifestReader } from "../url.js";
+import { setRouteManifestReader, setRouteUseRecorder } from "../url.js";
 
 /**
  * Structural slice of the host framework's response. Same shape
@@ -134,6 +134,20 @@ export interface RenderPageOptions {
 	 */
 	routes?: Record<string, string>;
 	/**
+	 * Which of `routes` the page carries to the browser. The manifest in the
+	 * page is public — every visitor reads it — so an app that passes
+	 * `router.namedManifest()` hands an anonymous visitor of `/login` the map of
+	 * its admin and internal endpoints. Server-side rendering still resolves
+	 * against all of `routes`; only the serialized copy is filtered.
+	 *
+	 * `{ only, except }` take route names, with `*` matching any run of
+	 * characters (`'auth.*'`); a predicate gets each name and pattern. Unset,
+	 * every route is serialized. In development a route the page resolved on the
+	 * server but filtered out of the client is warned about: a `urlFor` of it
+	 * during hydration would throw.
+	 */
+	clientRoutes?: ClientRoutesFilter;
+	/**
 	 * Allowlist of cookie names to seed into the SSR cookie store so a page can
 	 * read them during render via aurora's `cookieSignal` / `cookie.get` — the
 	 * server then renders the SAME UI state the browser will (no hydration flash
@@ -145,6 +159,49 @@ export interface RenderPageOptions {
 	 * must stay server-only. Use plain, JS-readable cookies for UI state.
 	 */
 	cookies?: string[];
+}
+
+/** See {@link RenderPageOptions.clientRoutes}. */
+export type ClientRoutesFilter =
+	| { only?: readonly string[]; except?: readonly string[] }
+	| ((name: string, pattern: string) => boolean);
+
+/** A route-name pattern, `*` matching any run of characters. */
+function routeNameMatcher(
+	patterns: readonly string[],
+): (name: string) => boolean {
+	const expressions = patterns.map(
+		(pattern) =>
+			new RegExp(
+				`^${pattern
+					.split("*")
+					.map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+					.join(".*")}$`,
+			),
+	);
+	return (name) => expressions.some((expression) => expression.test(name));
+}
+
+/** The part of `routes` the page carries to the browser. */
+function filterClientRoutes(
+	routes: Record<string, string>,
+	filter: ClientRoutesFilter | undefined,
+): Record<string, string> {
+	if (filter === undefined) return routes;
+	let keep: (name: string, pattern: string) => boolean;
+	if (typeof filter === "function") {
+		keep = filter;
+	} else {
+		const only =
+			filter.only === undefined ? undefined : routeNameMatcher(filter.only);
+		const except = routeNameMatcher(filter.except ?? []);
+		keep = (name) => (only === undefined || only(name)) && !except(name);
+	}
+	const kept: Record<string, string> = {};
+	for (const [name, pattern] of Object.entries(routes)) {
+		if (keep(name, pattern)) kept[name] = pattern;
+	}
+	return kept;
 }
 
 export type SharedProps = Record<string, unknown>;
@@ -184,12 +241,15 @@ interface RenderScope {
 	ids: ReturnType<typeof createIdCounter>;
 	cookies: Record<string, string>;
 	routes: Record<string, string>;
+	/** The route names this render resolved with `urlFor`. */
+	usedRoutes: Set<string>;
 }
 
 const renderScope = new AsyncLocalStorage<RenderScope>();
 
 setCookieStoreReader(() => renderScope.getStore()?.cookies);
 setRouteManifestReader(() => renderScope.getStore()?.routes);
+setRouteUseRecorder(() => renderScope.getStore()?.usedRoutes);
 setIdCounterReader(() => renderScope.getStore()?.ids);
 
 function isCookieReadable(request: unknown): request is CookieReadableRequest {
@@ -239,10 +299,11 @@ export async function renderPage<P>(
 			? readRequestCookies(ctx.request, options.cookies)
 			: {},
 		routes: options.routes ?? {},
+		usedRoutes: new Set(),
 	};
 
 	return renderScope.run(scope, () =>
-		renderPageInScope(ctx, pages, name, props, options),
+		renderPageInScope(ctx, pages, name, props, options, scope.usedRoutes),
 	);
 }
 
@@ -261,6 +322,7 @@ async function renderPageInScope<P>(
 	name: string,
 	props: P,
 	options: RenderPageOptions,
+	usedRoutes: ReadonlySet<string>,
 ): Promise<void> {
 	const factory = await pages.resolve(name);
 	const shared = await resolveSharedProps(ctx, options.shared);
@@ -279,6 +341,15 @@ async function renderPageInScope<P>(
 	const rootClass = options.rootClass;
 	const lang = options.lang ?? "en";
 	const pageUrl = pages.urlFor(name);
+	const routes = filterClientRoutes(options.routes ?? {}, options.clientRoutes);
+	if (process.env.NODE_ENV !== "production") {
+		for (const used of usedRoutes) {
+			if (Object.hasOwn(routes, used)) continue;
+			console.warn(
+				`[aurora] page "${name}" resolved route "${used}" on the server, but clientRoutes leaves it out of the page — urlFor("${used}") will throw once it hydrates. Add it to clientRoutes, or resolve it into a prop.`,
+			);
+		}
+	}
 
 	// A CSP that names a nonce blocks every inline script that lacks it, and the
 	// page then renders but never hydrates — the HTML is byte-identical, so only
@@ -303,7 +374,7 @@ ${options.jsonLd === undefined ? "" : `<script${nonceAttr} type="application/ld+
 			props: pageProps,
 			url: pageUrl,
 			rootId,
-			routes: options.routes ?? {},
+			routes,
 			version: options.assetsVersion ?? null,
 		},
 	)}</script>

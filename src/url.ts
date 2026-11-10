@@ -34,6 +34,19 @@ export function setRouteManifestReader(
 	routeManifestReader = reader;
 }
 
+type RouteUseRecorder = () => Set<string> | undefined;
+let routeUseRecorder: RouteUseRecorder | undefined;
+
+/**
+ * @internal Server-side hook used by `renderPage()` to learn which routes a
+ * render resolved, so it can warn when the page's client manifest lacks one.
+ */
+export function setRouteUseRecorder(
+	recorder: RouteUseRecorder | undefined,
+): void {
+	routeUseRecorder = recorder;
+}
+
 function activeManifest(): Record<string, string> {
 	return routeManifestReader?.() ?? manifest;
 }
@@ -76,6 +89,8 @@ export function urlFor(
 			}`,
 		);
 	}
+
+	routeUseRecorder?.()?.add(name);
 
 	let url = pattern;
 	if (params) {

@@ -25,6 +25,7 @@ export {
 	pageImportError,
 } from "./Pages.js";
 export {
+	type ClientRoutesFilter,
 	type RenderHttpContext,
 	type RenderPageOptions,
 	type RenderResponse,
