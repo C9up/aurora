@@ -54,6 +54,13 @@ interface RelayState {
 	statusListeners: Map<RelayStatus, Set<(status: RelayStatus) => void>>;
 	/** Consecutive failed-connection count, reset on every `connected` frame. */
 	reconnectAttempts: number;
+	/**
+	 * Has the current connection announced its uid yet? Reset when the
+	 * connection drops, since the server issues a new uid per connection.
+	 */
+	uidBound: boolean;
+	/** Channels already warned about for a payload that is not JSON. */
+	undecodable: Set<string>;
 }
 
 const STATE: RelayState = {
@@ -64,7 +71,13 @@ const STATE: RelayState = {
 	status: "connecting",
 	statusListeners: new Map(),
 	reconnectAttempts: 0,
+	uidBound: false,
+	undecodable: new Set(),
 };
+
+/** The shape of the uid relay issues: a `randomUUID()`. */
+const UID_PATTERN =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface RelayOptions {
 	/** SSE endpoint. Defaults to `/__relay/events`. */
@@ -199,8 +212,10 @@ const CLIENT: RelayClient = {
 			STATE.sse = null;
 		}
 		STATE.uid = null;
+		STATE.uidBound = false;
 		STATE.channels.clear();
 		STATE.attached.clear();
+		STATE.undecodable.clear();
 		STATE.reconnectAttempts = 0;
 	},
 };
@@ -209,12 +224,26 @@ function open(): void {
 	const sse = new EventSource(CONFIG.sseUrl);
 	STATE.sse = sse;
 	STATE.attached = new Set();
+	STATE.uid = null;
+	STATE.uidBound = false;
 	changeStatus("connecting");
 
 	sse.addEventListener("connected", (ev) => {
-		const data = safeJson<{ uid?: string }>(messageData(ev));
-		if (data && typeof data.uid === "string") {
-			STATE.uid = data.uid;
+		// One uid per connection: the first `connected` frame of it. A later one
+		// on the same stream is not the server's — a broadcast written raw into
+		// the frame can forge it — and obeying it re-subscribed every channel,
+		// with this page's cookies and XSRF header, to whatever uid it named.
+		if (STATE.uidBound) {
+			console.warn(
+				"[aurora/relay] ignored a second `connected` frame on the same stream",
+			);
+			return;
+		}
+		const data = decodeJson(messageData(ev));
+		const uid = data.ok ? Reflect.get(Object(data.value), "uid") : undefined;
+		if (typeof uid === "string" && UID_PATTERN.test(uid)) {
+			STATE.uid = uid;
+			STATE.uidBound = true;
 			// A successful (re)connect clears the failure counter and flips the
 			// status back to `connected`.
 			STATE.reconnectAttempts = 0;
@@ -241,6 +270,11 @@ function open(): void {
 	// cap is reached close the stream (stopping the native retry loop) and fire
 	// `onReconnectFailed`.
 	sse.addEventListener("error", () => {
+		// The connection is gone, and its uid with it: the browser's reconnect
+		// reaches a server that issues a new one in its own `connected` frame.
+		// Until then nothing posts under the old uid.
+		STATE.uid = null;
+		STATE.uidBound = false;
 		if (STATE.status !== "reconnecting") changeStatus("disconnected");
 		changeStatus("reconnecting");
 		CONFIG.onReconnectAttempt?.(STATE.reconnectAttempts + 1);
@@ -286,13 +320,23 @@ function attachChannel(sse: EventSource, channel: string): void {
 	if (STATE.attached.has(channel)) return;
 	STATE.attached.add(channel);
 	sse.addEventListener(channel, (ev) => {
-		const payload = safeJson<unknown>(messageData(ev));
-		if (payload === null) return;
+		const payload = decodeJson(messageData(ev));
+		if (!payload.ok) {
+			// Said once per channel: frames arriving unparsed are a server-side
+			// bug worth seeing, and a stream of them must not flood the console.
+			if (!STATE.undecodable.has(channel)) {
+				STATE.undecodable.add(channel);
+				console.warn(
+					`[aurora/relay] dropped a payload on ${channel} that is not JSON`,
+				);
+			}
+			return;
+		}
 		const handlers = STATE.channels.get(channel);
 		if (!handlers) return;
 		for (const handler of handlers) {
 			try {
-				handler(payload);
+				handler(payload.value);
 			} catch (err) {
 				console.warn(`[aurora/relay] listener for ${channel} threw:`, err);
 			}
@@ -342,11 +386,18 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 	}
 }
 
-function safeJson<T>(raw: unknown): T | null {
-	if (typeof raw !== "string") return null;
+/**
+ * Parse a frame's data. A result rather than null-on-failure, because `null` is
+ * a payload a broadcast may carry.
+ */
+function decodeJson(
+	raw: unknown,
+): { ok: true; value: unknown } | { ok: false } {
+	if (typeof raw !== "string") return { ok: false };
 	try {
-		return JSON.parse(raw) as T;
+		const value: unknown = JSON.parse(raw);
+		return { ok: true, value };
 	} catch {
-		return null;
+		return { ok: false };
 	}
 }

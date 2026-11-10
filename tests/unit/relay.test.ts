@@ -30,6 +30,10 @@ class FakeEventSource {
 	}
 }
 
+// The shape relay issues — the client refuses any other.
+const UID_1 = "11111111-1111-4111-8111-111111111111";
+const UID_2 = "22222222-2222-4222-8222-222222222222";
+
 const flush = (): Promise<void> =>
 	new Promise((resolve) => setTimeout(resolve));
 
@@ -56,15 +60,18 @@ describe("aurora/relay", () => {
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource to be opened");
 
-		es.emitConnected("uid-1"); // first connect
+		es.emitConnected(UID_1); // first connect
 		await flush();
-		es.emitConnected("uid-2"); // browser auto-reconnect — server forgot the sub
+		// Browser auto-reconnect: the drop fires `error`, then the new server
+		// connection announces its own uid and has forgotten the sub.
+		es.listeners.get("error")?.({});
+		es.emitConnected(UID_2);
 		await flush();
 
 		const forChannel = calls.filter((c) => c.channel === "project/1");
 		// Pre-fix: only 1 subscribe (first connect); the reconnect re-POSTs nothing.
 		expect(forChannel).toHaveLength(2);
-		expect(forChannel[1]?.uid).toBe("uid-2");
+		expect(forChannel[1]?.uid).toBe(UID_2);
 	});
 
 	it("delivers a channel's NAMED broadcast payload verbatim to its handler", async () => {
@@ -83,7 +90,7 @@ describe("aurora/relay", () => {
 
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource to be opened");
-		es.emitConnected("uid-1");
+		es.emitConnected(UID_1);
 		await flush();
 
 		// The relay broadcasts `event: live/abc` (a NAMED event), not the default
@@ -162,7 +169,7 @@ describe("aurora/relay > unsubscribe on last handler", () => {
 
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource");
-		es.emitConnected("uid-1");
+		es.emitConnected(UID_1);
 		await flush();
 
 		// First detach: another handler remains → NO unsubscribe.
@@ -175,7 +182,7 @@ describe("aurora/relay > unsubscribe on last handler", () => {
 		await flush();
 		const unsub = calls.filter((c) => c.url === "/__relay/unsubscribe");
 		expect(unsub).toHaveLength(1);
-		expect(unsub[0]?.body).toEqual({ uid: "uid-1", channel: "room/1" });
+		expect(unsub[0]?.body).toEqual({ uid: UID_1, channel: "room/1" });
 	});
 });
 
@@ -198,7 +205,7 @@ describe("aurora/relay > CSRF handshake", () => {
 
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource");
-		es.emitConnected("uid-1");
+		es.emitConnected(UID_1);
 		await flush();
 
 		const sub = calls.find((c) => c.url === "/__relay/subscribe");
@@ -223,7 +230,7 @@ describe("aurora/relay > CSRF handshake", () => {
 
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource");
-		es.emitConnected("uid-1");
+		es.emitConnected(UID_1);
 		await flush();
 
 		const sub = calls.find((c) => c.url === "/__relay/subscribe");
@@ -260,7 +267,7 @@ describe("aurora/relay > status + reconnect events", () => {
 
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource");
-		es.emitConnected("uid-1"); // → connected
+		es.emitConnected(UID_1); // → connected
 		await flush();
 		es.listeners.get("error")?.({}); // native EventSource drop → disconnected + reconnecting
 
@@ -293,7 +300,7 @@ describe("aurora/relay > status + reconnect events", () => {
 		client.subscribe("room/1", () => {});
 		const es = FakeEventSource.instances[FakeEventSource.instances.length - 1];
 		if (!es) throw new Error("expected an EventSource");
-		es.emitConnected("uid-1");
+		es.emitConnected(UID_1);
 		await flush();
 
 		es.listeners.get("error")?.({}); // attempt 1 (under cap)
