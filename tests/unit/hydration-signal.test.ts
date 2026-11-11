@@ -67,9 +67,18 @@ describe("aurora > hydration signal", () => {
 		await whenHydrated();
 		expect(hydrationState()).toBe("hydrated");
 
-		const before = Date.now();
-		await whenHydrated();
-		expect(Date.now() - before).toBeLessThan(50);
+		// Ordering, not a time budget: "immediately" means before the next task,
+		// which a GC pause on a loaded runner cannot change.
+		const order: string[] = [];
+		const nextTask = new Promise<void>((resolve) => {
+			setTimeout(() => {
+				order.push("next task");
+				resolve();
+			}, 0);
+		});
+		await whenHydrated().then(() => order.push("hydrated"));
+		await nextTask;
+		expect(order).toEqual(["hydrated", "next task"]);
 	});
 
 	it("settles the page even when a root throws, and says why", async () => {
