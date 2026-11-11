@@ -64,3 +64,24 @@ describe("aurora > auroraContext middleware", () => {
 		expect(ctx.aurora).toBeUndefined();
 	});
 });
+
+describe("aurora > the middleware module a kernel imports", () => {
+	it("default-exports a class whose handle binds ctx.aurora", async () => {
+		const mod = await import("../../src/middleware.js");
+		const manager = { render: vi.fn(async () => {}) };
+		const ctx = makeCtx({
+			make: async (token: unknown) =>
+				token === "aurora" ? manager : undefined,
+		});
+		const next = vi.fn(async () => {});
+		await new mod.default().handle(ctx, next);
+		expect(next).toHaveBeenCalledTimes(1);
+		await ctx.aurora?.render("Home");
+		expect(manager.render).toHaveBeenCalledWith(
+			ctx,
+			"Home",
+			undefined,
+			undefined,
+		);
+	});
+});

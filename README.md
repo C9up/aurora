@@ -13,7 +13,8 @@ ream configure @c9up/aurora
 
 ## Usage
 
-`ream configure @c9up/aurora` registers the provider and writes
+`ream configure @c9up/aurora` registers the provider, puts the middleware that
+binds `ctx.aurora` first in the router middleware, and writes
 `config/aurora.ts`. By hand, that is:
 
 ```ts
@@ -21,6 +22,14 @@ ream configure @c9up/aurora
 providers: [
   () => import('@c9up/aurora/provider'),
 ]
+```
+
+```ts
+// start/kernel.ts
+router.use([
+  () => import('@c9up/aurora/middleware'),
+  // ...the application's own router middleware
+])
 ```
 
 ```ts

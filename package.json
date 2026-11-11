@@ -35,6 +35,10 @@
       "types": "./src/server.ts",
       "import": "./src/server.ts"
     },
+    "./middleware": {
+      "types": "./src/middleware.ts",
+      "import": "./src/middleware.ts"
+    },
     "./rpc": {
       "types": "./src/rpc.ts",
       "import": "./src/rpc.ts"
@@ -119,6 +123,10 @@
       "./server": {
         "types": "./dist/server.d.ts",
         "import": "./dist/server.js"
+      },
+      "./middleware": {
+        "types": "./dist/middleware.d.ts",
+        "import": "./dist/middleware.js"
       },
       "./rpc": {
         "types": "./dist/rpc.d.ts",

@@ -25,6 +25,7 @@ function codemods() {
 	const written = new Map<string, string>();
 	return {
 		addProvider: vi.fn().mockResolvedValue(undefined),
+		registerMiddleware: vi.fn().mockResolvedValue(undefined),
 		makeUsingStub: vi.fn(async (stubsRoot: string, stubPath: string) => {
 			const { to, body } = renderStub(stubsRoot, stubPath);
 			written.set(to, body);
@@ -40,6 +41,19 @@ describe("aurora > configure", () => {
 		await configure(c);
 		expect(c.addProvider).toHaveBeenCalledWith("@c9up/aurora/provider");
 		expect([...c.written.keys()]).toEqual(["config/aurora.ts"]);
+	});
+
+	it("puts the ctx.aurora middleware first on the router tier", async () => {
+		// Appended — the codemod's default — it would run after the app's own
+		// router middleware, and one of those rendering a page through
+		// `ctx.aurora` (a guard showing a login page) would find nothing there.
+		const c = codemods();
+		await configure(c);
+		expect(c.registerMiddleware).toHaveBeenCalledTimes(1);
+		expect(c.registerMiddleware).toHaveBeenCalledWith(
+			"@c9up/aurora/middleware",
+			{ tier: "router", position: "before" },
+		);
 	});
 
 	it("writes a config the provider reads: defineConfig from the server entry, a pages root", async () => {

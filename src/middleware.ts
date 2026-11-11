@@ -72,3 +72,17 @@ export async function auroraContext(
 	}
 	return next();
 }
+
+/**
+ * Default export — the middleware class a kernel imports lazily
+ * (`router.use([() => import('@c9up/aurora/middleware')])`), which is how
+ * `ream configure @c9up/aurora` registers it.
+ */
+export default class AuroraContextMiddleware {
+	handle(
+		ctx: AuroraMiddlewareContext,
+		next: () => Promise<void>,
+	): Promise<void> {
+		return auroraContext(ctx, next);
+	}
+}
