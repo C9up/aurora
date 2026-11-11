@@ -4,9 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    permissions:
-      # Creating the release needs write; the workflow default is read.
-      contents: write
     branches: [main]
   workflow_dispatch:
     inputs:
