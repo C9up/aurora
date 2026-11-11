@@ -130,7 +130,7 @@ Still intentionally tracked as remaining work:
   answers 400.
 - `redirect()`, `replace()` and `navigate()` reject `javascript:`, `vbscript:`
   and `data:` URLs.
-- `auroraRoute()` is the legacy low-level route helper. Prefer the provider /
+- `auroraRoute()` is the low-level route helper. Prefer the provider /
   `ctx.aurora.render()` pipeline for Adonis-style applications.
 
 ## License
