@@ -5,7 +5,7 @@
  *
  * Usage:
  *
- *   import { auroraRoute } from '@c9up/aurora/provider'
+ *   import { auroraRoute } from '@c9up/aurora'
  *   router.get('/dashboard', auroraRoute({
  *     entry: '/app/pages/dashboard.client.js',
  *     render: () => Dashboard({ user: ... })
