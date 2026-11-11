@@ -124,6 +124,15 @@ function normalizePrefix(prefix: string): string {
 	return withLead.replace(/\/+$/, "") || "/";
 }
 
+/**
+ * Type a config where it is written — the `defineConfig` every ream module's
+ * `config/<name>.ts` calls. A relative `pages.root` is resolved against the
+ * application root by the provider.
+ */
+export function defineConfig(config: AuroraManagerConfig): AuroraManagerConfig {
+	return config;
+}
+
 export class AuroraManager {
 	readonly pages: Pages;
 	readonly auroraDistRoot: string;

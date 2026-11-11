@@ -13,7 +13,8 @@ ream configure @c9up/aurora
 
 ## Usage
 
-Register the provider in your app, then configure it under `config/aurora.ts`:
+`ream configure @c9up/aurora` registers the provider and writes
+`config/aurora.ts`. By hand, that is:
 
 ```ts
 // reamrc.ts
@@ -24,9 +25,12 @@ providers: [
 
 ```ts
 // config/aurora.ts
-export default {
+import { defineConfig } from '@c9up/aurora/server'
+
+export default defineConfig({
   pages: {
-    root: new URL('../resources/pages', import.meta.url).pathname,
+    // Relative to the application root.
+    root: 'resources/pages',
   },
   root: {
     tag: 'main',
@@ -37,7 +41,7 @@ export default {
     flash: ctx.session?.flashMessages?.all?.() ?? {},
     errors: ctx.session?.flashMessages?.get?.('errors') ?? {},
   }),
-}
+})
 ```
 
 Controllers stay thin, like Adonis/Inertia controllers:

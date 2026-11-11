@@ -11,7 +11,11 @@
 // source into every consumer's program — including ones that never use it.
 import "./augmentations.js";
 
-export { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
+export {
+	AuroraManager,
+	type AuroraManagerConfig,
+	defineConfig,
+} from "./AuroraManager.js";
 export { AuroraError, type AuroraErrorCode } from "./errors.js";
 export {
 	type AuroraRequestRenderer,

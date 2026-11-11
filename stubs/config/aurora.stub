@@ -1,0 +1,20 @@
+---
+to: config/aurora.ts
+---
+import { defineConfig } from '@c9up/aurora/server'
+
+/**
+ * aurora — server-rendered pages, hydrated in the browser.
+ *
+ * `pages.root` is where `ctx.aurora.render('dashboard/show', props)` looks for
+ * `dashboard/show.js`; a relative path is resolved against the application
+ * root. The same directory is served to the browser under `/__assets/pages`.
+ */
+export default defineConfig({
+  pages: {
+    root: 'resources/pages',
+  },
+  root: {
+    tag: 'div',
+  },
+})
