@@ -47,6 +47,24 @@ jobs:
       # something runs them.
       - run: pnpm test:coverage
 
+  # The real-browser layer: the SSR/hydration roundtrip, the URL guard in a
+  # live DOM, foreign content, CSP nonces — everything jsdom parses too
+  # leniently to prove. Without this job those suites only ran by hand.
+  browser:
+    name: Browser tests (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with: { version: 9 }
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: pnpm install
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:browser
+
   # Publish job — gated on workflow_dispatch (manual maintainer trigger).
   # Requires NPM_TOKEN secret + a v<MAJOR>.<MINOR>.<PATCH> tag at HEAD matching
   # package.json. Drift gate refuses to overwrite a published version (or roll
@@ -58,7 +76,7 @@ jobs:
       # Creating the release needs write; the workflow default is read.
       contents: write
     timeout-minutes: 15
-    needs: [build-and-test]
+    needs: [build-and-test, browser]
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6

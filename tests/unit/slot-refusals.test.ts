@@ -325,3 +325,43 @@ describe("slot refusals > what must keep working", () => {
 		);
 	});
 });
+
+describe("slot refusals > a property that parses HTML", () => {
+	const markup = `<img src="x" onerror="window.pwned=1">`;
+
+	it("is refused on both paths, whatever the quoting", () => {
+		// `.innerHTML=${v}` goes through `Reflect.set`, past every escape aurora
+		// has, and the browser parses it as live markup.
+		for (const make of [
+			() => html`<div .innerHTML=${markup}></div>`,
+			() => html`<div .innerHTML="${markup}"></div>`,
+			() => html`<div .outerHTML='${markup}'></div>`,
+			() => html`<iframe .srcdoc=${markup}></iframe>`,
+			() => html`<div .INNERHTML=${markup}></div>`,
+		]) {
+			refusedOnBothPaths(make, "E_AURORA_SLOT_IN_HTML_PROPERTY");
+		}
+	});
+
+	it("writes nothing into the document when refused", () => {
+		const host = document.createElement("div");
+		document.body.appendChild(host);
+		try {
+			expect(() =>
+				render(html`<div .innerHTML=${markup}></div>`, host),
+			).toThrow();
+			expect(host.querySelector("img")).toBeNull();
+		} finally {
+			host.remove();
+		}
+	});
+
+	it("leaves the text properties alone", () => {
+		expect(
+			codeFromClientOrNull(() => html`<p .textContent=${markup}></p>`),
+		).toBe(undefined);
+		expect(renderToString(html`<p .textContent=${markup}></p>`)).toBe(
+			"<p></p>",
+		);
+	});
+});
