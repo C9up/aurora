@@ -2,7 +2,7 @@
 
 > Reactive UI runtime for the Ream framework — tagged-template DOM, signal-based state, isomorphic SSR + hydration, zero build step.
 
-Part of **[Ream](https://github.com/C9up/ream)** — a Rust-powered, AdonisJS-compatible Node.js framework. Independent, publishable package.
+Part of **[Ream](https://github.com/C9up/ream)** — a Rust-powered Node.js framework. Independent, publishable package.
 
 ## Installation
 
@@ -44,7 +44,7 @@ export default defineConfig({
 })
 ```
 
-Controllers stay thin, like Adonis/Inertia controllers:
+Controllers stay thin: they name a page and hand it props.
 
 ```ts
 export default class DashboardController {
@@ -58,7 +58,7 @@ export default class DashboardController {
 
 ## Dev live-reload (HMR)
 
-Pages are dynamic-imported per request; aurora dev-busts the page module by mtime, but a page's **transitive** imports (components/layouts/services) stay cached until you restart. Enable graph-aware SSR HMR — the AdonisJS way — with [`hot-hook`](https://github.com/Julien-R44/hot-hook):
+Pages are dynamic-imported per request; aurora dev-busts the page module by mtime, but a page's **transitive** imports (components/layouts/services) stay cached until you restart. Enable graph-aware SSR HMR with [`hot-hook`](https://github.com/Julien-R44/hot-hook):
 
 ```bash
 pnpm add -D hot-hook @hot-hook/runner
@@ -87,7 +87,7 @@ Editing a page or any component it imports now hot-reloads the SSR with no resta
 - `@c9up/aurora/server` — server-only helpers and types (`AuroraManager`,
   `Pages`, `renderPage`, `serveAssets`, `SharedProps`, `SharedPropsResolver`)
 
-## Adonis / Inertia parity
+## Server-rendered pages
 
 Implemented in Aurora:
 
@@ -102,9 +102,9 @@ Implemented in Aurora:
 
 Still intentionally tracked as remaining work:
 
-- `@adonisjs/vite`-equivalent frontend integration: asset bundling, dev manifest and browser-asset HMR (SSR page-module HMR is available today via hot-hook — see [Dev live-reload](#dev-live-reload-hmr));
-- full Inertia navigation semantics: preserve state, history encryption, version
-  mismatch handling and client-side visit lifecycle;
+- a frontend build integration: asset bundling, dev manifest and browser-asset HMR (SSR page-module HMR is available today via hot-hook — see [Dev live-reload](#dev-live-reload-hmr));
+- full client-side navigation semantics: preserve state, history encryption,
+  version mismatch handling and client-side visit lifecycle;
 - generated page-name types.
 
 ## Security notes
@@ -112,8 +112,8 @@ Still intentionally tracked as remaining work:
 - `renderPage()` isolates SSR cookies and route manifests per request. Pages can
   read `cookieState()` and `urlFor()` across async boundaries without leaking
   another concurrent request's state.
-- `renderPage()` and `AuroraManager.render()` support Adonis/Inertia-style
-  shared props via `shared`, plus root element customization via `rootTag`,
+- `renderPage()` and `AuroraManager.render()` support request-level shared
+  props via `shared`, plus root element customization via `rootTag`,
   `rootClass` or `config.aurora.root`.
 - `HttpClient` does not send managed bearer/default `Authorization` headers to
   cross-origin absolute URLs by default. Set `allowCrossOriginAuth: true` only
@@ -131,7 +131,7 @@ Still intentionally tracked as remaining work:
 - `redirect()`, `replace()` and `navigate()` reject `javascript:`, `vbscript:`
   and `data:` URLs.
 - `auroraRoute()` is the low-level route helper. Prefer the provider /
-  `ctx.aurora.render()` pipeline for Adonis-style applications.
+  `ctx.aurora.render()` pipeline in an application with controllers.
 
 ## License
 
