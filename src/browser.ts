@@ -493,7 +493,12 @@ export const cookie = {
 		if (typeof document === "undefined") {
 			const scoped = cookieStoreReader?.();
 			if (scoped && Object.hasOwn(scoped, name)) return scoped[name] ?? null;
-			return cookieSeed[name] ?? null;
+			// Own entries only, as above: `cookie.get("constructor")` read
+			// `Object` off the prototype chain and handed a function back as a
+			// cookie value.
+			return Object.hasOwn(cookieSeed, name)
+				? (cookieSeed[name] ?? null)
+				: null;
 		}
 		const prefix = `${encodeURIComponent(name)}=`;
 		for (const part of document.cookie.split("; ")) {

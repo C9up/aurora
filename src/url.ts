@@ -77,8 +77,12 @@ export function urlFor(
 	query?: Record<string, string | number>,
 ): string {
 	const routes = activeManifest();
-	const pattern = routes[name];
-	if (pattern === undefined) {
+	// Own entries only. A name can come from data (a `data-route` attribute, a
+	// config value), and read through the prototype chain `constructor` found
+	// `Object` — a function, which then failed as a pattern with a TypeError
+	// instead of the error a caller branches on.
+	const pattern = Object.hasOwn(routes, name) ? routes[name] : undefined;
+	if (typeof pattern !== "string") {
 		const known = Object.keys(routes);
 		throw new AuroraError(
 			"E_AURORA_UNKNOWN_ROUTE",
