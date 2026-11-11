@@ -20,14 +20,12 @@ import "./augmentations.js";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AuroraManager, type AuroraManagerConfig } from "./AuroraManager.js";
-import { auroraRoute } from "./route.js";
 import {
 	type AssetMount,
 	type AssetsHost,
 	assetsMiddleware,
 } from "./server/assetsMiddleware.js";
 import { clearAurora, getAurora, setAurora } from "./services/main.js";
-import { renderToString } from "./ssr.js";
 
 interface AuroraContainer {
 	singleton(token: unknown, factory: () => unknown): void;
@@ -74,11 +72,6 @@ export default class AuroraProvider {
 		this.app.container.singleton("aurora", () =>
 			this.app.container.resolve<AuroraManager>(AuroraManager),
 		);
-		// Legacy stateless bindings — kept so existing apps that
-		// `container.resolve('aurora.render')` still get a working
-		// function. New code should use the singleton.
-		this.app.container.singleton("aurora.renderToString", () => renderToString);
-		this.app.container.singleton("aurora.route", () => auroraRoute);
 	}
 
 	async boot(): Promise<void> {

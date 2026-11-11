@@ -298,3 +298,17 @@ describe("AuroraProvider > shutdown", () => {
 		expect(getAurora()).toBe(replacement);
 	});
 });
+
+describe("AuroraProvider.register — the tokens it binds", () => {
+	it("binds the manager and its `aurora` alias, and no untyped stateless helper", async () => {
+		const app = buildApp();
+		new AuroraProvider(app).register();
+		expect(app.container.has(AuroraManager)).toBe(true);
+		expect(app.container.has("aurora")).toBe(true);
+		// Bound under names `ContainerBindings` never declared, so resolving
+		// them answered `unknown`; nothing resolved them, and the functions are
+		// plain imports from the package.
+		expect(app.container.has("aurora.renderToString")).toBe(false);
+		expect(app.container.has("aurora.route")).toBe(false);
+	});
+});
