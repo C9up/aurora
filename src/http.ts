@@ -133,9 +133,9 @@ export type HttpResult<T> =
 	| { ok: false; data: null; error: HttpError };
 
 /** Whether `body` should be JSON-encoded (vs. passed to `fetch` untouched). */
-function shouldJsonEncode(body: unknown): boolean {
+function isBodyInit(body: unknown): body is BodyInit {
 	if (body === null || typeof body !== "object") {
-		return typeof body !== "string";
+		return typeof body === "string";
 	}
 	if (
 		body instanceof FormData ||
@@ -144,12 +144,11 @@ function shouldJsonEncode(body: unknown): boolean {
 		body instanceof ArrayBuffer ||
 		ArrayBuffer.isView(body)
 	) {
-		return false;
+		return true;
 	}
-	if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
-		return false;
-	}
-	return true;
+	return (
+		typeof ReadableStream !== "undefined" && body instanceof ReadableStream
+	);
 }
 
 /** Case-insensitive header presence check. */
@@ -442,14 +441,14 @@ export class HttpClient {
 
 		let payload: BodyInit | undefined;
 		if (body !== undefined && body !== null) {
-			if (shouldJsonEncode(body)) {
+			if (isBodyInit(body)) {
+				// Already a valid BodyInit (string / FormData / Blob / …).
+				payload = body;
+			} else {
 				payload = JSON.stringify(body);
 				if (!hasHeader(headers, "content-type")) {
 					headers["Content-Type"] = "application/json";
 				}
-			} else {
-				// Already a valid BodyInit (string / FormData / Blob / …).
-				payload = body as BodyInit;
 			}
 		}
 
@@ -479,6 +478,8 @@ export class HttpClient {
 		if (!response.ok) throw new HttpError(response, data);
 		// `parse` validates at runtime; without it, `T` is the caller's
 		// unchecked assertion of the response shape (the usual HTTP boundary).
+		// NAMED CAST: the HTTP boundary. Without `parse`, `T` is the caller's
+		// own claim about the response shape, which nothing here can check.
 		return options.parse ? options.parse(data) : (data as T);
 	}
 }

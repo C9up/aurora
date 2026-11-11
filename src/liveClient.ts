@@ -66,7 +66,8 @@ export function liveClient(opts: LiveClientOptions): () => void {
 	const off = opts.transport.subscribe(opts.mount.channel, (patch) => {
 		for (const { slot, value } of patch) {
 			const sig = view.values[slot];
-			if (isSignal(sig)) (sig as (v: string) => void)(value);
+			// As an updater, so a value is never mistaken for one.
+			if (isSignal(sig)) sig(() => value);
 		}
 	});
 

@@ -85,6 +85,7 @@ export class Pages {
 	 * back as `unknown` — the renderer JSON.stringifies them either way.
 	 */
 	register<P>(name: string, factory: PageFactory<P>): void {
+		// NAMED CAST: see above — stored with its props type erased.
 		this.#registry.set(name, factory as PageFactory);
 	}
 
@@ -139,6 +140,8 @@ export class Pages {
 		}
 		let mod: { default?: unknown };
 		try {
+			// NAMED CAST: a dynamic import is typed `any`; this claims no more
+			// than that the module may have a default export.
 			mod = (await import(urlHref)) as { default?: unknown };
 		} catch (err) {
 			throw pageImportError(name, absolute, err, isDev);
@@ -149,6 +152,8 @@ export class Pages {
 				`[aurora] page "${name}" must default-export a factory function`,
 			);
 		}
+		// NAMED CAST: the module boundary. Checked to be a function above; what it
+		// takes and returns is the page author's contract.
 		return mod.default as PageFactory;
 	}
 

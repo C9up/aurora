@@ -23,6 +23,7 @@
 
 import { rememberContext } from "./component.js";
 import { AuroraError } from "./errors.js";
+import { isCommentNode, isElementNode } from "./nodes.js";
 import {
 	assertBindable,
 	assertBindableProperty,
@@ -231,8 +232,8 @@ function collectSlots(
 		// to remove never invalidates the index of a later sibling. But text
 		// slots also bring the node into existence — handle them with a
 		// stable path captured up front.
-		if (node.nodeType === 8 /* Comment */) {
-			const data = (node as Comment).data;
+		if (isCommentNode(node)) {
+			const data = node.data;
 			if (data === MARKER) {
 				const cls = classification[slotIndex];
 				if (cls === undefined) return;
@@ -248,8 +249,8 @@ function collectSlots(
 			}
 			return;
 		}
-		if (node.nodeType === 1 /* Element */) {
-			const el = node as Element;
+		if (isElementNode(node)) {
+			const el = node;
 			// Scan attributes — multiple slots can share one attribute.
 			// Collect attrs to remove AFTER iteration (mutating during it
 			// shifts indices on some DOM implementations).

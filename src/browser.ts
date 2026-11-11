@@ -126,6 +126,8 @@ export class WebStorage {
 		const raw = this.get(key);
 		if (raw === null) return null;
 		try {
+			// NAMED CAST: the storage boundary. What was stored is the caller's
+			// claim about `T`; nothing here can check it.
 			return JSON.parse(raw) as T;
 		} catch {
 			return null;
@@ -236,6 +238,7 @@ export function persistedSignal<T>(
 		const onStorage = (event: StorageEvent) => {
 			if (event.key !== fullKey || event.newValue === null) return;
 			try {
+				// NAMED CAST: the storage boundary, as in `getJSON`.
 				sig(JSON.parse(event.newValue) as T);
 			} catch {
 				// Ignore a malformed cross-tab write.

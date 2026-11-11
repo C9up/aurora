@@ -37,6 +37,8 @@ export function clearAurora(): void {
 	instance = undefined;
 }
 
+// NAMED CAST: the proxy's target is never read — every access goes through
+// `get` to the bound manager — so it only has to carry the type.
 const aurora: AuroraManager = new Proxy({} as AuroraManager, {
 	get(_target, prop) {
 		// A module loader inspects what it imports before anyone uses it: it reads

@@ -91,7 +91,6 @@ export function isTemplateResult(value: unknown): value is TemplateResult {
 	return (
 		typeof value === "object" &&
 		value !== null &&
-		(value as { [TEMPLATE_RESULT_BRAND]?: boolean })[TEMPLATE_RESULT_BRAND] ===
-			true
+		Reflect.get(value, TEMPLATE_RESULT_BRAND) === true
 	);
 }

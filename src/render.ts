@@ -17,7 +17,20 @@ import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { type EachList, readEach, readEachItems } from "./each.js";
 import { AuroraError } from "./errors.js";
 import { getTemplate } from "./html.js";
-import { effect, isSignal, type Signal, signal, untrack } from "./reactive.js";
+import {
+	isChildNode,
+	isCommentNode,
+	isElementNode,
+	isFragmentNode,
+} from "./nodes.js";
+import {
+	effect,
+	isSignal,
+	readValue,
+	type Signal,
+	signal,
+	untrack,
+} from "./reactive.js";
 import { assertNotMarkup, assertPropertyValue } from "./templateScanner.js";
 import {
 	type AttrSlot,
@@ -156,7 +169,13 @@ export function mount(
 	queue: MountQueue,
 ): Mounted {
 	const tpl = getTemplate(result.strings);
-	const fragment = tpl.element.content.cloneNode(true) as DocumentFragment;
+	const fragment = tpl.element.content.cloneNode(true);
+	if (!isFragmentNode(fragment)) {
+		throw new AuroraError(
+			"E_AURORA_INTERNAL",
+			"[aurora] render: cloning a template's content did not give a fragment",
+		);
+	}
 	// Before any slot puts its content in.
 	const owned = Array.from(fragment.childNodes);
 
@@ -200,7 +219,26 @@ export function mount(
 		// type (Text/Comment) — casting it to Element and calling setAttribute
 		// would throw "setAttribute is not a function". Degrade like the null
 		// case (skip the binding) instead of crashing the whole render.
-		if (slot.kind !== "text" && node.nodeType !== 1) {
+		if (slot.kind === "text") {
+			// A text slot is anchored on the marker comment the template put there.
+			if (!isCommentNode(node)) {
+				if (typeof console !== "undefined") {
+					console.warn(
+						`[aurora] render: slot ${i} (text) path ${slot.path.join(".")} resolved to a node that is not its marker — skipping binding`,
+					);
+				}
+				continue;
+			}
+			applyTextSlot(
+				slot,
+				node,
+				bindTemplateContext(result, result.values[i]),
+				cleanups,
+				queue,
+			);
+			continue;
+		}
+		if (!isElementNode(node)) {
 			if (typeof console !== "undefined") {
 				console.warn(
 					`[aurora] render: slot ${i} (${slot.kind}) path ${slot.path.join(".")} resolved to a non-element node — skipping binding`,
@@ -209,13 +247,9 @@ export function mount(
 			continue;
 		}
 		if (slot.kind === "attr" && slot.staticParts !== undefined) {
-			collectMultiAttr(slot, node as Element, result.values[i], multiGroups);
+			collectMultiAttr(slot, node, result.values[i], multiGroups);
 		} else {
-			const value =
-				slot.kind === "text"
-					? bindTemplateContext(result, result.values[i])
-					: result.values[i];
-			applySlot(slot, node, value, cleanups, queue);
+			applyElementSlot(slot, node, result.values[i], cleanups);
 		}
 	}
 
@@ -243,28 +277,24 @@ function resolvePath(root: ParentNode, path: NodePath): Node | null {
 	return node;
 }
 
-function applySlot(
-	slot: Slot,
-	node: Node,
+function applyElementSlot(
+	slot: Exclude<Slot, TextSlot>,
+	node: Element,
 	value: unknown,
 	cleanups: Disposer[],
-	queue: MountQueue,
 ): void {
 	switch (slot.kind) {
-		case "text":
-			applyTextSlot(slot, node as Comment, value, cleanups, queue);
-			return;
 		case "attr":
-			applyAttrSlot(slot, node as Element, value, cleanups);
+			applyAttrSlot(slot, node, value, cleanups);
 			return;
 		case "boolean-attr":
-			applyBooleanAttrSlot(slot, node as Element, value, cleanups);
+			applyBooleanAttrSlot(slot, node, value, cleanups);
 			return;
 		case "prop":
-			applyPropSlot(slot, node as Element, value, cleanups);
+			applyPropSlot(slot, node, value, cleanups);
 			return;
 		case "event":
-			applyEventSlot(slot, node as Element, value, cleanups);
+			applyEventSlot(slot, node, value, cleanups);
 			return;
 	}
 }
@@ -362,7 +392,7 @@ function applyTextSlot(
 			// value reads — the `onMount` of what it swapped in — belongs to that
 			// component, as a list's rows own theirs (see `bindEach`): tracked
 			// here, it rebuilt everything the slot held each time it changed.
-			const next = (value as () => unknown)();
+			const next = readValue(value);
 			untrack(() => set(next));
 		});
 		// Root disposal tears down the slot's own effect AND whatever
@@ -655,10 +685,14 @@ function renderValueIntoNodes(
 		const { fragment, owned } = mount(value, cleanups, queue);
 		return { nodes: Array.from(fragment.childNodes), owned };
 	}
-	const node =
-		value instanceof Node
-			? (value as ChildNode)
-			: document.createTextNode(String(value));
+	if (value instanceof Node) {
+		if (isChildNode(value)) return { nodes: [value], owned: [value] };
+		// A fragment is its children: inserting one empties it, so a range that
+		// held the fragment would hold nothing.
+		const nodes = Array.from(value.childNodes);
+		return { nodes, owned: [...nodes] };
+	}
+	const node = document.createTextNode(String(value));
 	return { nodes: [node], owned: [node] };
 }
 
@@ -682,7 +716,7 @@ function applyAttrSlot(
 		}
 	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply((value as () => unknown)()));
+		const dispose = effect(() => apply(readValue(value)));
 		cleanups.push(dispose);
 	} else {
 		apply(value);
@@ -696,7 +730,7 @@ function collectMultiAttr(
 	groups: Map<string, MultiAttrGroup>,
 ): void {
 	if (!slot.staticParts) return;
-	const key = `${slot.name}::${(slot.path as readonly number[]).join(".")}`;
+	const key = `${slot.name}::${slot.path.join(".")}`;
 	let group = groups.get(key);
 	if (!group) {
 		group = {
@@ -717,7 +751,7 @@ function applyMultiAttrGroup(
 	function join(): string {
 		let out = group.staticParts[0] ?? "";
 		for (let i = 0; i < group.values.length; i++) {
-			const v = resolveReactive(group.values[i]);
+			const v = readValue(group.values[i]);
 			assertNotMarkup(v);
 			out += v == null || v === false ? "" : String(v);
 			out += group.staticParts[i + 1] ?? "";
@@ -743,12 +777,6 @@ function applyMultiAttrGroup(
 	}
 }
 
-function resolveReactive(value: unknown): unknown {
-	if (isSignal(value)) return value();
-	if (typeof value === "function") return (value as () => unknown)();
-	return value;
-}
-
 function applyBooleanAttrSlot(
 	slot: BooleanAttrSlot,
 	el: Element,
@@ -760,7 +788,7 @@ function applyBooleanAttrSlot(
 		else el.removeAttribute(slot.name);
 	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply((value as () => unknown)()));
+		const dispose = effect(() => apply(readValue(value)));
 		cleanups.push(dispose);
 	} else {
 		apply(value);
@@ -779,7 +807,7 @@ function applyPropSlot(
 		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
 	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply((value as () => unknown)()));
+		const dispose = effect(() => apply(readValue(value)));
 		cleanups.push(dispose);
 	} else {
 		apply(value);
@@ -793,7 +821,10 @@ function applyEventSlot(
 	cleanups: Disposer[],
 ): void {
 	if (typeof value !== "function") return;
-	const handler = value as EventListener;
+	// Called as the DOM calls a listener: `this` is the element it is bound to.
+	const handler = (event: Event): void => {
+		Reflect.apply(value, event.currentTarget, [event]);
+	};
 	el.addEventListener(slot.event, handler);
 	cleanups.push(() => el.removeEventListener(slot.event, handler));
 }

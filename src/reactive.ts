@@ -10,6 +10,7 @@
  * cleanup function that runs before the next re-execution and at disposal.
  */
 
+import { AuroraError } from "./errors.js";
 import type { EffectCallback } from "./types.js";
 
 /** Reader-only view of a signal. Returned by `memo()`. */
@@ -37,9 +38,18 @@ export const SIGNAL_BRAND: unique symbol = Symbol.for("aurora:signal");
 interface Effect {
 	run(): void;
 	dispose(): void;
-	readonly dependencies: Set<SignalNode<unknown>>;
+	readonly dependencies: Set<Dependency>;
 	readonly cleanups: Array<() => void>;
 	disposed: boolean;
+}
+
+/**
+ * What an effect keeps of a signal it read: only the set to leave when it
+ * re-runs or is disposed. Narrower than `SignalNode`, so a node of any `T`
+ * fits without a cast.
+ */
+interface Dependency {
+	readonly observers: Set<Effect>;
 }
 
 /** Internal node shared by every signal — the dependency-tracking primitive. */
@@ -108,15 +118,12 @@ export function signal<T>(
 			const obs = activeObserver();
 			if (obs) {
 				node.observers.add(obs);
-				obs.dependencies.add(node as SignalNode<unknown>);
+				obs.dependencies.add(node);
 			}
 			return node.value;
 		}
 		const arg = args[0];
-		const next =
-			typeof arg === "function"
-				? (arg as (prev: T) => T)(node.value)
-				: (arg as T);
+		const next = isUpdater(arg) ? arg(node.value) : arg;
 		if (node.equals(node.value, next)) return;
 		node.value = next;
 		// Snapshot observers before iteration — an effect's run() may
@@ -137,7 +144,19 @@ export function signal<T>(
 	// rest of the file then has to work around.
 	Reflect.set(accessor, SIGNAL_BRAND, true);
 	signalNodes.set(accessor, node);
+	// NAMED CAST: one implementation behind three overloads. TypeScript cannot
+	// check an overloaded call signature against a single implementation, and
+	// the brand it requires was stamped just above.
 	return accessor as Signal<T>;
+}
+
+/**
+ * Is a write's argument an updater rather than the next value? A function is
+ * always read as an updater, which is why a signal holding a function is
+ * written through `sig(() => fn)`.
+ */
+function isUpdater<T>(arg: T | ((prev: T) => T)): arg is (prev: T) => T {
+	return typeof arg === "function";
 }
 
 /**
@@ -161,11 +180,20 @@ export function observerCount(sig: object): number {
 	return node ? node.observers.size : -1;
 }
 
+/**
+ * @internal A slot value as the renderers read it: a signal or a reactive
+ * expression is called, anything else is the value itself.
+ */
+export function readValue(value: unknown): unknown {
+	if (typeof value !== "function") return value;
+	const read: unknown = Reflect.apply(value, undefined, []);
+	return read;
+}
+
 /** Runtime guard — distinguishes a signal accessor from any other callable. */
 export function isSignal<T = unknown>(value: unknown): value is Signal<T> {
 	return (
-		typeof value === "function" &&
-		(value as { [SIGNAL_BRAND]?: boolean })[SIGNAL_BRAND] === true
+		typeof value === "function" && Reflect.get(value, SIGNAL_BRAND) === true
 	);
 }
 
@@ -269,13 +297,22 @@ export function untrack<T>(fn: () => T): T {
  * recomputation.
  */
 export function memo<T>(fn: () => T): ReadSignal<T> {
-	const internal = signal<T | undefined>(undefined);
+	// Created by the first run, which `effect` makes synchronously — so the
+	// value is never read before it exists, and needs no placeholder.
+	let internal: Signal<T> | undefined;
 	effect(() => {
-		internal(fn());
+		const next = fn();
+		if (internal === undefined) internal = signal(next);
+		else internal(() => next);
 	});
-	const reader = (() => internal() as T) as ReadSignal<T>;
-	(reader as { [SIGNAL_BRAND]: true })[SIGNAL_BRAND] = true;
-	return reader;
+	const current = internal;
+	if (current === undefined) {
+		throw new AuroraError(
+			"E_AURORA_INTERNAL",
+			"[aurora] memo: the first computation did not run",
+		);
+	}
+	return Object.assign(() => current(), { [SIGNAL_BRAND]: true as const });
 }
 
 function runCleanups(eff: Effect): void {

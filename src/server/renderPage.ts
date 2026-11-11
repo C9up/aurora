@@ -329,7 +329,7 @@ async function renderPageInScope<P>(
 	const pageProps = mergeProps(shared, props);
 	// The factory must be invoked the SAME way client-side for hydrate
 	// to find matching slots — `Page(props)` is the contract.
-	const tree = await factory(pageProps as never);
+	const tree = await factory(pageProps);
 	const body = renderToString(tree);
 
 	const importmap = {

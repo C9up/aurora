@@ -25,7 +25,13 @@ import { type EachList, readEach } from "./each.js";
 import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { withIdScope } from "./id.js";
-import { effect, isSignal, signal, untrack } from "./reactive.js";
+import {
+	isChildNode,
+	isCommentNode,
+	isElementNode,
+	isTextNode,
+} from "./nodes.js";
+import { effect, isSignal, readValue, signal, untrack } from "./reactive.js";
 import {
 	bindEach,
 	type Disposer,
@@ -108,8 +114,8 @@ function collectMarkerPairs(container: Node): MarkerPair[] {
 	const pairs: MarkerPair[] = [];
 	const stack: Comment[] = [];
 	const visit = (node: Node): void => {
-		if (node.nodeType === 8 /* Comment */) {
-			const c = node as Comment;
+		if (isCommentNode(node)) {
+			const c = node;
 			if (c.data === SLOT_START) {
 				stack.push(c);
 			} else if (c.data === SLOT_END) {
@@ -167,7 +173,11 @@ function renderValueToNodes(
 		const { fragment } = mount(value, cleanups, queue);
 		return Array.from(fragment.childNodes);
 	}
-	if (value instanceof Node) return [value as ChildNode];
+	if (value instanceof Node) {
+		// A fragment is its children: inserting one empties it, so a range that
+		// held the fragment would hold nothing.
+		return isChildNode(value) ? [value] : Array.from(value.childNodes);
+	}
 	return [doc.createTextNode(String(value))];
 }
 
@@ -459,7 +469,7 @@ function hydrateEach(
 function rangeOf({ start, end }: MarkerPair): ChildNode[] {
 	const range: ChildNode[] = [];
 	for (let n = start.nextSibling; n !== null && n !== end; n = n.nextSibling) {
-		range.push(n as ChildNode);
+		range.push(n);
 	}
 	return range;
 }
@@ -674,12 +684,9 @@ function hydrateTemplateResult(
 			continue;
 		}
 		if (slot.kind === "attr" && slot.staticParts !== undefined) {
-			collectMultiAttr(
-				slot,
-				liveNode as Element,
-				result.values[i],
-				multiGroups,
-			);
+			if (isElementNode(liveNode)) {
+				collectMultiAttr(slot, liveNode, result.values[i], multiGroups);
+			}
 			continue;
 		}
 		hydrateSlot(
@@ -714,7 +721,7 @@ function collectMultiAttr(
 	groups: Map<string, MultiAttrGroup>,
 ): void {
 	if (!slot.staticParts) return;
-	const key = `${slot.name}::${(slot.path as readonly number[]).join(".")}`;
+	const key = `${slot.name}::${slot.path.join(".")}`;
 	let group = groups.get(key);
 	if (!group) {
 		group = { el, name: slot.name, staticParts: slot.staticParts, values: [] };
@@ -731,8 +738,7 @@ function applyMultiAttrGroup(
 		let out = group.staticParts[0] ?? "";
 		for (let i = 0; i < group.values.length; i++) {
 			const v = group.values[i];
-			const resolved =
-				isSignal(v) || typeof v === "function" ? (v as () => unknown)() : v;
+			const resolved = readValue(v);
 			assertNotMarkup(resolved);
 			out += resolved == null || resolved === false ? "" : String(resolved);
 			out += group.staticParts[i + 1] ?? "";
@@ -780,8 +786,8 @@ function collapseMarkerRanges(nodes: ChildNode[]): ChildNode[] {
 	const out: ChildNode[] = [];
 	let depth = 0;
 	for (const n of nodes) {
-		if (n.nodeType === 8 /* Comment */) {
-			const data = (n as Comment).data;
+		if (isCommentNode(n)) {
+			const data = n.data;
 			if (data === SLOT_START) {
 				if (depth === 0) out.push(n); // the whole range counts as one node
 				depth += 1;
@@ -826,7 +832,11 @@ function hydrateSlot(
 	// type (Text/Comment); casting it to Element and calling setAttribute would
 	// throw "setAttribute is not a function". Skip the binding (fail-soft) rather
 	// than crash hydration. Text slots accept text/comment/element, so they pass.
-	if (slot.kind !== "text" && node.nodeType !== 1) {
+	if (slot.kind === "text") {
+		hydrateTextSlot(node, value, cleanups, queue, markerCursor);
+		return;
+	}
+	if (!isElementNode(node)) {
 		if (typeof console !== "undefined") {
 			console.warn(
 				`[aurora] hydrate: slot (${slot.kind}) path ${slot.path.join(".")} resolved to a non-element node — skipping binding`,
@@ -835,20 +845,17 @@ function hydrateSlot(
 		return;
 	}
 	switch (slot.kind) {
-		case "text":
-			hydrateTextSlot(node, value, cleanups, queue, markerCursor);
-			return;
 		case "attr":
-			hydrateAttrSlot(slot, node as Element, value, cleanups);
+			hydrateAttrSlot(slot, node, value, cleanups);
 			return;
 		case "boolean-attr":
-			hydrateBooleanAttrSlot(slot, node as Element, value, cleanups);
+			hydrateBooleanAttrSlot(slot, node, value, cleanups);
 			return;
 		case "prop":
-			hydratePropSlot(slot, node as Element, value, cleanups);
+			hydratePropSlot(slot, node, value, cleanups);
 			return;
 		case "event":
-			hydrateEventSlot(slot, node as Element, value, cleanups);
+			hydrateEventSlot(slot, node, value, cleanups);
 			return;
 	}
 }
@@ -884,9 +891,7 @@ function hydrateTextSlot(
 	}
 
 	const reactiveFn =
-		isSignal(value) || typeof value === "function"
-			? (value as () => unknown)
-			: null;
+		typeof value === "function" ? (): unknown => readValue(value) : null;
 
 	// Reactive slot — its value TYPE can change across renders (scalar ↔ template
 	// ↔ array), e.g. `${() => collapsed() ? '' : html`<span>…</span>`}`. Always
@@ -907,7 +912,7 @@ function hydrateTextSlot(
 			n !== null && n !== pair.end;
 			n = n.nextSibling
 		) {
-			range.push(n as ChildNode);
+			range.push(n);
 		}
 		if (isTemplateResult(value)) {
 			hydrateTemplateResult(value, range, cleanups, queue, markerCursor);
@@ -932,8 +937,8 @@ function legacyHydrateTextSlot(
 	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
-	if (isSignal(value) || typeof value === "function") {
-		const fn = value as () => unknown;
+	if (typeof value === "function") {
+		const fn = (): unknown => readValue(value);
 		// First, evaluate eagerly to detect a structured value (nested
 		// TemplateResult / array) — those need a SWAP on change, which
 		// means a node range, which the SSR boundary markers give us.
@@ -958,10 +963,10 @@ function legacyHydrateTextSlot(
 						"on signal changes. Re-render with a current @c9up/aurora SSR build.",
 				);
 			}
-			if (isTemplateResult(first)) {
+			if (isTemplateResult(first) && isChildNode(commentMarker)) {
 				hydrateTemplateResult(
 					first,
-					[commentMarker as ChildNode],
+					[commentMarker],
 					cleanups,
 					queue,
 					markerCursor,
@@ -969,12 +974,12 @@ function legacyHydrateTextSlot(
 			}
 			return;
 		}
-		let textNode =
-			commentMarker.nodeType === 3 /* TEXT */
-				? (commentMarker as Text)
-				: commentMarker.previousSibling?.nodeType === 3
-					? (commentMarker.previousSibling as Text)
-					: null;
+		const before = commentMarker.previousSibling;
+		let textNode = isTextNode(commentMarker)
+			? commentMarker
+			: before !== null && isTextNode(before)
+				? before
+				: null;
 		if (
 			!textNode &&
 			commentMarker.nodeType === 8 /* Comment */ &&
@@ -1012,20 +1017,22 @@ function legacyHydrateTextSlot(
 				n !== null && n !== pair.end;
 				n = n.nextSibling
 			) {
-				range.push(n as ChildNode);
+				range.push(n);
 			}
 			hydrateTemplateResult(value, range, cleanups, queue, markerCursor);
 			return;
 		}
 		// Legacy markup without markers (older SSR build): best-effort against
 		// the single resolved node.
-		hydrateTemplateResult(
-			value,
-			[commentMarker as ChildNode],
-			cleanups,
-			queue,
-			markerCursor,
-		);
+		if (isChildNode(commentMarker)) {
+			hydrateTemplateResult(
+				value,
+				[commentMarker],
+				cleanups,
+				queue,
+				markerCursor,
+			);
+		}
 		return;
 	}
 	// Static value — SSR rendered it once and we don't need to do
@@ -1052,7 +1059,7 @@ function hydrateAttrSlot(
 		}
 	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply((value as () => unknown)()));
+		const dispose = effect(() => apply(readValue(value)));
 		cleanups.push(dispose);
 	}
 	// Static attrs need no hydration — SSR already wrote them, guarded.
@@ -1069,7 +1076,7 @@ function hydrateBooleanAttrSlot(
 		else el.removeAttribute(slot.name);
 	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply((value as () => unknown)()));
+		const dispose = effect(() => apply(readValue(value)));
 		cleanups.push(dispose);
 	}
 }
@@ -1088,7 +1095,7 @@ function hydratePropSlot(
 		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
 	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply((value as () => unknown)()));
+		const dispose = effect(() => apply(readValue(value)));
 		cleanups.push(dispose);
 	} else {
 		apply(value);
@@ -1102,7 +1109,10 @@ function hydrateEventSlot(
 	cleanups: Disposer[],
 ): void {
 	if (typeof value !== "function") return;
-	const handler = value as EventListener;
+	// Called as the DOM calls a listener: `this` is the element it is bound to.
+	const handler = (event: Event): void => {
+		Reflect.apply(value, event.currentTarget, [event]);
+	};
 	el.addEventListener(slot.event, handler);
 	cleanups.push(() => el.removeEventListener(slot.event, handler));
 }

@@ -222,6 +222,9 @@ export function component<P = Record<string, never>>(
 			// slot — the component updating its own state rebuilt everything the
 			// slot held, often the page. Setup runs once; what it shows follows
 			// its signals through the template's own bindings.
+			// NAMED CAST: a component called without props gets an empty object,
+			// which is what its props type says when it declares none
+			// (`Record<string, never>`) and all a caller could omit them for.
 			result = untrack(() => setup((props ?? ({} as P)) as P));
 		} catch (error) {
 			// Nothing will ever mount it, so nothing else would end what it began.
@@ -308,9 +311,12 @@ export function inject<T>(context: Context<T>): T {
 		frame = frame.above
 	) {
 		if (frame.provided.has(context.key)) {
+			// NAMED CAST: `provide` stored it under this context's key, typed `T`
+			// there; the map erases what each key holds.
 			return frame.provided.get(context.key) as T;
 		}
 	}
+	// NAMED CAST: `hasDefault` is what says `defaultValue` was given as a `T`.
 	if (context.hasDefault) return context.defaultValue as T;
 	// Naming both halves, because the fix is almost always one of two things:
 	// the component is used outside its parent, or its parent read its
@@ -344,7 +350,6 @@ function wrapWithLifecycle(
 	result: TemplateResult,
 	ctx: ComponentContext,
 ): TemplateResult {
-	const carrier = result as { [COMPONENT_LIFECYCLE]?: ComponentLifecycle };
 	// MERGE, never overwrite. A component is free to return another one's
 	// result rather than a template of its own —
 	//
@@ -359,9 +364,9 @@ function wrapWithLifecycle(
 	//
 	// This one's hooks go FIRST: it is the outer component, and the renderer
 	// drains the queue outermost-first everywhere else.
-	const existing = carrier[COMPONENT_LIFECYCLE];
+	const existing = readComponentLifecycle(result);
 	const cleanups = [...ctx.owned, ...ctx.cleanups];
-	carrier[COMPONENT_LIFECYCLE] =
+	const lifecycle: ComponentLifecycle =
 		existing === undefined
 			? { mountHooks: ctx.mountHooks, cleanups, disposers: ctx.owned }
 			: {
@@ -369,6 +374,9 @@ function wrapWithLifecycle(
 					cleanups: [...cleanups, ...existing.cleanups],
 					disposers: [...ctx.owned, ...existing.disposers],
 				};
+	// Through Reflect: the result is a template, and the lifecycle rides on it
+	// under a symbol rather than being part of what a template is.
+	Reflect.set(result, COMPONENT_LIFECYCLE, lifecycle);
 	return result;
 }
 
@@ -381,9 +389,21 @@ function wrapWithLifecycle(
 export function readComponentLifecycle(
 	result: TemplateResult,
 ): ComponentLifecycle | undefined {
-	return (result as { [COMPONENT_LIFECYCLE]?: ComponentLifecycle })[
-		COMPONENT_LIFECYCLE
-	];
+	const carried: unknown = Reflect.get(result, COMPONENT_LIFECYCLE);
+	return isComponentLifecycle(carried) ? carried : undefined;
+}
+
+function isComponentLifecycle(value: unknown): value is ComponentLifecycle {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"mountHooks" in value &&
+		Array.isArray(value.mountHooks) &&
+		"cleanups" in value &&
+		Array.isArray(value.cleanups) &&
+		"disposers" in value &&
+		Array.isArray(value.disposers)
+	);
 }
 
 // ─── Lifecycle ────────────────────────────────────────────────────

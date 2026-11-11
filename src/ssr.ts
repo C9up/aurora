@@ -13,7 +13,7 @@ import {
 	readComponentLifecycle,
 	runInTemplateContext,
 } from "./component.js";
-import { isSignal } from "./reactive.js";
+import { isSignal, readValue } from "./reactive.js";
 import {
 	assertBindable,
 	assertBindableProperty,
@@ -477,7 +477,7 @@ const SLOT_END = "/$";
 function resolveBooleanValue(value: unknown): boolean {
 	if (isSignal(value) || typeof value === "function") {
 		try {
-			return Boolean((value as () => unknown)());
+			return Boolean(readValue(value));
 		} catch {
 			// Same fail-soft as stringifyValue: an expression that throws
 			// server-side leaves the attribute off and lets the client effect

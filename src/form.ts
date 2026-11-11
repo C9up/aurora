@@ -117,8 +117,8 @@ function computeErrors<T>(
 			errors[issue.field] = issue.message;
 		}
 	}
-	// Boundary: a schema's errors are string-keyed and it doesn't know `keyof T`,
-	// so narrow the validated key space to the form's field type here.
+	// NAMED CAST: a schema's errors are string-keyed and it doesn't know
+	// `keyof T`, so the validated key space is narrowed to the form's fields here.
 	return errors as FieldErrors<T>;
 }
 
@@ -179,7 +179,14 @@ class FormController<T> implements Form<T> {
 
 	async handleSubmit(event?: { preventDefault(): void }): Promise<void> {
 		event?.preventDefault();
-		this.#touched(new Set(Object.keys(this.#values() as object)));
+		const values: unknown = this.#values();
+		this.#touched(
+			new Set(
+				typeof values === "object" && values !== null
+					? Object.keys(values)
+					: [],
+			),
+		);
 		if (!this.validate()) return;
 		await this.#command.run(this.#values());
 	}

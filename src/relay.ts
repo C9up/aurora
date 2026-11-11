@@ -175,6 +175,8 @@ const CLIENT: RelayClient = {
 			handlers = new Set();
 			STATE.channels.set(channel, handlers);
 		}
+		// NAMED CAST: one set holds every channel's handlers, so each is stored
+		// with its event type erased; the channel name is what pairs them.
 		const adapted = handler as (event: unknown) => void;
 		handlers.add(adapted);
 
