@@ -538,6 +538,37 @@ describe("aurora > renderPage > CSP nonce", () => {
 		await renderPage(ctx, pages, "Hello", { name: "World" });
 		expect(getBody()).toContain('nonce="a&quot;b"');
 	});
+
+	it("escapes lang, rootId and rootClass into their attributes", async () => {
+		// Each comes from the application, often from config or a locale, and a
+		// quote in any of them would close the attribute and open a handler.
+		const pages = new Pages({ root: FIXTURES });
+		const { ctx, getBody } = makeCtx();
+		await renderPage(
+			ctx,
+			pages,
+			"Hello",
+			{ name: "World" },
+			{
+				lang: 'fr" onload="alert(1)',
+				rootId: 'app" onclick="alert(2)',
+				rootClass: 'shell" onmouseover="alert(3)<x',
+			},
+		);
+		const out = getBody();
+		expect(out).toContain('<html lang="fr&quot; onload=&quot;alert(1)">');
+		expect(out).toContain(
+			'<div id="app&quot; onclick=&quot;alert(2)" class="shell&quot; onmouseover=&quot;alert(3)&lt;x">',
+		);
+		// The markup only: the page data repeats rootId as JSON, where the quote
+		// is `\"` inside a script that is not HTML.
+		const dataStart = out.indexOf('<script id="aurora-page-data"');
+		expect(dataStart).toBeGreaterThan(0);
+		const markup = out.slice(0, dataStart);
+		for (const handler of ["onload=", "onclick=", "onmouseover="]) {
+			expect(markup).not.toContain(`" ${handler}`);
+		}
+	});
 });
 
 describe("aurora > renderPage seeds from either cookie reader", () => {
