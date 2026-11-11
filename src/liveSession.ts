@@ -18,6 +18,7 @@
 import { withIdScope } from "./id.js";
 import { effect, isSignal } from "./reactive.js";
 import { renderToString } from "./ssr.js";
+import { trailingDirective } from "./templateScanner.js";
 import type { TemplateResult } from "./types.js";
 
 /** A precise per-slot update: slot index (positional in the template) + value. */
@@ -105,8 +106,17 @@ export function mountLiveSession(
 	// subscribes; later runs (a signal changed) record the slot's new value.
 	const stops = view.values.map((value, slot) => {
 		if (!isSignal(value) && typeof value !== "function") return () => {};
+		// A listener is a function too, and the view is the template the client
+		// hydrates, so it carries them. Calling one here ran a click handler at
+		// mount, before anyone clicked — and one that reads and writes the same
+		// signal subscribed this effect inside its own write and recursed until
+		// the stack gave out. The string renderer drops these slots; so does this.
+		if (trailingDirective(view.strings[slot] ?? "")?.name.startsWith("@")) {
+			return () => {};
+		}
 		return effect(() => {
-			const next = String((value as () => unknown)());
+			const read: unknown = Reflect.apply(value, undefined, []);
+			const next = String(read);
 			if (priming) return;
 			pending.set(slot, next);
 			scheduleFlush();

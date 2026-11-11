@@ -1113,3 +1113,32 @@ function rawTextMessage(scanner: TemplateScanner): string {
 	}
 	return `[aurora] a ${INTERPOLATION} cannot go inside <${name}> — its content is not markup, so escaping it as HTML neither protects it nor keeps it valid. Build the value outside the template and pass it in another way.`;
 }
+
+/** A directive a template segment ends on, as `trailingDirective` reads it. */
+export interface TrailingDirective {
+	/** The directive as written: `@click`, `?disabled`, `.value`. */
+	readonly name: string;
+	/** Its quote, `""` when unquoted. The next segment opens with it. */
+	readonly quote: '"' | "'" | "";
+	/** Everything the directive spans at the end of the segment, from its whitespace. */
+	readonly spelling: string;
+}
+
+/**
+ * The directive whose value the slot after `segment` is — ` @click="`,
+ * ` ?disabled=`, ` .value='` — or undefined when the slot is anything else.
+ *
+ * One reading for every server path that has to tell a listener from a value:
+ * the string renderer drops a listener, and a live session must not take one
+ * for a reactive accessor and call it. Both quote styles and none: matching
+ * only `="` left `@click='${handler}'` unrecognised, and the handler ran.
+ */
+export function trailingDirective(
+	segment: string,
+): TrailingDirective | undefined {
+	const match = /\s([@?.][\w-]+)=("|'|)$/.exec(segment);
+	if (match === null) return undefined;
+	const [spelling, name = "", written] = match;
+	const quote = written === '"' ? '"' : written === "'" ? "'" : "";
+	return { name, quote, spelling };
+}

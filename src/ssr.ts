@@ -17,6 +17,7 @@ import {
 	assertNotMarkup,
 	type BindablePosition,
 	TemplateScanner,
+	trailingDirective,
 } from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
 import {
@@ -238,8 +239,8 @@ function stringifyTemplate(result: TemplateResult): string {
 		// unrecognised, so the handler fell through to `stringifyValue`, which
 		// CALLED it — a client event handler running on the server, its return
 		// value written into the HTML, and any exception swallowed.
-		const directiveMatch = segment.match(/\s([@?.][\w-]+)=("|'|)$/);
-		const skipValue = directiveMatch !== null;
+		const directiveMatch = trailingDirective(segment);
+		const skipValue = directiveMatch !== undefined;
 		// Set when the skipped directive is a boolean attribute, which — unlike
 		// the other two — still has markup to emit. See below.
 		let booleanAttrName: string | undefined;
@@ -250,9 +251,9 @@ function stringifyTemplate(result: TemplateResult): string {
 		// Set for any `.prop`, checked once the segment is written for the same
 		// reason: whether `.textContent` is harmless depends on the element.
 		let propertyName: string | undefined;
-		if (directiveMatch) {
-			const [whole = "", directive = "", quote] = directiveMatch;
-			segment = segment.slice(0, segment.length - whole.length);
+		if (directiveMatch !== undefined) {
+			const { name: directive, quote, spelling } = directiveMatch;
+			segment = segment.slice(0, segment.length - spelling.length);
 			// `?disabled=${x}` is HTML STATE, not a client-only binding.
 			// `@click` is a listener and `.value` a DOM property: neither
 			// exists until the runtime binds it, so dropping them is right.
@@ -268,8 +269,7 @@ function stringifyTemplate(result: TemplateResult): string {
 			// it has no markup to be written into.
 			valueDirective = directive === ".value";
 			// Only a quoted directive leaves a closing quote to swallow.
-			pendingClosingQuote =
-				quote === '"' ? '"' : quote === "'" ? "'" : undefined;
+			pendingClosingQuote = quote === "" ? undefined : quote;
 		}
 		write(segment);
 		if (propertyName !== undefined) {
