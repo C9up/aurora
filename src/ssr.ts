@@ -8,7 +8,11 @@
  * lands in the browser.
  */
 
-import { hasTemplateContext, runInTemplateContext } from "./component.js";
+import {
+	hasTemplateContext,
+	readComponentLifecycle,
+	runInTemplateContext,
+} from "./component.js";
 import { isSignal } from "./reactive.js";
 import {
 	assertBindable,
@@ -55,7 +59,43 @@ const VOID_ELEMENTS = new Set([
  * Cloudflare Workers, Bun, Deno).
  */
 export function renderToString(result: TemplateResult): string {
-	return stringifyTemplateResult(result);
+	// The server has no unmount, so the end of the string is the end of every
+	// component in it: the effects and memos their setups created subscribed to
+	// what they read, and a signal that outlives the request — a module-level
+	// store, a service's state — kept one dead observer per render otherwise,
+	// each holding that request's whole tree. `onUnmount` is not run: nothing
+	// was mounted.
+	const owned = new Set<() => void>();
+	try {
+		return renderRetaining(result, owned);
+	} finally {
+		for (const dispose of owned) dispose();
+	}
+}
+
+/**
+ * Where the components being stringified hand their disposers. Set for the
+ * length of one {@link renderRetaining} call.
+ */
+let retained: Set<() => void> | undefined;
+
+/**
+ * @internal Stringify `result`, adding the disposers of every component it
+ * renders to `owned` instead of running them. For a caller whose components
+ * outlive the string — a live session keeps patching from them, and ends them
+ * when it is disposed.
+ */
+export function renderRetaining(
+	result: TemplateResult,
+	owned: Set<() => void>,
+): string {
+	const saved = retained;
+	retained = owned;
+	try {
+		return stringifyTemplateResult(result);
+	} finally {
+		retained = saved;
+	}
 }
 
 /**
@@ -89,6 +129,11 @@ interface HeldValue {
 
 /** In the context `result` was written under — see `runInTemplateContext`. */
 function stringifyTemplateResult(result: TemplateResult): string {
+	// Before stringifying, so a render that throws still ends what it began.
+	const lifecycle = readComponentLifecycle(result);
+	if (lifecycle !== undefined && retained !== undefined) {
+		for (const dispose of lifecycle.disposers) retained.add(dispose);
+	}
 	if (!hasTemplateContext(result)) return stringifyTemplate(result);
 	return runInTemplateContext(result, () => stringifyTemplate(result));
 }

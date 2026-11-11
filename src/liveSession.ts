@@ -12,12 +12,12 @@
  * a separate module so those transport files import the core WITHOUT forming an
  * import cycle back through the barrel.
  *
- * Node-free / isomorphic: uses only `signal`/`effect`/`renderToString`.
+ * Node-free / isomorphic: uses only `signal`/`effect` and the string renderer.
  */
 
 import { withIdScope } from "./id.js";
 import { effect, isSignal } from "./reactive.js";
-import { renderToString } from "./ssr.js";
+import { renderRetaining } from "./ssr.js";
 import { trailingDirective } from "./templateScanner.js";
 import type { TemplateResult } from "./types.js";
 
@@ -81,6 +81,8 @@ export function mountLiveSession(
 	// one batch collapse to the last value.
 	const pending = new Map<number, string>();
 	const buffer = new Map<number, string>();
+	/** The disposers of the view's components, gathered as it is rendered. */
+	const owned = new Set<() => void>();
 	let priming = true;
 	let flushScheduled = false;
 
@@ -128,7 +130,10 @@ export function mountLiveSession(
 		// Scoped as well as the factory: a reactive slot holding a component
 		// (`${() => Card()}`) is invoked at render time, not at construction, so
 		// its ids are minted here.
-		renderToString: () => withIdScope(idScope, () => renderToString(view)),
+		// Retaining: the components in the view keep feeding this session's
+		// patches after the string is built, so they end with the session.
+		renderToString: () =>
+			withIdScope(idScope, () => renderRetaining(view, owned)),
 		dispatch(event, payload) {
 			// Own functions only. The name comes from the client, and looked up
 			// through the prototype chain it reached `constructor`, `toString` and
@@ -153,6 +158,8 @@ export function mountLiveSession(
 		},
 		dispose() {
 			for (const stop of stops) stop();
+			for (const end of owned) end();
+			owned.clear();
 			listeners.clear();
 			pending.clear();
 			buffer.clear();

@@ -33,6 +33,12 @@ import type { EffectCallback, TemplateResult } from "./types.js";
 class ComponentContext {
 	/** Cleanup functions to run at unmount. `onUnmount` pushes here. */
 	readonly cleanups: Disposer[] = [];
+	/**
+	 * The disposers of the effects and memos setup created. Kept apart from
+	 * `cleanups` because the server runs these and nothing else: it ends what a
+	 * render subscribed, but it never mounted anything to unmount.
+	 */
+	readonly owned: Disposer[] = [];
 	/** Mount hooks queued via `onMount` — flushed after setup returns. */
 	readonly mountHooks: Array<EffectCallback> = [];
 	/** Values this component provided, by context key. Empty for most. */
@@ -204,22 +210,28 @@ export function component<P = Record<string, never>>(
 		const ctx = new ComponentContext(nearestProvider());
 		contextStack.push(ctx);
 		// Own the reactive scope of setup: effects/memos created here register
-		// their disposer into ctx.cleanups and tear down at unmount, instead of
-		// leaking their signal subscriptions. Restored after setup so the outer
-		// scope (or none) resumes. Save/restore handles nested component() calls.
-		const prevOwner = setOwner(ctx.cleanups);
+		// their disposer into ctx.owned and tear down at unmount (or, on the
+		// server, once the string is built), instead of leaking their signal
+		// subscriptions. Restored after setup so the outer scope (or none)
+		// resumes. Save/restore handles nested component() calls.
+		const prevOwner = setOwner(ctx.owned);
+		let result: TemplateResult;
 		try {
 			// Untracked: a component is built inside the accessor of the slot that
 			// shows it, and a signal its setup read became a dependency of that
 			// slot — the component updating its own state rebuilt everything the
 			// slot held, often the page. Setup runs once; what it shows follows
 			// its signals through the template's own bindings.
-			const result = untrack(() => setup((props ?? ({} as P)) as P));
-			return wrapWithLifecycle(result, ctx);
+			result = untrack(() => setup((props ?? ({} as P)) as P));
+		} catch (error) {
+			// Nothing will ever mount it, so nothing else would end what it began.
+			for (const dispose of ctx.owned.splice(0)) dispose();
+			throw error;
 		} finally {
 			setOwner(prevOwner);
 			contextStack.pop();
 		}
+		return wrapWithLifecycle(result, ctx);
 	};
 }
 
@@ -322,7 +334,10 @@ const COMPONENT_LIFECYCLE: unique symbol = Symbol.for("aurora:component");
 
 interface ComponentLifecycle {
 	mountHooks: ReadonlyArray<EffectCallback>;
+	/** Everything to run at unmount: the disposers below, then `onUnmount`. */
 	cleanups: Disposer[];
+	/** Only the disposers of what setup created — what the server ends. */
+	disposers: Disposer[];
 }
 
 function wrapWithLifecycle(
@@ -345,12 +360,14 @@ function wrapWithLifecycle(
 	// This one's hooks go FIRST: it is the outer component, and the renderer
 	// drains the queue outermost-first everywhere else.
 	const existing = carrier[COMPONENT_LIFECYCLE];
+	const cleanups = [...ctx.owned, ...ctx.cleanups];
 	carrier[COMPONENT_LIFECYCLE] =
 		existing === undefined
-			? { mountHooks: ctx.mountHooks, cleanups: ctx.cleanups }
+			? { mountHooks: ctx.mountHooks, cleanups, disposers: ctx.owned }
 			: {
 					mountHooks: [...ctx.mountHooks, ...existing.mountHooks],
-					cleanups: [...ctx.cleanups, ...existing.cleanups],
+					cleanups: [...cleanups, ...existing.cleanups],
+					disposers: [...ctx.owned, ...existing.disposers],
 				};
 	return result;
 }
