@@ -39,7 +39,7 @@ afterAll(() => {
 
 async function get(
 	rest: string,
-	dotFiles?: "ignore" | "allow",
+	dotFiles?: "ignore" | "allow" | "deny",
 ): Promise<{ status: number; body: string }> {
 	let status = 200;
 	let body = "";
@@ -93,6 +93,24 @@ describe("aurora > serveAssets > dotfiles", () => {
 
 	it("still answers 403 for a traversal", async () => {
 		expect((await get("../../etc/passwd")).status).toBe(403);
+	});
+
+	it("answers 403 for every dotfile path, and a link to one, when told to deny", async () => {
+		for (const path of [
+			".env",
+			".git/config",
+			"sub/.hidden.js",
+			"sub\\.hidden.js",
+			"sub/../.env",
+			"config.js",
+		]) {
+			const reply = await get(path, "deny");
+			expect(reply.status, path).toBe(403);
+			expect(reply.body, path).not.toContain("hunter2");
+		}
+		// A missing dotfile is refused the same way: deny does not look first.
+		expect((await get(".nothing-here", "deny")).status).toBe(403);
+		expect((await get("Home.js", "deny")).status).toBe(200);
 	});
 
 	it("serves dotfiles when told to", async () => {
