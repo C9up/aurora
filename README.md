@@ -123,6 +123,11 @@ Still intentionally tracked as remaining work:
   `wireLiveEvents(router, live, identify)` answers 403 to any caller `identify`
   does not resolve to that owner, and `authorizeLiveChannel(live, identify)` is
   the matching relay authorizer for `live/:id`.
+- The live event route reads `ctx.request.body()`, which holds the parsed JSON
+  only once ream's body parser has run: keep
+  `() => import('@c9up/ream/bodyparser_middleware')` in the router middleware of
+  `start/kernel.ts` (a new application has it first). Without it every event
+  answers 400.
 - `redirect()`, `replace()` and `navigate()` reject `javascript:`, `vbscript:`
   and `data:` URLs.
 - `auroraRoute()` is the legacy low-level route helper. Prefer the provider /
