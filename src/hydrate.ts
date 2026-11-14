@@ -403,7 +403,7 @@ function hydrateArrayItems(
 	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): void {
-	const nodes = collapseMarkerRanges(rangeNodes);
+	const units = markerUnits(rangeNodes);
 	let offset = 0;
 	/** The node type the previous item ended on, for the merge check below. */
 	let previousLast: number | null = null;
@@ -420,7 +420,7 @@ function hydrateArrayItems(
 		if (isTemplateResult(item)) {
 			hydrateTemplateResult(
 				item,
-				nodes.slice(offset, offset + count),
+				unitNodes(units, offset, offset + count),
 				cleanups,
 				queue,
 				markerCursor,
@@ -428,7 +428,7 @@ function hydrateArrayItems(
 		} else if (Array.isArray(item)) {
 			hydrateArrayItems(
 				item,
-				nodes.slice(offset, offset + count),
+				unitNodes(units, offset, offset + count),
 				cleanups,
 				queue,
 				markerCursor,
@@ -489,7 +489,7 @@ function adoptEachRows(
 	queue: MountQueue,
 	markerCursor: MarkerCursor,
 ): EachRow[] {
-	const nodes = collapseMarkerRanges(range);
+	const units = markerUnits(range);
 	const rawIndex = new Map<Node, number>();
 	for (const [i, n] of range.entries()) rawIndex.set(n, i);
 
@@ -510,7 +510,7 @@ function adoptEachRows(
 		const edges = edgeNodeTypes(value);
 		const merged = previousLast === 3 && edges?.first === 3;
 		if (merged) offset -= 1;
-		const slice = nodes.slice(offset, offset + count);
+		const slice = unitNodes(units, offset, offset + count);
 		const own: MountQueue = { hooks: [], flushed: queue.flushed };
 		if (isTemplateResult(value)) {
 			hydrateTemplateResult(value, slice, row.cleanups, own, markerCursor);
@@ -801,6 +801,38 @@ function collapseMarkerRanges(nodes: ChildNode[]): ChildNode[] {
 		if (depth === 0) out.push(n);
 	}
 	return out;
+}
+
+/**
+ * `nodes` cut into the units `collapseMarkerRanges` counts: a marker range
+ * whole, from its opening comment to its closing one, or a single node.
+ *
+ * What a list hands each item: its units, raw. The collapsed list is for
+ * counting only — an item collapses its own nodes, and handed the collapsed
+ * list it collapsed them a second time: an opening comment whose closing one
+ * was already gone held the depth open and swallowed the item's next slot, so
+ * an item that was a fragment of two slots shifted every path after it.
+ */
+function markerUnits(nodes: ChildNode[]): ChildNode[][] {
+	const units: ChildNode[][] = [];
+	let depth = 0;
+	for (const n of nodes) {
+		const data = isCommentNode(n) ? n.data : undefined;
+		if (depth === 0) units.push([n]);
+		else units[units.length - 1]?.push(n);
+		if (data === SLOT_START) depth += 1;
+		else if (data === SLOT_END && depth > 0) depth -= 1;
+	}
+	return units;
+}
+
+/** The raw nodes of `units[from]` to `units[to - 1]`. */
+function unitNodes(
+	units: ChildNode[][],
+	from: number,
+	to: number,
+): ChildNode[] {
+	return units.slice(from, to).flat();
 }
 
 function resolvePathLive(path: NodePath, rootNodes: ChildNode[]): Node | null {
