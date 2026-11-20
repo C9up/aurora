@@ -63,7 +63,14 @@ export {
 	onUnmount,
 	provide,
 } from "./component.js";
-export { type Each, type EachItems, each, isEach } from "./each.js";
+export {
+	type Each,
+	type EachItems,
+	type EachOptions,
+	each,
+	isEach,
+	type LazyOptions,
+} from "./each.js";
 export { AuroraError, type AuroraErrorCode } from "./errors.js";
 export type {
 	FieldErrors,

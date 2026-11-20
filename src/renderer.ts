@@ -12,7 +12,9 @@
  *   (`bindTemplateContext`);
  * - the reactive owner, so effects created while building a subtree are
  *   disposed with it (`setOwner`);
- * - keyed lists (`readEach`, `readEachItems`);
+ * - keyed lists (`readEach`, `readEachItems`), and a lazy list's window
+ *   (`firstWindow`, `LazyLayout`): which rows exist and how tall the spacers
+ *   standing in for the others are, so every host picks the same rows;
  * - the URL guards every host applies to a URL-bearing attribute.
  *
  * Host-free like `@c9up/aurora/core`. Application code does not need it.
@@ -24,6 +26,14 @@ export {
 	readComponentLifecycle,
 } from "./component.js";
 export { type EachList, readEach, readEachItems } from "./each.js";
+export {
+	firstWindow,
+	LazyLayout,
+	type LazyList,
+	type LazyView,
+	type LazyWindow,
+	sameWindow,
+} from "./lazy.js";
 export { setOwner } from "./reactive.js";
 export {
 	assertBindable,
