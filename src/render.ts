@@ -18,14 +18,23 @@ import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { type EachList, readEach, readEachItems } from "./each.js";
 import { AuroraError } from "./errors.js";
 import {
+	firstWindow,
+	LazyLayout,
+	type LazyList,
+	type LazyView,
+	sameWindow,
+} from "./lazy.js";
+import {
 	isChildNode,
 	isCommentNode,
 	isElementNode,
 	isFragmentNode,
 } from "./nodes.js";
 import {
+	batch,
 	effect,
 	isSignal,
+	memo,
 	readValue,
 	type Signal,
 	setOwner,
@@ -506,22 +515,39 @@ interface PlacedRow extends ListRow {
  * client-rendered slot removes what it shows; a hydrated tree leaves the
  * server's nodes where they are.
  */
+export interface EachBinding {
+	build: (
+		value: unknown,
+		cleanups: Disposer[],
+		queue: MountQueue,
+	) => ChildNode[];
+	/**
+	 * Hydration's: the rows the server rendered for `items`, built with
+	 * `list` (a lazy list hands its window's), leaving out the nodes in `skip`
+	 * (its spacers).
+	 */
+	adopt?: (
+		items: readonly unknown[],
+		list: EachList,
+		skip: ReadonlySet<Node>,
+	) => EachRow[];
+	ownsNodes?: boolean;
+	/** Told the rows in order, by key with their markers, after each update. */
+	placed?: (rows: Array<[unknown, Comment]>) => void;
+}
+
 export function bindEach(
 	list: EachList,
 	end: Node,
 	cleanups: Disposer[],
 	queue: MountQueue,
-	options: {
-		build: (
-			value: unknown,
-			cleanups: Disposer[],
-			queue: MountQueue,
-		) => ChildNode[];
-		adopt?: (items: readonly unknown[]) => EachRow[];
-		ownsNodes?: boolean;
-	},
+	options: EachBinding,
 ): void {
-	const { build, ownsNodes } = options;
+	if (list.lazy !== undefined) {
+		bindLazy(list, list.lazy, end, cleanups, queue, options);
+		return;
+	}
+	const { build, ownsNodes, placed } = options;
 	// Dropped once used: it holds the server's nodes, which must not outlive
 	// the rows that replace them.
 	let adopt = options.adopt;
@@ -577,10 +603,11 @@ export function bindEach(
 		}
 		if (adopting && adopt !== undefined) {
 			adopting = false;
-			const adopted = placeAdopted(adopt(items));
+			const adopted = placeAdopted(adopt(items, list, new Set()));
 			adopt = undefined;
 			rows = new Map();
 			for (const [i, row] of adopted.entries()) rows.set(keys[i], row);
+			placed?.(adopted.map((row, i) => [keys[i], row.start]));
 			return;
 		}
 		adopting = false;
@@ -646,6 +673,8 @@ export function bindEach(
 			before = row.start;
 		}
 
+		placed?.(ordered.map((row, i) => [keys[i], row.start]));
+
 		for (const { row, hooks } of built) {
 			if (queue.flushed) {
 				hooks.flushed = true;
@@ -675,6 +704,309 @@ export function bindEach(
 		}
 		rows = new Map();
 		starts.clear();
+	});
+}
+
+const LAZY_ATTRIBUTE = "data-aurora-lazy";
+
+/** A lazy list's spacer: an empty block the rows not built stand behind. */
+function makeSpacer(doc: Document, side: "before" | "after"): HTMLElement {
+	const spacer = doc.createElement("div");
+	spacer.setAttribute(LAZY_ATTRIBUTE, side);
+	spacer.setAttribute("aria-hidden", "true");
+	sizeSpacer(spacer, 0);
+	return spacer;
+}
+
+/** Hidden when empty: a gap-separated container would give it a gap. */
+function sizeSpacer(spacer: HTMLElement, height: number): void {
+	spacer.style.overflowAnchor = "none";
+	if (height > 0) {
+		spacer.style.display = "";
+		spacer.style.height = `${height}px`;
+	} else {
+		spacer.style.display = "none";
+		spacer.style.height = "0px";
+	}
+}
+
+/** The spacers the server rendered at the head and tail of a lazy list's range. */
+function serverSpacers(
+	end: Node,
+): { before: HTMLElement; after: HTMLElement } | undefined {
+	let after: HTMLElement | undefined;
+	for (let n = end.previousSibling; n !== null; n = n.previousSibling) {
+		if (!(n instanceof HTMLElement)) continue;
+		const side = n.getAttribute(LAZY_ATTRIBUTE);
+		if (after === undefined) {
+			if (side !== "after") return undefined;
+			after = n;
+		} else if (side === "before") {
+			return { before: n, after };
+		}
+	}
+	return undefined;
+}
+
+/** The nearest ancestor that scrolls vertically, or null for the page. */
+function scrollParent(from: Element): HTMLElement | null {
+	for (let el = from.parentElement; el !== null; el = el.parentElement) {
+		if (el === el.ownerDocument.body || el === el.ownerDocument.documentElement)
+			return null;
+		const overflow = getComputedStyle(el).overflowY;
+		if (overflow === "auto" || overflow === "scroll" || overflow === "overlay")
+			return el;
+	}
+	return null;
+}
+
+/** Run `hook` once the list's nodes are in the document. */
+function whenMounted(
+	queue: MountQueue,
+	cleanups: Disposer[],
+	hook: () => Disposer | undefined,
+): void {
+	if (queue.flushed) {
+		runMountHooks([hook], cleanups);
+		return;
+	}
+	queue.hooks.push(hook);
+}
+
+/**
+ * @internal A lazy list on the DOM: only the rows intersecting its scroll
+ * viewport (plus `overscan`) exist, between two spacers that stand for the
+ * others at their measured heights, or the estimate for a row never shown.
+ *
+ * The rows it builds are an ordinary keyed list over its window, so a row
+ * that stays in view keeps its nodes. After each scroll or resize, once per
+ * frame, it measures the rows it shows, picks the window again and, when a
+ * measure corrected an estimate above the viewport, scrolls by the
+ * difference so what was on screen stays put. With `from: "end"` it starts at
+ * the bottom and stays there while rows arrive, unless the reader scrolled up.
+ *
+ * The first window is the one the server rendered (see `firstWindow`), so a
+ * hydrated list adopts the server's rows and spacers before it measures.
+ */
+function bindLazy(
+	list: EachList,
+	lazy: LazyList,
+	end: Node,
+	cleanups: Disposer[],
+	queue: MountQueue,
+	options: EachBinding,
+): void {
+	const doc = end.ownerDocument ?? document;
+	const adopted = options.adopt !== undefined ? serverSpacers(end) : undefined;
+	const before = adopted?.before ?? makeSpacer(doc, "before");
+	const after = adopted?.after ?? makeSpacer(doc, "after");
+	if (adopted === undefined) {
+		end.parentNode?.insertBefore(before, end);
+		end.parentNode?.insertBefore(after, end);
+	}
+	if (options.ownsNodes === true) {
+		cleanups.push(() => {
+			before.remove();
+			after.remove();
+		});
+	}
+
+	const layout = new LazyLayout(lazy);
+	const view = signal<LazyView | null>(null);
+	const measured = signal(0);
+	let placed: Array<[unknown, Comment]> = [];
+
+	const { keys, win, start } = ownedBy(cleanups, () => {
+		const keys = memo(() => {
+			const all = readEachItems(list.items).map((item, index) =>
+				list.key(item, index),
+			);
+			if (new Set(all).size !== all.length) {
+				const duplicate = all.find((key, i) => all.indexOf(key) !== i);
+				throw new AuroraError(
+					"E_AURORA_DUPLICATE_KEY",
+					`[aurora] each(): two elements share the key ${String(duplicate)} — a key names one row`,
+				);
+			}
+			return all;
+		});
+		const win = memo(
+			() => {
+				const all = keys();
+				measured();
+				const current = view();
+				layout.keep(all);
+				if (current === null) {
+					const [first, last] = firstWindow(all.length, lazy);
+					return layout.spacers(all, first, last);
+				}
+				return layout.window(all, current);
+			},
+			{ equals: sameWindow },
+		);
+		const start = memo(() => win().start);
+		effect(() => {
+			const w = win();
+			sizeSpacer(before, w.before);
+			sizeSpacer(after, w.after);
+		});
+		return { keys, win, start };
+	});
+
+	// The rows: a keyed list over the window, whose rows see their position
+	// in the whole list.
+	const windowList: EachList = {
+		items: () => {
+			const w = win();
+			return readEachItems(list.items).slice(w.start, w.end);
+		},
+		key: (item, index) => list.key(item, index + untrack(start)),
+		render: (item, index) =>
+			list.render(
+				item,
+				memo(() => index() + start()),
+			),
+		run: list.run,
+	};
+	const adopt = options.adopt;
+	bindEach(windowList, after, cleanups, queue, {
+		build: options.build,
+		ownsNodes: options.ownsNodes,
+		adopt:
+			adopt === undefined
+				? undefined
+				: (items, rows) => adopt(items, rows, new Set([before, after])),
+		placed: (rows) => {
+			placed = rows;
+		},
+	});
+
+	if (
+		typeof requestAnimationFrame !== "function" ||
+		typeof getComputedStyle !== "function"
+	) {
+		return;
+	}
+	whenMounted(queue, cleanups, () => {
+		const parent = before.parentElement;
+		if (parent === null) return undefined;
+		const scroller = scrollParent(before);
+		const page = doc.scrollingElement ?? doc.documentElement;
+		const box = scroller ?? page;
+		let frame = 0;
+		let pinned = lazy.from === "end";
+		let started = false;
+
+		const viewport = () => {
+			if (scroller === null) return { top: 0, height: window.innerHeight };
+			const rect = scroller.getBoundingClientRect();
+			return {
+				top: rect.top + scroller.clientTop,
+				height: scroller.clientHeight,
+			};
+		};
+		const atEnd = () =>
+			box.scrollTop + (scroller?.clientHeight ?? window.innerHeight) >=
+			box.scrollHeight - 2;
+		const toEnd = () => {
+			box.scrollTop = box.scrollHeight;
+		};
+		const shown = (el: HTMLElement) => el.style.display !== "none";
+
+		/** Where each shown row starts, in viewport coordinates, and where the last ends. */
+		const tops = (): { rows: Array<[unknown, number]>; bottom: number } => {
+			const range = doc.createRange();
+			const rows: Array<[unknown, number]> = [];
+			let bottom = Number.NaN;
+			for (const [i, [key, marker]] of placed.entries()) {
+				const next = placed[i + 1]?.[1] ?? after;
+				if (marker.parentNode === null || next.parentNode !== marker.parentNode)
+					continue;
+				range.setStartAfter(marker);
+				range.setEndBefore(next);
+				const rect = range.getBoundingClientRect();
+				if (rect.width === 0 && rect.height === 0) continue;
+				rows.push([key, rect.top]);
+				bottom = rect.bottom;
+			}
+			if (shown(after)) bottom = after.getBoundingClientRect().top;
+			return { rows, bottom };
+		};
+
+		const refresh = () => {
+			frame = 0;
+			const { rows, bottom } = tops();
+			// Heights from one row's top to the next: gaps and margins included.
+			let changed = false;
+			for (const [i, [key, top]] of rows.entries()) {
+				const next = rows[i + 1]?.[1] ?? bottom;
+				if (Number.isFinite(next) && layout.measure(key, next - top))
+					changed = true;
+			}
+			const port = viewport();
+			const anchor = rows.find(
+				([, top], i) =>
+					(rows[i + 1]?.[1] ?? bottom) > port.top &&
+					top <= port.top + port.height,
+			);
+			const listTop = shown(before)
+				? before.getBoundingClientRect().top
+				: (rows[0]?.[1] ?? after.getBoundingClientRect().top);
+			const was = untrack(win);
+			batch(() => {
+				if (changed) measured((n) => n + 1);
+				view(
+					pinned
+						? { kind: "end", height: port.height }
+						: {
+								kind: "span",
+								from: port.top - listTop,
+								to: port.top - listTop + port.height,
+							},
+				);
+			});
+			if (pinned) {
+				toEnd();
+			} else if (anchor !== undefined) {
+				// Keep what was on screen where it was: an estimate corrected
+				// above it moved it.
+				const now = tops().rows.find(([key]) => Object.is(key, anchor[0]));
+				if (now !== undefined && Math.abs(now[1] - anchor[1]) > 0.5)
+					box.scrollTop += now[1] - anchor[1];
+			}
+			if (changed || !sameWindow(was, untrack(win))) schedule();
+		};
+		const schedule = () => {
+			if (frame === 0) frame = requestAnimationFrame(refresh);
+		};
+		const onScroll = () => {
+			if (started && lazy.from === "end") pinned = atEnd();
+			schedule();
+		};
+
+		const target: EventTarget = scroller ?? window;
+		target.addEventListener("scroll", onScroll, { passive: true });
+		window.addEventListener("resize", schedule);
+		const resized =
+			typeof ResizeObserver === "function"
+				? new ResizeObserver(schedule)
+				: null;
+		resized?.observe(parent);
+		if (scroller !== null) resized?.observe(scroller);
+		// A new array: pick the window again (and follow the end if pinned).
+		const stopItems = effect(() => {
+			keys();
+			untrack(schedule);
+		});
+		refresh();
+		started = true;
+		return () => {
+			stopItems();
+			target.removeEventListener("scroll", onScroll);
+			window.removeEventListener("resize", schedule);
+			resized?.disconnect();
+			if (frame !== 0) cancelAnimationFrame(frame);
+		};
 	});
 }
 

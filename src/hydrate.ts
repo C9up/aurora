@@ -248,8 +248,14 @@ function hydrateReactiveStructured(
 				bindEach(list, end, localCleanups, own, {
 					build: (value, rowCleanups, rowQueue) =>
 						renderValueToNodes(value, rowCleanups, rowQueue, markerCursor.doc),
-					adopt: (items) =>
-						adoptEachRows(list, items, rangeOf(pair), own, markerCursor),
+					adopt: (items, rows, skip) =>
+						adoptEachRows(
+							rows,
+							items,
+							rangeOf(pair).filter((n) => !skip.has(n)),
+							own,
+							markerCursor,
+						),
 				});
 			} else if (isTemplateResult(next)) {
 				hydrateTemplateResult(
@@ -512,8 +518,15 @@ function hydrateEach(
 		// run — not captured beforehand: an array of the server's nodes in this
 		// scope would live as long as `build`, which shares its closure context,
 		// and keep every row the list removes later.
-		adopt: (items) =>
-			adoptEachRows(list, items, rangeOf(pair), queue, markerCursor),
+		// A lazy list hands its window's list and its spacers, left out.
+		adopt: (items, rows, skip) =>
+			adoptEachRows(
+				rows,
+				items,
+				rangeOf(pair).filter((n) => !skip.has(n)),
+				queue,
+				markerCursor,
+			),
 	});
 }
 

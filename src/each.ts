@@ -19,6 +19,9 @@
  */
 
 import { captureContext } from "./component.js";
+import { AuroraError } from "./errors.js";
+import { html } from "./html.js";
+import { firstWindow, type LazyList } from "./lazy.js";
 import { type ReadSignal, type Signal, signal } from "./reactive.js";
 
 /**
@@ -41,6 +44,64 @@ export interface EachList<T = unknown> {
 	render: (item: ReadSignal<T>, index: ReadSignal<number>) => unknown;
 	/** Runs a row's `render` with the providers in reach where the list was written. */
 	run: <R>(fn: () => R) => R;
+	/** Set for a lazy list: only the rows in view exist. */
+	lazy?: LazyList;
+}
+
+/**
+ * A lazy list's settings (Compose's LazyColumn): only the rows intersecting
+ * the scroll viewport, plus `overscan` on each side, are built; the others are
+ * stood in for by two spacers sized from the rows' measured heights, or
+ * `estimate` for a row never shown. Lengths are CSS pixels on the web, dp on
+ * a phone.
+ */
+export interface LazyOptions {
+	/** The height assumed for a row not measured yet. Default 48. */
+	estimate?: number;
+	/** How far beyond the viewport rows are built. Default 600. */
+	overscan?: number;
+	/**
+	 * `"end"` starts at the last rows and stays at the end as rows arrive while
+	 * it is there: a conversation. Default `"start"`.
+	 */
+	from?: "start" | "end";
+}
+
+/** What {@link each} takes after the row renderer. */
+export interface EachOptions {
+	/** Build only the rows in view: `true` for the defaults, or its settings. */
+	lazy?: boolean | LazyOptions;
+}
+
+function lazyList(options: EachOptions | undefined): LazyList | undefined {
+	const lazy = options?.lazy;
+	if (lazy === undefined || lazy === false) return undefined;
+	const settings = lazy === true ? {} : lazy;
+	const estimate = settings.estimate ?? 48;
+	const overscan = settings.overscan ?? 600;
+	if (!(Number.isFinite(estimate) && estimate > 0)) {
+		throw new AuroraError(
+			"E_AURORA_INVALID_LAZY",
+			`[aurora] each(): lazy.estimate must be a positive length, got ${String(estimate)}`,
+		);
+	}
+	if (!(Number.isFinite(overscan) && overscan >= 0)) {
+		throw new AuroraError(
+			"E_AURORA_INVALID_LAZY",
+			`[aurora] each(): lazy.overscan must be zero or a positive length, got ${String(overscan)}`,
+		);
+	}
+	return { estimate, overscan, from: settings.from ?? "start" };
+}
+
+/**
+ * A lazy list's spacer: what stands in for the rows not built. Hidden when
+ * empty, so a gap-separated container gets no gap for it.
+ */
+function spacer(side: "before" | "after", height: number): unknown {
+	return html`<div data-aurora-lazy=${side} aria-hidden="true" style=${
+		height > 0 ? `height:${height}px;overflow-anchor:none` : "display:none"
+	}></div>`;
 }
 
 const EACH_LIST: unique symbol = Symbol.for("aurora:each");
@@ -67,19 +128,41 @@ export interface Each {
  * (`${() => item().name}`) for the part that follows them. Two elements with
  * the same key throw `E_AURORA_DUPLICATE_KEY` — they would have to share one
  * row.
+ *
+ * `{ lazy }` builds only the rows in view (see {@link LazyOptions}): a list of
+ * thousands of rows costs what the screen shows. It lays out in a block or
+ * flex container (not a table: its spacers are `div`s) and scrolls with its
+ * nearest scrolling ancestor, or the page.
  */
 export function each<T>(
 	items: EachItems<T>,
 	key: (item: T, index: number) => unknown,
 	render: (item: ReadSignal<T>, index: ReadSignal<number>) => unknown,
+	options?: EachOptions,
 ): Each {
+	const lazy = lazyList(options);
 	const list: EachList<T> = { items, key, render, run: captureContext() };
+	if (lazy) list.lazy = lazy;
+	// What a reader that does not keep rows by key shows: the server, mainly.
+	// A lazy list gives its first window between its spacers, the one the
+	// client starts from when it adopts the server's rows.
 	const accessor = (): unknown[] =>
-		list.run(() =>
-			readEachItems(list.items).map((item, index) =>
-				list.render(constant(item), constant(index)),
-			),
-		);
+		list.run(() => {
+			const all = readEachItems(list.items);
+			if (!lazy) {
+				return all.map((item, index) =>
+					list.render(constant(item), constant(index)),
+				);
+			}
+			const [start, end] = firstWindow(all.length, lazy);
+			return [
+				spacer("before", start * lazy.estimate),
+				...all
+					.slice(start, end)
+					.map((item, i) => list.render(constant(item), constant(start + i))),
+				spacer("after", (all.length - end) * lazy.estimate),
+			];
+		});
 	Reflect.set(accessor, EACH_LIST, list);
 	const brand: { readonly [EACH_BRAND]: true } = { [EACH_BRAND]: true };
 	return Object.assign(accessor, brand);

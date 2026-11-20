@@ -65,6 +65,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_FILE_INPUT_VALUE"
 	/** Two elements of an `each()` list share a key, which names one row. */
 	| "E_AURORA_DUPLICATE_KEY"
+	/** `each(…, { lazy })` with an estimate or overscan that is not a usable length. */
+	| "E_AURORA_INVALID_LAZY"
 	/** Effects kept re-running each other: one writes what another (or itself) reads, forever. */
 	| "E_AURORA_REACTIVE_CYCLE"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */
