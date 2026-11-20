@@ -63,6 +63,27 @@ describe("aurora > twMerge — same group, last wins", () => {
 	});
 });
 
+describe("aurora > twMerge — viewport-unit sizes", () => {
+	// tailwind-merge groups h-svh / h-lvh / h-dvh with h (its sizing scale),
+	// and w-svw / w-lvw / w-dvw with w: a component's h-svh gives way to the
+	// h-full an app passes.
+	it("merges h-svh, h-lvh and h-dvh with the other heights", () => {
+		expect(twMerge("h-svh h-full")).toBe("h-full");
+		expect(twMerge("h-full h-dvh")).toBe("h-dvh");
+		expect(twMerge("h-lvh h-screen")).toBe("h-screen");
+	});
+
+	it("merges w-svw, w-lvw and w-dvw with the other widths", () => {
+		expect(twMerge("w-dvw w-full")).toBe("w-full");
+		expect(twMerge("w-full w-svw")).toBe("w-svw");
+		expect(twMerge("w-lvw w-64")).toBe("w-64");
+	});
+
+	it("leaves min-h and max-h apart from h", () => {
+		expect(twMerge("min-h-svh h-full")).toBe("min-h-svh h-full");
+	});
+});
+
 describe("aurora > twMerge — variant scoping", () => {
 	it("scopes conflicts per variant stack", () => {
 		expect(twMerge("p-2 hover:p-4")).toBe("p-2 hover:p-4");

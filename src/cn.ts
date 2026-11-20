@@ -306,14 +306,14 @@ const RULES: GroupRule[] = [
 	{ id: "size", pre: [["size", isLength]] },
 	{
 		id: "w",
-		eq: ["w-screen", "w-min", "w-max", "w-fit"],
+		eq: ["w-screen", "w-svw", "w-lvw", "w-dvw", "w-min", "w-max", "w-fit"],
 		pre: [["w", isLength]],
 	},
 	{ id: "min-w", pre: [["min-w", any]] },
 	{ id: "max-w", pre: [["max-w", any]] },
 	{
 		id: "h",
-		eq: ["h-screen", "h-min", "h-max", "h-fit"],
+		eq: ["h-screen", "h-svh", "h-lvh", "h-dvh", "h-min", "h-max", "h-fit"],
 		pre: [["h", isLength]],
 	},
 	{ id: "min-h", pre: [["min-h", any]] },
