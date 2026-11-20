@@ -506,6 +506,15 @@ describe("aurora > renderPage > CSP nonce", () => {
 		expect(getBody()).not.toContain("nonce=");
 	});
 
+	it("marks the page as the application's own for blackhole's xss pass", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const made = makeCtx();
+		const store = new Map<string, unknown>();
+		made.ctx.store = store;
+		await renderPage(made.ctx, pages, "Hello", { name: "World" });
+		expect(store.get("trustedHtml")).toBe(true);
+	});
+
 	it("reads the nonce from the request store when it is only there", async () => {
 		const pages = new Pages({ root: FIXTURES });
 		const made = makeCtx();
@@ -659,5 +668,69 @@ describe("aurora > renderPage > jsonLd", () => {
 		const { ctx, getBody } = makeCtx();
 		await renderPage(ctx, pages, "Hello", { name: "World" });
 		expect(getBody()).not.toContain("ld+json");
+	});
+});
+
+describe("aurora > renderPage > the server renders what the client hydrates", () => {
+	class User {
+		readonly email = "a@b.c";
+		readonly password = "$argon2id$secret-hash";
+		readonly createdAt = new Date(0);
+		toJSON(): Record<string, unknown> {
+			return { email: this.email, createdAt: this.createdAt.toISOString() };
+		}
+	}
+
+	it("hands the factory the props round-tripped through JSON", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const received: unknown[] = [];
+		pages.register("Profile", (props: unknown) => {
+			received.push(props);
+			const user =
+				typeof props === "object" && props !== null
+					? Reflect.get(props, "user")
+					: undefined;
+			const createdAt =
+				typeof user === "object" && user !== null
+					? Reflect.get(user, "createdAt")
+					: undefined;
+			const password =
+				typeof user === "object" && user !== null
+					? Reflect.get(user, "password")
+					: undefined;
+			return html`<p>${String(createdAt)}</p><i>${String(password)}</i>`;
+		});
+		const { ctx, getBody } = makeCtx();
+		await renderPage(ctx, pages, "Profile", { user: new User() });
+
+		// The factory sees exactly the client's data: the ISO string, not a
+		// Date, and no key the model's toJSON() hides.
+		expect(received).toEqual([
+			{ user: { email: "a@b.c", createdAt: "1970-01-01T00:00:00.000Z" } },
+		]);
+		const out = getBody();
+		expect(out).not.toContain("secret-hash");
+		expect(out).toContain("<p><!--$-->1970-01-01T00:00:00.000Z<!--/$--></p>");
+		expect(out).toContain(
+			'"props":{"user":{"email":"a@b.c","createdAt":"1970-01-01T00:00:00.000Z"}}',
+		);
+	});
+
+	it("round-trips shared props too", async () => {
+		const pages = new Pages({ root: FIXTURES });
+		const received: unknown[] = [];
+		pages.register("Shared", (props: unknown) => {
+			received.push(props);
+			return html`<p></p>`;
+		});
+		const { ctx } = makeCtx();
+		await renderPage(
+			ctx,
+			pages,
+			"Shared",
+			{ title: "x" },
+			{ shared: { at: new Date(0) } },
+		);
+		expect(received).toEqual([{ at: "1970-01-01T00:00:00.000Z", title: "x" }]);
 	});
 });

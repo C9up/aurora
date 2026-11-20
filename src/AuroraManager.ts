@@ -19,6 +19,7 @@ import {
 	DEFAULT_BROWSER_PACKAGES,
 	resolveBrowserPackages,
 } from "./browserPackage.js";
+import { runsInDevelopment } from "./devMode.js";
 import { Pages, type PagesConfig } from "./Pages.js";
 import {
 	type ClientRoutesFilter,
@@ -268,9 +269,7 @@ export class AuroraManager {
 	pageAssetsHandler(): (ctx: AssetsHttpContext) => Promise<void> {
 		return serveAssets({
 			root: this.pages.root,
-			...(process.env.NODE_ENV === "production"
-				? {}
-				: { cacheControl: "no-cache" }),
+			...(runsInDevelopment() ? { cacheControl: "no-cache" } : {}),
 		});
 	}
 

@@ -25,6 +25,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setCookieStoreReader } from "../browser.js";
+import { runsInDevelopment } from "../devMode.js";
 import { AuroraError } from "../errors.js";
 import { createIdCounter, setIdCounterReader } from "../id.js";
 import type { Pages } from "../Pages.js";
@@ -52,8 +53,14 @@ export interface RenderResponse {
 export interface RenderHttpContext {
 	request: unknown;
 	response: RenderResponse;
-	/** Per-request bag; blackhole also seeds `cspNonce` here. */
-	store?: { get(key: string): unknown };
+	/**
+	 * Per-request bag; blackhole seeds `cspNonce` here and reads `trustedHtml`
+	 * back (ream's `ctx.store` is a Map).
+	 */
+	store?: {
+		get(key: string): unknown;
+		set?(key: string, value: unknown): unknown;
+	};
 }
 
 export interface RenderPageOptions {
@@ -326,10 +333,17 @@ async function renderPageInScope<P>(
 ): Promise<void> {
 	const factory = await pages.resolve(name);
 	const shared = await resolveSharedProps(ctx, options.shared);
-	const pageProps = mergeProps(shared, props);
 	// The factory must be invoked the SAME way client-side for hydrate
-	// to find matching slots — `Page(props)` is the contract.
-	const tree = await factory(pageProps);
+	// to find matching slots — `Page(props)` is the contract — and with the
+	// SAME data. The client hydrates from the props' JSON, so the server renders
+	// from that JSON too: handing it the live objects let a `Date` render here
+	// and throw at hydration (`"1970-…".getUTCFullYear()`), and let a value the
+	// model's `toJSON()` hides (a password hash) reach the HTML although it never
+	// reaches the payload. Serialized once, used for both.
+	const wireProps: unknown = JSON.parse(
+		JSON.stringify(mergeProps(shared, props)) ?? "null",
+	);
+	const tree = await factory(wireProps);
 	const body = renderToString(tree);
 
 	const importmap = {
@@ -342,7 +356,7 @@ async function renderPageInScope<P>(
 	const lang = options.lang ?? "en";
 	const pageUrl = pages.urlFor(name);
 	const routes = filterClientRoutes(options.routes ?? {}, options.clientRoutes);
-	if (process.env.NODE_ENV !== "production") {
+	if (runsInDevelopment()) {
 		for (const used of usedRoutes) {
 			if (Object.hasOwn(routes, used)) continue;
 			console.warn(
@@ -371,7 +385,7 @@ ${options.jsonLd === undefined ? "" : `<script${nonceAttr} type="application/ld+
 <script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(
 		{
 			name,
-			props: pageProps,
+			props: wireProps,
 			url: pageUrl,
 			rootId,
 			routes,
@@ -389,6 +403,10 @@ hydrate(document.getElementById(data.rootId), () => Page(data.props))
 </html>`;
 
 	ctx.response.header("content-type", "text/html; charset=utf-8");
+	// The application's own page: blackhole's `xss` pass, which cleans every
+	// text/html body it is not told about, leaves it alone. aurora escapes every
+	// interpolation, and the bootstrap script is its own.
+	ctx.store?.set?.("trustedHtml", true);
 	ctx.response.send(doc);
 }
 

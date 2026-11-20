@@ -17,6 +17,7 @@
 import { existsSync } from "node:fs";
 import { resolve as resolvePath, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runsInDevelopment } from "./devMode.js";
 import { newestMtime, registerDevPageHooks } from "./devPageReload.js";
 import { AuroraError } from "./errors.js";
 import type { TemplateResult } from "./types.js";
@@ -131,7 +132,7 @@ export class Pages {
 		// as the server caching files. See `devPageReload.ts`, and
 		// `devPageHooks.ts` for the other half: the page re-imports, and
 		// its imports need their own fresh keys to follow.
-		const isDev = process.env.NODE_ENV !== "production";
+		const isDev = runsInDevelopment();
 		let urlHref = pathToFileURL(absolute).href;
 		if (isDev) {
 			await registerDevPageHooks(this.root);
