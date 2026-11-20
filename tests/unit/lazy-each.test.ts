@@ -45,6 +45,66 @@ describe("lazy window", () => {
 		expect(w).toEqual({ start: 10, end: 10, before: 500, after: 0 });
 	});
 
+	it("finds the same window as walking every row, on random lists", () => {
+		// The walk the running sums replace, kept here as the reference.
+		const walk = (
+			heights: number[],
+			view: { from: number; to: number } | { end: number },
+			overscan: number,
+		) => {
+			const count = heights.length;
+			const total = heights.reduce((a, b) => a + b, 0);
+			let start = count;
+			let end = count;
+			if ("end" in view) {
+				let covered = 0;
+				start = count;
+				while (start > 0 && covered < view.end + overscan) {
+					start--;
+					covered += heights[start] ?? 0;
+				}
+			} else {
+				let y = 0;
+				for (let i = 0; i < count; i++) {
+					const h = heights[i] ?? 0;
+					if (start === count && y + h > view.from - overscan) start = i;
+					if (end === count && y >= view.to + overscan) end = i;
+					y += h;
+				}
+				if (start > end) start = end;
+			}
+			const before = heights.slice(0, start).reduce((a, b) => a + b, 0);
+			const after = total - heights.slice(0, end).reduce((a, b) => a + b, 0);
+			return { start, end, before, after };
+		};
+		let seed = 1;
+		const random = () => {
+			seed = (seed * 16807) % 2147483647;
+			return seed / 2147483647;
+		};
+		for (let run = 0; run < 2000; run++) {
+			const count = Math.floor(random() * 60);
+			const overscan = Math.floor(random() * 120);
+			const layout = new LazyLayout({ estimate: 40, overscan, from: "start" });
+			const heights = Array.from({ length: count }, (_, i) => {
+				if (random() < 0.5) return 40;
+				const h = Math.floor(random() * 120);
+				layout.measure(i, h);
+				return h;
+			});
+			const ids = keys(count);
+			const from = Math.floor(random() * 3000) - 200;
+			const span = { from, to: from + Math.floor(random() * 600) };
+			expect(layout.window(ids, { kind: "span", ...span })).toEqual(
+				walk(heights, span, overscan),
+			);
+			const height = Math.floor(random() * 800);
+			expect(layout.window(ids, { kind: "end", height })).toEqual(
+				walk(heights, { end: height }, overscan),
+			);
+		}
+	});
+
 	it("forgets the heights of keys that left", () => {
 		const layout = new LazyLayout(settings);
 		layout.measure("a", 10);

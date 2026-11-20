@@ -54,10 +54,46 @@ export function sameWindow(a: LazyWindow, b: LazyWindow): boolean {
 	);
 }
 
-/** Row heights by key, measured where shown, estimated elsewhere. */
+/** The first index of `offsets` holding more than `value` (its length if none). */
+function firstAbove(offsets: Float64Array, value: number): number {
+	let low = 0;
+	let high = offsets.length;
+	while (low < high) {
+		const mid = (low + high) >>> 1;
+		if ((offsets[mid] ?? 0) > value) high = mid;
+		else low = mid + 1;
+	}
+	return low;
+}
+
+/** The first index of `offsets` holding at least `value` (its length if none). */
+function firstAtLeast(offsets: Float64Array, value: number): number {
+	let low = 0;
+	let high = offsets.length;
+	while (low < high) {
+		const mid = (low + high) >>> 1;
+		if ((offsets[mid] ?? 0) >= value) high = mid;
+		else low = mid + 1;
+	}
+	return low;
+}
+
+/**
+ * Row heights by key, measured where shown, estimated elsewhere.
+ *
+ * Where every row starts is kept as running sums, rebuilt only when the list
+ * or a height changed: a scroll, many times a second, then finds its window
+ * by binary search instead of walking thousands of rows — on a phone's
+ * JavaScript engine that walk, once per scroll event, left the window behind
+ * the finger.
+ */
 export class LazyLayout {
 	readonly #lazy: LazyList;
 	readonly #heights = new Map<unknown, number>();
+	/** `offsets[i]` is where row i starts; `offsets[count]` the whole height. */
+	#offsets = new Float64Array(1);
+	#offsetsOf: readonly unknown[] | null = null;
+	#stale = true;
 
 	constructor(lazy: LazyList) {
 		this.#lazy = lazy;
@@ -71,6 +107,7 @@ export class LazyLayout {
 	measure(key: unknown, height: number): boolean {
 		if (!(Number.isFinite(height) && height >= 0)) return false;
 		const previous = this.heightOf(key);
+		if (previous !== height) this.#stale = true;
 		this.#heights.set(key, height);
 		return Math.abs(previous - height) > 0.5;
 	}
@@ -79,49 +116,67 @@ export class LazyLayout {
 	keep(keys: readonly unknown[]): void {
 		if (this.#heights.size <= keys.length) return;
 		const live = new Set(keys);
-		for (const key of this.#heights.keys())
-			if (!live.has(key)) this.#heights.delete(key);
+		for (const key of this.#heights.keys()) {
+			if (live.has(key)) continue;
+			this.#heights.delete(key);
+			this.#stale = true;
+		}
+	}
+
+	#offsetsFor(keys: readonly unknown[]): Float64Array {
+		if (!this.#stale && this.#offsetsOf === keys) return this.#offsets;
+		const offsets = new Float64Array(keys.length + 1);
+		const { estimate } = this.#lazy;
+		const measured = this.#heights.size > 0;
+		for (let i = 0; i < keys.length; i++) {
+			offsets[i + 1] =
+				(offsets[i] ?? 0) + (measured ? this.heightOf(keys[i]) : estimate);
+		}
+		this.#offsets = offsets;
+		this.#offsetsOf = keys;
+		this.#stale = false;
+		return offsets;
 	}
 
 	/** Rows [start, end) and the spacers around them. */
 	spacers(keys: readonly unknown[], start: number, end: number): LazyWindow {
-		let before = 0;
-		let after = 0;
-		for (let i = 0; i < keys.length; i++) {
-			if (i < start) before += this.heightOf(keys[i]);
-			else if (i >= end) after += this.heightOf(keys[i]);
+		if (this.#heights.size === 0) {
+			// Nothing measured yet (the first window, on the server too).
+			const { estimate } = this.#lazy;
+			return {
+				start,
+				end,
+				before: start * estimate,
+				after: (keys.length - end) * estimate,
+			};
 		}
-		return { start, end, before, after };
+		const offsets = this.#offsetsFor(keys);
+		const total = offsets[keys.length] ?? 0;
+		return {
+			start,
+			end,
+			before: offsets[start] ?? 0,
+			after: total - (offsets[end] ?? total),
+		};
 	}
 
 	/** The rows a viewport needs, `overscan` included on each side. */
 	window(keys: readonly unknown[], view: LazyView): LazyWindow {
 		const count = keys.length;
 		const { overscan } = this.#lazy;
+		const offsets = this.#offsetsFor(keys);
+		const total = offsets[count] ?? 0;
 		if (view.kind === "end") {
-			// From the last row up, until the viewport and the margin are covered.
-			let covered = 0;
-			let start = count;
-			while (start > 0 && covered < view.height + overscan) {
-				start--;
-				covered += this.heightOf(keys[start]);
-			}
-			return this.spacers(keys, start, count);
+			// The last rows that cover the viewport and the margin.
+			const reach = total - (view.height + overscan);
+			const start = Math.max(0, firstAbove(offsets, reach) - 1);
+			return this.spacers(keys, Math.min(start, count), count);
 		}
-		const low = view.from - overscan;
-		const high = view.to + overscan;
-		let y = 0;
-		let start = count;
-		let end = count;
-		for (let i = 0; i < count; i++) {
-			const h = this.heightOf(keys[i]);
-			if (start === count && y + h > low) start = i;
-			if (y >= high) {
-				end = i;
-				break;
-			}
-			y += h;
-		}
+		// The first row ending below the window's top, the first starting at
+		// or past its bottom.
+		const above = firstAbove(offsets, view.from - overscan);
+		let start = above > count ? count : Math.max(above, 1) - 1;
+		const end = Math.min(firstAtLeast(offsets, view.to + overscan), count);
 		if (start > end) start = end;
 		return this.spacers(keys, start, end);
 	}
