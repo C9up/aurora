@@ -1,4 +1,4 @@
-/// <reference lib="dom" />
+/// <reference lib="dom" preserve="true" />
 /**
  * Echoing the CSRF cookie back as a header, in one place.
  *

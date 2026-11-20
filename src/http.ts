@@ -1,4 +1,4 @@
-/// <reference lib="dom" />
+/// <reference lib="dom" preserve="true" />
 // This file uses browser globals. The reference pulls the DOM lib in for
 // THIS file whatever `lib` the consumer configured, so a Node app
 // typechecking against our sources does not trip over `window` —

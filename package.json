@@ -11,6 +11,14 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./core": {
+      "types": "./src/core.ts",
+      "import": "./src/core.ts"
+    },
+    "./renderer": {
+      "types": "./src/renderer.ts",
+      "import": "./src/renderer.ts"
+    },
     "./provider": {
       "types": "./src/AuroraProvider.ts",
       "import": "./src/AuroraProvider.ts"
@@ -99,6 +107,14 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./core": {
+        "types": "./dist/core.d.ts",
+        "import": "./dist/core.js"
+      },
+      "./renderer": {
+        "types": "./dist/renderer.d.ts",
+        "import": "./dist/renderer.js"
       },
       "./provider": {
         "types": "./dist/AuroraProvider.d.ts",

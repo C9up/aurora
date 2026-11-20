@@ -94,3 +94,6 @@ export function isTemplateResult(value: unknown): value is TemplateResult {
 		Reflect.get(value, TEMPLATE_RESULT_BRAND) === true
 	);
 }
+
+/** Stops what a render, an effect or a slot set up. Calling it twice is a no-op. */
+export type Disposer = () => void;

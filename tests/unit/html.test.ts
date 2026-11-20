@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getTemplate, html, isTemplateResult } from "../../src/html.js";
+import { getTemplate } from "../../src/compile.js";
+import { html, isTemplateResult } from "../../src/html.js";
 
 /** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
 function defined<T>(value: T | null | undefined): T {

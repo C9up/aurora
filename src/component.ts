@@ -22,8 +22,8 @@
 import { readEach } from "./each.js";
 import { AuroraError } from "./errors.js";
 import { isSignal, setOwner, untrack } from "./reactive.js";
-import type { Disposer } from "./render.js";
-import type { EffectCallback, TemplateResult } from "./types.js";
+import { probe } from "./rerenders.js";
+import type { Disposer, EffectCallback, TemplateResult } from "./types.js";
 
 /**
  * Active component context. `onMount` / `onUnmount` push into it so a
@@ -207,6 +207,7 @@ export function component<P = Record<string, never>>(
 	setup: (props: P) => TemplateResult,
 ): (props?: P) => TemplateResult {
 	return (props?: P) => {
+		probe.emit?.({ kind: "setup", name: setup.name });
 		const ctx = new ComponentContext(nearestProvider());
 		contextStack.push(ctx);
 		// Own the reactive scope of setup: effects/memos created here register
@@ -338,7 +339,8 @@ export function inject<T>(context: Context<T>): T {
  */
 const COMPONENT_LIFECYCLE: unique symbol = Symbol.for("aurora:component");
 
-interface ComponentLifecycle {
+/** What a component hands its renderer: hooks to run once mounted, teardowns for unmount. */
+export interface ComponentLifecycle {
 	mountHooks: ReadonlyArray<EffectCallback>;
 	/** Everything to run at unmount: the disposers below, then `onUnmount`. */
 	cleanups: Disposer[];
