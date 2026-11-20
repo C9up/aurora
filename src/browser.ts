@@ -1,4 +1,4 @@
-/// <reference lib="dom" />
+/// <reference lib="dom" preserve="true" />
 // This file uses browser globals. The reference pulls the DOM lib in for
 // THIS file whatever `lib` the consumer configured, so a Node app
 // typechecking against our sources does not trip over `window` —
@@ -13,7 +13,7 @@
  */
 
 import { AuroraError } from "./errors.js";
-import { effect, onCleanup, type Signal, signal } from "./reactive.js";
+import { effect, onDispose, type Signal, signal, untrack } from "./reactive.js";
 import { hasUnsafeScheme } from "./urlGuard.js";
 
 /** Navigate to `url` with a full page load. No-op during SSR. */
@@ -237,6 +237,9 @@ export function persistedSignal<T>(
 		const fullKey = store.fullKey(key);
 		const onStorage = (event: StorageEvent) => {
 			if (event.key !== fullKey || event.newValue === null) return;
+			// Another tab wrote what this one holds: parsing it would make a new
+			// object out of the same value and re-run everything that reads it.
+			if (event.newValue === JSON.stringify(untrack(sig))) return;
 			try {
 				// NAMED CAST: the storage boundary, as in `getJSON`.
 				sig(JSON.parse(event.newValue) as T);
@@ -245,12 +248,11 @@ export function persistedSignal<T>(
 			}
 		};
 		window.addEventListener("storage", onStorage);
-		// Tie the listener to the owning reactive scope so a persistedSignal
-		// created in a component's setup removes it on dispose (matching the
-		// mirror effect above — the JSDoc promises disposal-with-the-component).
-		// At module scope onCleanup is a no-op, so the listener lives for the
-		// page lifetime, as intended for a shared module-level signal.
-		onCleanup(() => window.removeEventListener("storage", onStorage));
+		// Tie the listener to the owning scope so a persistedSignal created in a
+		// component's setup removes it on dispose, as the mirror effect above is.
+		// At module scope nothing owns it, so the listener lives for the page
+		// lifetime, as intended for a shared module-level signal.
+		onDispose(() => window.removeEventListener("storage", onStorage));
 	}
 
 	return sig;
@@ -273,8 +275,9 @@ function eventSignal<T>(
 	target: EventTarget | undefined,
 	events: string[],
 	read: () => T,
+	equals?: (a: T, b: T) => boolean,
 ): Signal<T> {
-	const sig = signal<T>(read());
+	const sig = signal<T>(read(), { equals });
 	if (target) {
 		const update = (): void => {
 			sig(read());
@@ -327,10 +330,13 @@ export function windowSize(): Signal<WindowSize> {
 		typeof window === "undefined"
 			? { width: 0, height: 0 }
 			: { width: window.innerWidth, height: window.innerHeight };
+	// Compared by size: `read` builds a new object on every event, and a
+	// resize event that left both dimensions as they were re-ran every reader.
 	return eventSignal(
 		typeof window === "undefined" ? undefined : window,
 		["resize"],
 		read,
+		(a, b) => a.width === b.width && a.height === b.height,
 	);
 }
 
@@ -406,9 +412,12 @@ export function queryParam(key: string): Signal<string | null> {
 			: new URLSearchParams(window.location.search).get(key);
 	const sig = signal<string | null>(read());
 	if (typeof window !== "undefined") {
-		window.addEventListener("popstate", () => {
+		const onPopState = (): void => {
 			sig(read());
-		});
+		};
+		window.addEventListener("popstate", onPopState);
+		// Removed with the scope that created it, as the mirror effect below is.
+		onDispose(() => window.removeEventListener("popstate", onPopState));
 		// Mirror writes back to the URL (skips the no-op initial run).
 		effect(() => {
 			const value = sig();

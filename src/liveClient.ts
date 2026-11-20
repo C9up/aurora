@@ -1,4 +1,4 @@
-/// <reference lib="dom" />
+/// <reference lib="dom" preserve="true" />
 // This file uses browser globals. The reference pulls the DOM lib in for
 // THIS file whatever `lib` the consumer configured, so a Node app
 // typechecking against our sources does not trip over `window` —
@@ -23,7 +23,7 @@
 import { hydrate } from "./hydrate.js";
 import { withIdScope } from "./id.js";
 import type { SlotPatch } from "./liveSession.js";
-import { isSignal } from "./reactive.js";
+import { batch, isSignal } from "./reactive.js";
 import type { TemplateResult } from "./types.js";
 
 /** The transport the live client needs: a patch subscription + an event POST. */
@@ -64,11 +64,14 @@ export function liveClient(opts: LiveClientOptions): () => void {
 	});
 
 	const off = opts.transport.subscribe(opts.mount.channel, (patch) => {
-		for (const { slot, value } of patch) {
-			const sig = view.values[slot];
-			// As an updater, so a value is never mistaken for one.
-			if (isSignal(sig)) sig(() => value);
-		}
+		// One update per patch: a slot reading two patched signals runs once.
+		batch(() => {
+			for (const { slot, value } of patch) {
+				const sig = view.values[slot];
+				// As an updater, so a value is never mistaken for one.
+				if (isSignal(sig)) sig(() => value);
+			}
+		});
 	});
 
 	const onClick = (event: Event): void => {

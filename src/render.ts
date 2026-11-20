@@ -1,4 +1,4 @@
-/// <reference lib="dom" />
+/// <reference lib="dom" preserve="true" />
 // This file uses browser globals. The reference pulls the DOM lib in for
 // THIS file whatever `lib` the consumer configured, so a Node app
 // typechecking against our sources does not trip over `window` —
@@ -13,10 +13,10 @@
  * mounted nodes.
  */
 
+import { getTemplate } from "./compile.js";
 import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { type EachList, readEach, readEachItems } from "./each.js";
 import { AuroraError } from "./errors.js";
-import { getTemplate } from "./html.js";
 import {
 	isChildNode,
 	isCommentNode,
@@ -28,13 +28,16 @@ import {
 	isSignal,
 	readValue,
 	type Signal,
+	setOwner,
 	signal,
 	untrack,
 } from "./reactive.js";
+import { probe } from "./rerenders.js";
 import { assertNotMarkup, assertPropertyValue } from "./templateScanner.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
+	type Disposer,
 	type EffectCallback,
 	type EventSlot,
 	isTemplateResult,
@@ -46,7 +49,7 @@ import {
 } from "./types.js";
 import { guardUrlAttribute, guardUrlProperty } from "./urlGuard.js";
 
-export type Disposer = () => void;
+export type { Disposer };
 
 /**
  * The `onMount` hooks collected while a tree is built, and whether they have
@@ -74,13 +77,21 @@ export function runMountHooks(
 	hooks: Array<EffectCallback>,
 	cleanups: Disposer[],
 ): void {
-	for (const hook of hooks) {
-		try {
-			const teardown = hook();
-			if (typeof teardown === "function") cleanups.push(teardown);
-		} catch {
-			/* swallow — one bad onMount should not block sibling components */
+	// The hooks' effects end with the component: an effect an `onMount`
+	// created had no owner, and went on running after the component that made
+	// it was unmounted.
+	const previous = setOwner(cleanups);
+	try {
+		for (const hook of hooks) {
+			try {
+				const teardown = hook();
+				if (typeof teardown === "function") cleanups.push(teardown);
+			} catch {
+				/* swallow — one bad onMount should not block sibling components */
+			}
 		}
+	} finally {
+		setOwner(previous);
 	}
 }
 
@@ -100,8 +111,19 @@ export function render(
 	// it. An overlay renders its content into a portal from the effect that
 	// follows its open state, and what the content read while it was built, or
 	// when it mounted, re-ran that effect.
+	//
+	// Unowned for the same reason: an effect ends what its run created when it
+	// runs again, and an overlay that keeps its content open across re-runs of
+	// that effect would find it frozen. Only the disposer below ends a root.
 	const mountedNodes = untrack(() => {
-		const { fragment, owned } = mount(result, cleanups, queue);
+		const previousOwner = setOwner(undefined);
+		let built: Mounted;
+		try {
+			built = mount(result, cleanups, queue);
+		} finally {
+			setOwner(previousOwner);
+		}
+		const { fragment, owned } = built;
 		container.appendChild(fragment);
 
 		// `onMount` hooks fire after the fragment is live in the document so
@@ -327,6 +349,10 @@ function applyTextSlot(
 		return;
 	}
 	let currentNodes: ChildNode[] = [];
+	/** What the slot shows now, to leave it alone when the next value renders the same. */
+	let shown: { value: unknown } | undefined;
+	/** The text node it shows, when what it shows is one scalar: updated in place. */
+	let text: Text | undefined;
 	// Per-render disposers for whatever the slot currently shows. A
 	// reactive slot that swaps a nested TemplateResult for another must
 	// dispose the OLD subtree's effects + event listeners — otherwise
@@ -347,6 +373,24 @@ function applyTextSlot(
 	}
 
 	function set(newValue: unknown): void {
+		const rerun = shown !== undefined;
+		// An effect re-runs when anything it read changed, not only when its
+		// result did: a value that renders exactly as the one shown is left
+		// alone, its nodes, focus and state included.
+		if (shown !== undefined && sameContent(shown.value, newValue)) return;
+		shown = { value: newValue };
+		if (rerun) {
+			probe.emit?.({
+				kind: "slot",
+				target: anchor.parentElement ?? undefined,
+				hint: Array.isArray(newValue) ? ARRAY_HINT : undefined,
+			});
+		}
+		if (text !== undefined && isScalar(newValue)) {
+			text.data = String(newValue);
+			return;
+		}
+		text = undefined;
 		disposeLocal();
 		removeCurrent();
 		// This render's hooks are collected apart from the shared queue,
@@ -355,18 +399,28 @@ function applyTextSlot(
 		// list, a component mounted per row kept its subscription until the
 		// whole page unmounted.
 		//
-		// `flushed` is inherited so a deeper slot built during this render
-		// still knows whether the root has a flush coming.
-		const own: MountQueue = { hooks: [], flushed: queue.flushed };
+		// Never flushed while it is being built, even long after the root's
+		// flush: the content sits in a detached fragment until the insertion
+		// below. Inheriting `flushed = true` there made a slot NESTED in the new
+		// content run its components' `onMount` at once, before any of it was in
+		// the document — `querySelector` found nothing, a measurement read 0.
+		// Deferred to this queue instead, they run after the insertion.
+		const own: MountQueue = { hooks: [], flushed: false };
 		const { nodes, owned } = renderValueIntoNodes(newValue, localCleanups, own);
 		const parent = anchor.parentNode;
 		if (!parent) return;
 		for (const n of nodes) parent.insertBefore(n, anchor);
 		currentNodes = owned;
+		const only = owned[0];
+		if (owned.length === 1 && isScalar(newValue) && only instanceof Text) {
+			text = only;
+		}
 		if (queue.flushed) {
 			// After insertion, exactly as at the root: an `onMount` that
-			// measures, focuses or observes has to see a live node.
-			runMountHooks(own.hooks, localCleanups);
+			// measures, focuses or observes has to see a live node. Marked
+			// first, so a slot nested here that swaps later runs its own hooks.
+			own.flushed = true;
+			runMountHooks(own.hooks.splice(0), localCleanups);
 			return;
 		}
 		// Still building the initial tree: the nodes are in a detached
@@ -530,6 +584,7 @@ export function bindEach(
 			return;
 		}
 		adopting = false;
+		probe.emit?.({ kind: "list", target: end.parentElement ?? undefined });
 
 		const next = new Map<unknown, PlacedRow>();
 		const built: Array<{ row: PlacedRow; hooks: MountQueue }> = [];
@@ -548,10 +603,14 @@ export function bindEach(
 				cleanups: [],
 			};
 			// A row's hooks are its own, like a swapped slot's: their teardowns
-			// go when the row goes, not when the page does.
-			const hooks: MountQueue = { hooks: [], flushed: queue.flushed };
-			const nodes = list.run(() =>
-				build(list.render(fresh.item, fresh.index), fresh.cleanups, hooks),
+			// go when the row goes, not when the page does. Not flushed while it
+			// is built: the row sits in a fragment until it is placed below, and
+			// a slot nested in it must wait for that (see `set()` in applyTextSlot).
+			const hooks: MountQueue = { hooks: [], flushed: false };
+			const nodes = ownedBy(fresh.cleanups, () =>
+				list.run(() =>
+					build(list.render(fresh.item, fresh.index), fresh.cleanups, hooks),
+				),
 			);
 			// Held in a fragment until it is placed, so its nodes read the same
 			// way as a placed row's.
@@ -589,7 +648,8 @@ export function bindEach(
 
 		for (const { row, hooks } of built) {
 			if (queue.flushed) {
-				runMountHooks(hooks.hooks, row.cleanups);
+				hooks.flushed = true;
+				runMountHooks(hooks.hooks.splice(0), row.cleanups);
 				continue;
 			}
 			// Still building the initial tree: the root's flush runs them.
@@ -642,6 +702,27 @@ export function eachNodes(
 	return Array.from(holder.childNodes);
 }
 
+/**
+ * @internal Run `fn` with a reactive owner that ends with `cleanups`.
+ *
+ * A list builds its rows inside its own effect, and an effect ends what its
+ * run created when it runs again: a kept row would have lost its effects at
+ * the next change of the array. A row is its own owner instead, and goes
+ * when the row goes.
+ */
+export function ownedBy<T>(cleanups: Disposer[], fn: () => T): T {
+	const owned: Disposer[] = [];
+	cleanups.push(() => {
+		for (const end of owned.splice(0)) end();
+	});
+	const previous = setOwner(owned);
+	try {
+		return fn();
+	} finally {
+		setOwner(previous);
+	}
+}
+
 function disposeRow(row: ListRow): void {
 	for (const d of row.cleanups.splice(0)) d();
 }
@@ -650,6 +731,73 @@ function disposeRow(row: ListRow): void {
 interface Rendered {
 	nodes: ChildNode[];
 	owned: ChildNode[];
+}
+
+/** What the re-render counter says when a slot rebuilt an array. */
+const ARRAY_HINT =
+	"a slot rebuilt a whole array: each(items, key, render) keeps the rows whose key stays";
+
+/** A value a text slot shows as one text node. */
+function isScalar(value: unknown): value is string | number | bigint | true {
+	return (
+		typeof value === "string" ||
+		typeof value === "number" ||
+		typeof value === "bigint" ||
+		value === true
+	);
+}
+
+function rendersNothing(value: unknown): boolean {
+	return value === null || value === undefined || value === false;
+}
+
+/**
+ * @internal Whether a text slot showing `a` would show exactly the same
+ * nodes for `b`: the same scalar text, nothing for both, or templates from
+ * the same call site whose values are the same, all the way down.
+ *
+ * Function values compare by identity — what a new closure would do cannot
+ * be known without running it — and a component's template never compares
+ * equal: its setup already ran for the new one.
+ */
+export function sameContent(a: unknown, b: unknown): boolean {
+	if (Object.is(a, b)) return true;
+	if (rendersNothing(a) && rendersNothing(b)) return true;
+	if (isScalar(a) && isScalar(b)) return String(a) === String(b);
+	if (Array.isArray(a) && Array.isArray(b)) {
+		return (
+			a.length === b.length && a.every((item, i) => sameContent(item, b[i]))
+		);
+	}
+	if (isTemplateResult(a) && isTemplateResult(b)) {
+		if (a.strings !== b.strings || a.values.length !== b.values.length) {
+			return false;
+		}
+		if (
+			readComponentLifecycle(a) !== undefined ||
+			readComponentLifecycle(b) !== undefined
+		) {
+			return false;
+		}
+		return a.values.every((value, i) => sameSlotValue(value, b.values[i]));
+	}
+	return false;
+}
+
+/**
+ * Inside a template, a value may sit in an attribute or a property, where
+ * `1` and `"1"` or `null` and `false` are not interchangeable: only nested
+ * templates and arrays are compared by what they render.
+ */
+function sameSlotValue(a: unknown, b: unknown): boolean {
+	if (Object.is(a, b)) return true;
+	if (
+		(isTemplateResult(a) && isTemplateResult(b)) ||
+		(Array.isArray(a) && Array.isArray(b))
+	) {
+		return sameContent(a, b);
+	}
+	return false;
 }
 
 function renderValueIntoNodes(
@@ -696,30 +844,101 @@ function renderValueIntoNodes(
 	return { nodes: [node], owned: [node] };
 }
 
+/**
+ * @internal Give `el` the attribute a slot's value asks for, unless it holds
+ * it already. A binding re-runs whenever anything it read changed; rewriting
+ * an identical value still fires every MutationObserver and restarts CSS
+ * transitions keyed on the attribute, and on hydration rewrote what the
+ * server had just written. Says whether it wrote.
+ */
+export function writeAttribute(el: Element, name: string, v: unknown): boolean {
+	assertNotMarkup(v);
+	if (v === null || v === undefined || v === false) {
+		if (!el.hasAttribute(name)) return false;
+		el.removeAttribute(name);
+		return true;
+	}
+	const next =
+		v === true ? "" : guardUrlAttribute(el.localName, name, String(v));
+	if (el.getAttribute(name) === next) return false;
+	el.setAttribute(name, next);
+	return true;
+}
+
+/** @internal {@link writeAttribute} for a `?name=` slot: present when truthy. */
+export function writeBooleanAttribute(
+	el: Element,
+	name: string,
+	v: unknown,
+): boolean {
+	if (Boolean(v) === el.hasAttribute(name)) return false;
+	if (v) el.setAttribute(name, "");
+	else el.removeAttribute(name);
+	return true;
+}
+
+/**
+ * @internal Follow a reactive element binding: `write` what `read` returns on
+ * every run, and tell the re-render counter when a later run wrote something.
+ */
+export function bindElementEffect(
+	el: Element,
+	kind: "attribute" | "property",
+	name: string,
+	read: () => unknown,
+	write: (v: unknown) => boolean,
+	cleanups: Disposer[],
+): void {
+	let first = true;
+	cleanups.push(
+		effect(() => {
+			const wrote = write(read());
+			if (!first && wrote) probe.emit?.({ kind, target: el, name });
+			first = false;
+		}),
+	);
+}
+
+/**
+ * @internal A `.prop` writer that skips a value equal to the one it wrote
+ * last. Compared with what it wrote, not with what the element holds: a
+ * `.value` the user typed over is the user's until the bound value changes,
+ * and a re-run caused by something else put the old value back over it.
+ */
+export function propertyWriter(
+	el: Element,
+	name: string,
+): (v: unknown) => boolean {
+	let last: { value: unknown } | undefined;
+	return (v) => {
+		assertPropertyValue(el, name, v);
+		const next = guardUrlProperty(el.localName, name, v);
+		if (last !== undefined && Object.is(last.value, next)) return false;
+		last = { value: next };
+		// Reflect.set writes the property without a cast.
+		Reflect.set(el, name, next);
+		return true;
+	};
+}
+
 function applyAttrSlot(
 	slot: AttrSlot,
 	el: Element,
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
-	function apply(v: unknown): void {
-		assertNotMarkup(v);
-		if (v === null || v === undefined || v === false) {
-			el.removeAttribute(slot.name);
-		} else if (v === true) {
-			el.setAttribute(slot.name, "");
-		} else {
-			el.setAttribute(
-				slot.name,
-				guardUrlAttribute(el.localName, slot.name, String(v)),
-			);
-		}
-	}
+	const write = (v: unknown): boolean => writeAttribute(el, slot.name, v);
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply(readValue(value)));
-		cleanups.push(dispose);
+		bindElementEffect(
+			el,
+			"attribute",
+			slot.name,
+			() => readValue(value),
+			write,
+			cleanups,
+		);
 	} else {
-		apply(value);
+		write(value);
 	}
 }
 
@@ -764,16 +983,20 @@ function applyMultiAttrGroup(
 	);
 	// The guard sees the WHOLE value here — static parts and slots joined — which
 	// is what a scheme check needs: it can only be at the start.
-	const write = (): void => {
-		group.el.setAttribute(
+	const write = (joined: unknown): boolean => {
+		const next = guardUrlAttribute(
+			group.el.localName,
 			group.name,
-			guardUrlAttribute(group.el.localName, group.name, join()),
+			String(joined),
 		);
+		if (group.el.getAttribute(group.name) === next) return false;
+		group.el.setAttribute(group.name, next);
+		return true;
 	};
 	if (hasReactive) {
-		cleanups.push(effect(write));
+		bindElementEffect(group.el, "attribute", group.name, join, write, cleanups);
 	} else {
-		write();
+		write(join());
 	}
 }
 
@@ -783,15 +1006,19 @@ function applyBooleanAttrSlot(
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
-	function apply(v: unknown): void {
-		if (v) el.setAttribute(slot.name, "");
-		else el.removeAttribute(slot.name);
-	}
+	const write = (v: unknown): boolean =>
+		writeBooleanAttribute(el, slot.name, v);
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply(readValue(value)));
-		cleanups.push(dispose);
+		bindElementEffect(
+			el,
+			"attribute",
+			slot.name,
+			() => readValue(value),
+			write,
+			cleanups,
+		);
 	} else {
-		apply(value);
+		write(value);
 	}
 }
 
@@ -801,16 +1028,18 @@ function applyPropSlot(
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
-	function apply(v: unknown): void {
-		// See hydrate.ts: Reflect.set writes the property without a cast.
-		assertPropertyValue(el, slot.name, v);
-		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
-	}
+	const write = propertyWriter(el, slot.name);
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply(readValue(value)));
-		cleanups.push(dispose);
+		bindElementEffect(
+			el,
+			"property",
+			slot.name,
+			() => readValue(value),
+			write,
+			cleanups,
+		);
 	} else {
-		apply(value);
+		write(value);
 	}
 }
 

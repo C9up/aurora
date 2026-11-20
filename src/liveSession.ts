@@ -81,6 +81,8 @@ export function mountLiveSession(
 	// one batch collapse to the last value.
 	const pending = new Map<number, string>();
 	const buffer = new Map<number, string>();
+	/** slot → the value the client holds: what was rendered, then each flushed patch. */
+	const delivered = new Map<number, string>();
 	/** The disposers of the view's components, gathered as it is rendered. */
 	const owned = new Set<() => void>();
 	let priming = true;
@@ -93,6 +95,7 @@ export function mountLiveSession(
 		for (const [slot, value] of pending) {
 			patch.push({ slot, value });
 			buffer.set(slot, value);
+			delivered.set(slot, value);
 		}
 		pending.clear();
 		for (const listener of listeners) listener(patch);
@@ -119,7 +122,17 @@ export function mountLiveSession(
 		return effect(() => {
 			const read: unknown = Reflect.apply(value, undefined, []);
 			const next = String(read);
-			if (priming) return;
+			if (priming) {
+				delivered.set(slot, next);
+				return;
+			}
+			// An effect re-runs when anything it read changed, and a slot that
+			// stringifies to what the client already has sent the same patch
+			// again — over the wire, to every session.
+			if (delivered.get(slot) === next) {
+				pending.delete(slot);
+				return;
+			}
 			pending.set(slot, next);
 			scheduleFlush();
 		});
@@ -163,6 +176,7 @@ export function mountLiveSession(
 			listeners.clear();
 			pending.clear();
 			buffer.clear();
+			delivered.clear();
 		},
 	};
 }

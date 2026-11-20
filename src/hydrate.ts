@@ -1,4 +1,4 @@
-/// <reference lib="dom" />
+/// <reference lib="dom" preserve="true" />
 // This file uses browser globals. The reference pulls the DOM lib in for
 // THIS file whatever `lib` the consumer configured, so a Node app
 // typechecking against our sources does not trip over `window` —
@@ -20,9 +20,9 @@
  * hydration mismatch warning.
  */
 
+import { getTemplate } from "./compile.js";
 import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { type EachList, readEach } from "./each.js";
-import { getTemplate } from "./html.js";
 import { beginHydration, endHydration } from "./hydrationSignal.js";
 import { withIdScope } from "./id.js";
 import {
@@ -31,17 +31,31 @@ import {
 	isElementNode,
 	isTextNode,
 } from "./nodes.js";
-import { effect, isSignal, readValue, signal, untrack } from "./reactive.js";
+import {
+	effect,
+	isSignal,
+	readValue,
+	setOwner,
+	signal,
+	untrack,
+} from "./reactive.js";
 import {
 	bindEach,
+	bindElementEffect,
 	type Disposer,
 	type EachRow,
 	eachNodes,
 	type MountQueue,
 	mount,
+	ownedBy,
+	propertyWriter,
 	runMountHooks,
+	sameContent,
+	writeAttribute,
+	writeBooleanAttribute,
 } from "./render.js";
-import { assertNotMarkup, assertPropertyValue } from "./templateScanner.js";
+import { probe } from "./rerenders.js";
+import { assertNotMarkup } from "./templateScanner.js";
 import {
 	type AttrSlot,
 	type BooleanAttrSlot,
@@ -52,7 +66,7 @@ import {
 	type Slot,
 	type TemplateResult,
 } from "./types.js";
-import { guardUrlAttribute, guardUrlProperty } from "./urlGuard.js";
+import { guardUrlAttribute } from "./urlGuard.js";
 
 /**
  * Process-scoped flag so the "reactive nested template not reactive
@@ -204,10 +218,15 @@ function hydrateReactiveStructured(
 	let serverNodes = rangeOf(pair);
 	let localCleanups: Disposer[] = [];
 	let firstRun = true;
+	/** What the slot shows now, to leave it alone when the next value renders the same. */
+	let shown: unknown;
 
 	// Only the accessor is a dependency of the slot. What showing its value
 	// reads — the `onMount` of what it swapped in — belongs to that component.
 	const show = (next: unknown): void => {
+		if (!firstRun && sameContent(shown, next)) return;
+		const previous = shown;
+		shown = next;
 		if (firstRun) {
 			firstRun = false;
 			// Reuse SSR markup: hydrate reactive bindings INSIDE the nested
@@ -258,6 +277,21 @@ function hydrateReactiveStructured(
 			});
 			return;
 		}
+		probe.emit?.({ kind: "slot", target: end.parentElement ?? undefined });
+		// A scalar replacing a scalar: the range holds one text node, which
+		// takes the new text in place.
+		const range = rangeOf(pair);
+		const only = range[0];
+		if (
+			isTextScalar(previous) &&
+			isTextScalar(next) &&
+			range.length === 1 &&
+			only !== undefined &&
+			isTextNode(only)
+		) {
+			only.data = String(next);
+			return;
+		}
 		// Signal changed post-hydration: tear down the old subtree's
 		// effects/listeners, drop its nodes, client-render the new value
 		// into the same marker range.
@@ -272,7 +306,12 @@ function hydrateReactiveStructured(
 		// its `onMount`. A component whose whole job happens in `onMount` —
 		// a floating surface that only starts reacting once it is in the
 		// document — therefore never appeared at all.
-		const own: MountQueue = { hooks: [], flushed: queue.flushed };
+		//
+		// Not flushed while the new value is built, though: it sits in detached
+		// nodes until the insertion below, and a slot nested in it that saw
+		// `flushed = true` ran its `onMount` before anything reached the
+		// document (see `set()` in render.ts).
+		const own: MountQueue = { hooks: [], flushed: false };
 		const fresh = renderValueToNodes(
 			next,
 			localCleanups,
@@ -280,10 +319,11 @@ function hydrateReactiveStructured(
 			markerCursor.doc,
 		);
 		for (const n of fresh) parent.insertBefore(n, end);
-		if (own.flushed) {
+		if (queue.flushed) {
 			// After insertion, as at the root. The teardowns go to this slot's
 			// cleanups: the next swap must dispose what it replaces.
-			runMountHooks(own.hooks, localCleanups);
+			own.flushed = true;
+			runMountHooks(own.hooks.splice(0), localCleanups);
 		} else {
 			// Still building the initial tree — the root's flush is coming, and
 			// it marks this queue flushed for the slots nested in it.
@@ -304,6 +344,18 @@ function hydrateReactiveStructured(
 		for (const d of localCleanups) d();
 		localCleanups = [];
 	});
+}
+
+/** A value a slot renders as one text node. */
+function isTextScalar(
+	value: unknown,
+): value is string | number | bigint | true {
+	return (
+		typeof value === "string" ||
+		typeof value === "number" ||
+		typeof value === "bigint" ||
+		value === true
+	);
 }
 
 /**
@@ -505,18 +557,23 @@ function adoptEachRows(
 			nodes: [],
 			cleanups: [],
 		};
-		const value = list.run(() => list.render(row.item, row.index));
-		const count = liveNodeCount(value);
-		const edges = edgeNodeTypes(value);
-		const merged = previousLast === 3 && edges?.first === 3;
-		if (merged) offset -= 1;
-		const slice = unitNodes(units, offset, offset + count);
+		// Its own owner: the list adopts inside its effect, which would end the
+		// row's effects at the next change of the array (see `ownedBy`).
 		const own: MountQueue = { hooks: [], flushed: queue.flushed };
-		if (isTemplateResult(value)) {
-			hydrateTemplateResult(value, slice, row.cleanups, own, markerCursor);
-		} else if (Array.isArray(value)) {
-			hydrateArrayItems(value, slice, row.cleanups, own, markerCursor);
-		}
+		const { count, merged, slice, edges } = ownedBy(row.cleanups, () => {
+			const value = list.run(() => list.render(row.item, row.index));
+			const count = liveNodeCount(value);
+			const edges = edgeNodeTypes(value);
+			const merged = previousLast === 3 && edges?.first === 3;
+			if (merged) offset -= 1;
+			const slice = unitNodes(units, offset, offset + count);
+			if (isTemplateResult(value)) {
+				hydrateTemplateResult(value, slice, row.cleanups, own, markerCursor);
+			} else if (Array.isArray(value)) {
+				hydrateArrayItems(value, slice, row.cleanups, own, markerCursor);
+			}
+			return { count, merged, slice, edges };
+		});
 		const pending = own.hooks;
 		queue.hooks.push(() => {
 			own.flushed = true;
@@ -608,14 +665,20 @@ function hydrateRoot(
 	};
 	// Untracked, hooks included, as `render()`: a root is its own even when an
 	// effect hydrates it.
+	// Unowned as well: only the disposer below ends a root (see `render()`).
 	untrack(() => {
-		hydrateTemplateResult(
-			factory(),
-			Array.from(container.childNodes),
-			cleanups,
-			queue,
-			markerCursor,
-		);
+		const previousOwner = setOwner(undefined);
+		try {
+			hydrateTemplateResult(
+				factory(),
+				Array.from(container.childNodes),
+				cleanups,
+				queue,
+				markerCursor,
+			);
+		} finally {
+			setOwner(previousOwner);
+		}
 		// Every slot has taken its pair. The cursor stays reachable from the
 		// slots that swap later (for its document), and pairs found inside a
 		// page a slot replaced would hold that page in memory through their
@@ -751,15 +814,19 @@ function applyMultiAttrGroup(
 	);
 	if (hasReactive) {
 		// SSR already wrote the joined value; re-joining on every tick is what
-		// keeps the statics in place when only one part changes.
-		cleanups.push(
-			effect(() => {
-				group.el.setAttribute(
-					group.name,
-					guardUrlAttribute(group.el.localName, group.name, join()),
-				);
-			}),
-		);
+		// keeps the statics in place when only one part changes. Written only
+		// when it differs, so the first run leaves the server's value alone.
+		const write = (joined: unknown): boolean => {
+			const next = guardUrlAttribute(
+				group.el.localName,
+				group.name,
+				String(joined),
+			);
+			if (group.el.getAttribute(group.name) === next) return false;
+			group.el.setAttribute(group.name, next);
+			return true;
+		};
+		bindElementEffect(group.el, "attribute", group.name, join, write, cleanups);
 	}
 	// Fully static groups need nothing: SSR wrote the final value.
 }
@@ -1077,22 +1144,17 @@ function hydrateAttrSlot(
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
-	function apply(v: unknown): void {
-		assertNotMarkup(v);
-		if (v === null || v === undefined || v === false) {
-			el.removeAttribute(slot.name);
-		} else if (v === true) {
-			el.setAttribute(slot.name, "");
-		} else {
-			el.setAttribute(
-				slot.name,
-				guardUrlAttribute(el.localName, slot.name, String(v)),
-			);
-		}
-	}
+	// Written only when it differs from what the element holds, so the first
+	// run leaves the attribute the server wrote alone.
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply(readValue(value)));
-		cleanups.push(dispose);
+		bindElementEffect(
+			el,
+			"attribute",
+			slot.name,
+			() => readValue(value),
+			(v) => writeAttribute(el, slot.name, v),
+			cleanups,
+		);
 	}
 	// Static attrs need no hydration — SSR already wrote them, guarded.
 }
@@ -1103,13 +1165,15 @@ function hydrateBooleanAttrSlot(
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
-	function apply(v: unknown): void {
-		if (v) el.setAttribute(slot.name, "");
-		else el.removeAttribute(slot.name);
-	}
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply(readValue(value)));
-		cleanups.push(dispose);
+		bindElementEffect(
+			el,
+			"attribute",
+			slot.name,
+			() => readValue(value),
+			(v) => writeBooleanAttribute(el, slot.name, v),
+			cleanups,
+		);
 	}
 }
 
@@ -1119,18 +1183,18 @@ function hydratePropSlot(
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
-	function apply(v: unknown): void {
-		// Reflect.set rather than a cast: writing an arbitrary property onto an
-		// element is exactly what Reflect is for, and it does not require
-		// claiming the element is something it is not.
-		assertPropertyValue(el, slot.name, v);
-		Reflect.set(el, slot.name, guardUrlProperty(el.localName, slot.name, v));
-	}
+	const write = propertyWriter(el, slot.name);
 	if (isSignal(value) || typeof value === "function") {
-		const dispose = effect(() => apply(readValue(value)));
-		cleanups.push(dispose);
+		bindElementEffect(
+			el,
+			"property",
+			slot.name,
+			() => readValue(value),
+			write,
+			cleanups,
+		);
 	} else {
-		apply(value);
+		write(value);
 	}
 }
 

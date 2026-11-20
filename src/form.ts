@@ -30,7 +30,7 @@
  */
 
 import { command } from "./command.js";
-import { memo, type ReadSignal, signal } from "./reactive.js";
+import { batch, memo, type ReadSignal, signal } from "./reactive.js";
 
 /** A field-keyed error map: `{ email: "Invalid", … }`. Absent key ⇒ no error. */
 export type FieldErrors<T> = Partial<Record<keyof T, string>>;
@@ -126,8 +126,12 @@ class FormController<T> implements Form<T> {
 	readonly #initial: T;
 	readonly #validate?: FormValidate<T>;
 	readonly #values: ReturnType<typeof signal<T>>;
-	readonly #errors = signal<FieldErrors<T>>({});
-	readonly #touched = signal<ReadonlySet<string>>(new Set());
+	// Compared by content: validation and reset rebuild these maps on every
+	// call, and a new but identical one re-ran everything that shows errors.
+	readonly #errors = signal<FieldErrors<T>>({}, { equals: sameErrors });
+	readonly #touched = signal<ReadonlySet<string>>(new Set(), {
+		equals: sameKeys,
+	});
 	readonly #command: ReturnType<typeof command<[T], unknown>>;
 
 	readonly values: ReadSignal<T>;
@@ -160,15 +164,20 @@ class FormController<T> implements Form<T> {
 	}
 
 	set<K extends keyof T>(key: K, value: T[K]): void {
-		const next = { ...this.#values() };
+		const current = this.#values();
+		if (Object.is(current[key], value)) return;
+		const next = { ...current };
 		next[key] = value;
-		this.#values(next);
-		// Clear a stale error for this field as the user edits it.
-		if (this.#errors()[key] !== undefined) {
-			const errors = { ...this.#errors() };
-			delete errors[key];
-			this.#errors(errors);
-		}
+		// One update: what reads both the values and the errors runs once.
+		batch(() => {
+			this.#values(next);
+			// Clear a stale error for this field as the user edits it.
+			if (this.#errors()[key] !== undefined) {
+				const errors = { ...this.#errors() };
+				delete errors[key];
+				this.#errors(errors);
+			}
+		});
 	}
 
 	validate(): boolean {
@@ -180,14 +189,17 @@ class FormController<T> implements Form<T> {
 	async handleSubmit(event?: { preventDefault(): void }): Promise<void> {
 		event?.preventDefault();
 		const values: unknown = this.#values();
-		this.#touched(
-			new Set(
-				typeof values === "object" && values !== null
-					? Object.keys(values)
-					: [],
-			),
-		);
-		if (!this.validate()) return;
+		const valid = batch(() => {
+			this.#touched(
+				new Set(
+					typeof values === "object" && values !== null
+						? Object.keys(values)
+						: [],
+				),
+			);
+			return this.validate();
+		});
+		if (!valid) return;
 		await this.#command.run(this.#values());
 	}
 
@@ -196,10 +208,12 @@ class FormController<T> implements Form<T> {
 	}
 
 	reset(): void {
-		this.#values({ ...this.#initial });
-		this.#errors({});
-		this.#touched(new Set());
-		this.#command.reset();
+		batch(() => {
+			this.#values({ ...this.#initial });
+			this.#errors({});
+			this.#touched(new Set());
+			this.#command.reset();
+		});
 	}
 
 	onSuccess(handler: (data: unknown) => void): this {
@@ -213,8 +227,26 @@ class FormController<T> implements Form<T> {
 	}
 
 	#markTouched(key: keyof T): void {
+		if (this.#touched().has(String(key))) return;
 		this.#touched(new Set(this.#touched()).add(String(key)));
 	}
+}
+
+/** Two error maps that hold the same message for every field. */
+function sameErrors<T>(a: FieldErrors<T>, b: FieldErrors<T>): boolean {
+	const keys = Object.keys(a);
+	if (keys.length !== Object.keys(b).length) return false;
+	return keys.every(
+		(key) =>
+			Object.hasOwn(b, key) && Reflect.get(a, key) === Reflect.get(b, key),
+	);
+}
+
+/** Two sets that hold the same keys. */
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+	if (a.size !== b.size) return false;
+	for (const key of a) if (!b.has(key)) return false;
+	return true;
 }
 
 /** Create a reactive {@link Form} controller. See the module doc for usage. */

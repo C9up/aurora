@@ -23,7 +23,7 @@
  * ```
  */
 
-import { type ReadSignal, signal } from "./reactive.js";
+import { batch, type ReadSignal, signal } from "./reactive.js";
 
 export interface Command<TArgs extends unknown[], TData> {
 	/** Latest successful result, or `null` before the first success / after `reset`. */
@@ -81,15 +81,19 @@ class CommandRunner<TArgs extends unknown[], TData>
 
 	reset(): void {
 		this.#runId++; // invalidate any in-flight run so it can't write back
-		this.#data(null);
-		this.#error(null);
-		this.#loading(false);
+		batch(() => {
+			this.#data(null);
+			this.#error(null);
+			this.#loading(false);
+		});
 	}
 
 	async run(...args: TArgs): Promise<void> {
 		const id = ++this.#runId;
-		this.#loading(true);
-		this.#error(null);
+		batch(() => {
+			this.#loading(true);
+			this.#error(null);
+		});
 		try {
 			let result: TData;
 			try {

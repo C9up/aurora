@@ -151,6 +151,13 @@ export {
 } from "./reactive.js";
 export { type Disposer, render } from "./render.js";
 export {
+	countRerenders,
+	type RerenderCounter,
+	type RerenderEvent,
+	type RerenderKind,
+	type RerenderOptions,
+} from "./rerenders.js";
+export {
 	type AuroraHttpContext,
 	type AuroraResponse,
 	type AuroraRouteConfig,
