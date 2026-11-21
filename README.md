@@ -107,13 +107,16 @@ Implemented in Aurora:
 - root tag/class customization;
 - named-route manifest for `urlFor()`;
 - asset/version marker in page data;
-- SSR + hydration payload.
+- SSR + hydration payload;
+- page visits without a document reload (`visits: true`, with `@c9up/photon`):
+  after the first load, links fetch the next page object as JSON and render it
+  into the root; partial reloads, deferred props, history, a 409 reload on a
+  stale `assetsVersion` and a 303 after a redirected mutation are photon's
+  protocol. Controllers do not change.
 
 Still intentionally tracked as remaining work:
 
 - a frontend build integration: asset bundling, dev manifest and browser-asset HMR (SSR page-module HMR is available today via hot-hook — see [Dev live-reload](#dev-live-reload-hmr));
-- full client-side navigation semantics: preserve state, history encryption,
-  version mismatch handling and client-side visit lifecycle;
 - generated page-name types.
 
 ## Security notes

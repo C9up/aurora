@@ -70,10 +70,14 @@
   },
   "peerDependencies": {
     "@c9up/comet": "^0.1.0",
+    "@c9up/photon": "^0.1.25",
     "@c9up/ream": "^0.2.0"
   },
   "peerDependenciesMeta": {
     "@c9up/comet": {
+      "optional": true
+    },
+    "@c9up/photon": {
       "optional": true
     },
     "@c9up/ream": {
@@ -83,6 +87,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
     "@c9up/comet": "^0.1.0",
+    "@c9up/photon": "^0.1.25",
     "@c9up/ream": "^0.2.0",
     "@types/node": "^22.20.1",
     "@vitest/browser": "4.1.11",

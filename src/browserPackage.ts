@@ -223,6 +223,39 @@ export function resolveBrowserPackage(
 }
 
 /**
+ * The importmap URL of one of the package's subpath exports (`"./client"`),
+ * or `null` when it declares none. Like the root entry, it has to sit under
+ * the served `dist/`.
+ */
+export function subpathEntry(
+	pkg: BrowserPackage,
+	subpath: string,
+): string | null {
+	const found = findPackageJson(pkg.specifier, pkg.distRoot);
+	if (found === null) return null;
+	// A workspace-linked package points `exports` at its sources; what it
+	// publishes (`publishConfig.exports`) is the built file.
+	const publishConfig = found.manifest.publishConfig;
+	const candidates = [
+		found.manifest.exports,
+		isRecord(publishConfig) ? publishConfig.exports : undefined,
+	];
+	let target: string | null = null;
+	for (const exportsField of candidates) {
+		if (!isRecord(exportsField)) continue;
+		target = resolveTarget(exportsField[subpath]);
+		if (target !== null) break;
+	}
+	if (target === null) return null;
+	return entryUrl(
+		pkg.specifier,
+		pkg.assetPath,
+		pkg.distRoot,
+		resolvePath(found.root, target),
+	);
+}
+
+/**
  * Resolve every specifier, dropping the ones that are not installed.
  *
  * A repeated slug is refused rather than silently served twice: two packages

@@ -17,9 +17,12 @@ import { fileURLToPath } from "node:url";
 import {
 	type BrowserPackage,
 	DEFAULT_BROWSER_PACKAGES,
+	resolveBrowserPackage,
 	resolveBrowserPackages,
+	subpathEntry,
 } from "./browserPackage.js";
 import { runsInDevelopment } from "./devMode.js";
+import { AuroraError } from "./errors.js";
 import { Pages, type PagesConfig } from "./Pages.js";
 import {
 	type ClientRoutesFilter,
@@ -30,6 +33,7 @@ import {
 	type SharedPropsResolver,
 } from "./server/renderPage.js";
 import { type AssetsHttpContext, serveAssets } from "./server/serveAssets.js";
+import { loadVisitProtocol, type VisitProtocol } from "./server/visits.js";
 
 export interface AuroraManagerConfig {
 	pages: PagesConfig;
@@ -112,6 +116,15 @@ export interface AuroraManagerConfig {
 	 * and has no importmap; we keep the config-driven shape to stay Adonis-idiomatic.)
 	 */
 	importmap?: Record<string, string>;
+	/**
+	 * Page visits without a document reload, through photon's protocol: after
+	 * the first load a link fetches the next page's object as JSON and the
+	 * client renders it into the root. Needs `@c9up/photon`. Controllers do not
+	 * change; set `assetsVersion` so a deploy reloads stale clients.
+	 */
+	visits?: boolean;
+	/** Where @c9up/photon's built `dist/` is, when not where Node resolves it. */
+	photonDistRoot?: string;
 }
 
 const DEFAULT_AURORA_DIST = resolvePath(
@@ -163,6 +176,9 @@ export class AuroraManager {
 	/** App-level asset/version marker. */
 	readonly assetsVersion?: string;
 	readonly clientRoutes?: ClientRoutesFilter;
+	/** With visits on: photon's client and aurora's boot in the importmap. */
+	readonly visitImports: Readonly<Record<string, string>> | null;
+	#visitProtocol: Promise<VisitProtocol> | null = null;
 
 	constructor(config: AuroraManagerConfig) {
 		this.assetsPrefix = normalizePrefix(config.assetsPrefix ?? "/__assets");
@@ -176,6 +192,28 @@ export class AuroraManager {
 				"@c9up/chronos": config.chronosDistRoot,
 			},
 		);
+		this.visitImports = null;
+		if (config.visits === true) {
+			const photon = resolveBrowserPackage(
+				"@c9up/photon",
+				this.assetsPrefix,
+				config.photonDistRoot,
+			);
+			const client = photon === null ? null : subpathEntry(photon, "./client");
+			if (photon === null || client === null) {
+				throw new AuroraError(
+					"E_AURORA_VISITS_NEED_PHOTON",
+					"[aurora] visits are on (config/aurora.ts) but @c9up/photon's built client is not installed: pnpm add @c9up/photon",
+				);
+			}
+			// Served (its dist holds the client), but only `./client` is mapped:
+			// photon's root entry is server code.
+			this.browserPackages = [...this.browserPackages, photon];
+			this.visitImports = {
+				"@c9up/photon/client": client,
+				"@c9up/aurora/visits": `${this.auroraAssetPath}/visits.js`,
+			};
+		}
 		this.cometAssetPath =
 			this.browserPackages.find((p) => p.specifier === "@c9up/comet")
 				?.assetPath ?? null;
@@ -203,13 +241,43 @@ export class AuroraManager {
 	 * `options.importmap`. So a thin controller calls `render(ctx, name, props)`
 	 * with no importmap, and any curation lives once in config.
 	 */
-	render(
+	/** photon's protocol, loaded once, when visits are on. */
+	visitProtocol(): Promise<VisitProtocol> | null {
+		if (this.visitImports === null) return null;
+		this.#visitProtocol ??= loadVisitProtocol();
+		return this.#visitProtocol;
+	}
+
+	/**
+	 * Around a request, with visits on: `Vary: X-Photon` before the handler,
+	 * and after it the protocol's answers a visit gets instead of a page — 409
+	 * on a stale asset version, 303 after a redirected PUT / PATCH / DELETE.
+	 */
+	async aroundVisit(
+		ctx: RenderHttpContext,
+		next: () => Promise<void>,
+	): Promise<void> {
+		const loading = this.visitProtocol();
+		if (loading === null) return next();
+		const protocol = await loading;
+		const info = protocol.readRequestInfo(ctx);
+		protocol.varyOnPhoton(ctx.response);
+		await next();
+		protocol.finishVisit(ctx, ctx.response, info, {
+			url: protocol.readRequestUrl(ctx),
+			version: this.assetsVersion ?? "",
+		});
+	}
+
+	async render(
 		ctx: RenderHttpContext,
 		name: string,
 		props: unknown,
 		options?: RenderPageOptions,
 	): Promise<void> {
+		const visits = await this.visitProtocol();
 		return renderPage(ctx, this.pages, name, props, {
+			...(visits === null ? {} : { visits }),
 			...options,
 			rootTag: options?.rootTag ?? this.root?.tag,
 			rootClass: options?.rootClass ?? this.root?.class,
@@ -238,8 +306,11 @@ export class AuroraManager {
 				// `../wasm/…` lands on the sibling route rather than climbing
 				// out of the mount.
 				...Object.fromEntries(
-					this.browserPackages.map((pkg) => [pkg.specifier, pkg.entry]),
+					this.browserPackages
+						.filter((pkg) => pkg.specifier !== "@c9up/photon")
+						.map((pkg) => [pkg.specifier, pkg.entry]),
 				),
+				...this.visitImports,
 				// Config-level overrides (config/aurora.ts) — Adonis-style config-driven,
 				// so controllers never hand-write an importmap. A per-call override wins.
 				...this.importmap,

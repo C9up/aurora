@@ -31,6 +31,11 @@ import { createIdCounter, setIdCounterReader } from "../id.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
 import { setRouteManifestReader, setRouteUseRecorder } from "../url.js";
+import {
+	VISIT_FRAMEWORK,
+	type VisitPage,
+	type VisitProtocol,
+} from "./visits.js";
 
 /**
  * Structural slice of the host framework's response. Same shape
@@ -166,6 +171,16 @@ export interface RenderPageOptions {
 	 * must stay server-only. Use plain, JS-readable cookies for UI state.
 	 */
 	cookies?: string[];
+	/**
+	 * The page's `<title>`. With visits on it travels with the page object, so
+	 * the title follows a visit as it follows a full load.
+	 */
+	title?: string;
+	/**
+	 * @internal photon's protocol, when `visits` is on in config/aurora.ts:
+	 * the manager loads it and hands it here.
+	 */
+	visits?: VisitProtocol;
 }
 
 /** See {@link RenderPageOptions.clientRoutes}. */
@@ -340,9 +355,51 @@ async function renderPageInScope<P>(
 	// and throw at hydration (`"1970-…".getUTCFullYear()`), and let a value the
 	// model's `toJSON()` hides (a password hash) reach the HTML although it never
 	// reaches the payload. Serialized once, used for both.
-	const wireProps: unknown = JSON.parse(
-		JSON.stringify(mergeProps(shared, props)) ?? "null",
-	);
+	const merged = mergeProps(shared, props);
+	let wireProps: unknown;
+	let page: VisitPage | undefined;
+	const visits = options.visits;
+	if (visits === undefined) {
+		wireProps = JSON.parse(JSON.stringify(merged) ?? "null");
+	} else {
+		// With visits on, photon builds the page object — props resolved as a
+		// first load or a partial reload asks (deferred ones left for later),
+		// through JSON — and the server renders from those very props.
+		const record = merged === undefined ? {} : merged;
+		if (!isObjectRecord(record)) {
+			throw new AuroraError(
+				"E_AURORA_VISIT_PROPS",
+				`[aurora] page "${name}": with visits on, props must be an object (the protocol's page.props), got ${Array.isArray(record) ? "an array" : typeof record}`,
+			);
+		}
+		const info = visits.readRequestInfo(ctx);
+		const version = options.assetsVersion ?? "";
+		// A visit from a client on an older build gets no page: the request's
+		// middleware answers it 409, and the client loads the document again.
+		// Rendering it anyway wrote a body the 409 then had to replace.
+		if (visits.shouldReloadForAssetVersion(info, version)) return;
+		const built = await visits.buildPageObject(name, record, {
+			url: visits.readRequestUrl(ctx),
+			version,
+			framework: VISIT_FRAMEWORK,
+			...(info.isPhotonRequest ? { partial: info.partial } : {}),
+			sharedKeys: Object.keys(shared),
+		});
+		visits.reportRescued(built.rescuedErrors, undefined);
+		page =
+			options.title === undefined
+				? built.page
+				: { ...built.page, meta: { title: options.title } };
+		if (info.isPhotonRequest) {
+			// A visit: the page object alone. Nothing renders here — the client
+			// renders it — and a partial reload never runs the page at all.
+			ctx.response.header("content-type", "application/json; charset=utf-8");
+			ctx.response.header("x-photon", "true");
+			ctx.response.send(JSON.stringify(page));
+			return;
+		}
+		wireProps = page.props;
+	}
 	const tree = await factory(wireProps);
 	const body = renderToString(tree);
 
@@ -378,27 +435,11 @@ async function renderPageInScope<P>(
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <script${nonceAttr} type="importmap">${escapeJsonForScript({ imports: importmap })}</script>
-${options.jsonLd === undefined ? "" : `<script${nonceAttr} type="application/ld+json">${escapeJsonForScript(options.jsonLd)}</script>\n`}${options.headExtra ?? ""}
+${options.title === undefined ? "" : `<title>${escapeAttr(options.title)}</title>\n`}${options.jsonLd === undefined ? "" : `<script${nonceAttr} type="application/ld+json">${escapeJsonForScript(options.jsonLd)}</script>\n`}${options.headExtra ?? ""}
 </head>
 <body>
 <${rootTag}${rootAttrs(rootId, rootClass)}>${body}</${rootTag}>
-<script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(
-		{
-			name,
-			props: wireProps,
-			url: pageUrl,
-			rootId,
-			routes,
-			version: options.assetsVersion ?? null,
-		},
-	)}</script>
-<script${nonceAttr} type="module">
-import { hydrate, setRouteManifest } from '@c9up/aurora'
-import Page from ${JSON.stringify(pageUrl)}
-const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
-setRouteManifest(data.routes ?? {})
-hydrate(document.getElementById(data.rootId), () => Page(data.props))
-</script>
+${page === undefined ? hydrateBootstrap(nonceAttr, { name, props: wireProps, url: pageUrl, rootId, routes, version: options.assetsVersion ?? null }) : visitBootstrap(nonceAttr, page, { name, url: pageUrl, rootId, routes, modules: pages.urlPattern() })}
 </body>
 </html>`;
 
@@ -408,6 +449,53 @@ hydrate(document.getElementById(data.rootId), () => Page(data.props))
 	// interpolation, and the bootstrap script is its own.
 	ctx.store?.set?.("trustedHtml", true);
 	ctx.response.send(doc);
+}
+
+/** The page data and the bootstrap that hydrates the page, then leaves it be. */
+function hydrateBootstrap(
+	nonceAttr: string,
+	data: {
+		name: string;
+		props: unknown;
+		url: string;
+		rootId: string;
+		routes: Record<string, string>;
+		version: string | null;
+	},
+): string {
+	return `<script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(data)}</script>
+<script${nonceAttr} type="module">
+import { hydrate, setRouteManifest } from '@c9up/aurora'
+import Page from ${JSON.stringify(data.url)}
+const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
+setRouteManifest(data.routes ?? {})
+hydrate(document.getElementById(data.rootId), () => Page(data.props))
+</script>`;
+}
+
+/**
+ * With visits on: photon's page object (what its client router boots from),
+ * aurora's own data beside it — the root, the client routes, where a page's
+ * module is (`{name}` stands for the page) — and the bootstrap that hydrates
+ * this page and hands the next ones to photon's router.
+ */
+function visitBootstrap(
+	nonceAttr: string,
+	page: VisitPage,
+	data: {
+		name: string;
+		url: string;
+		rootId: string;
+		routes: Record<string, string>;
+		modules: string;
+	},
+): string {
+	return `<script${nonceAttr} id="photon-data" type="application/json">${escapeJsonForScript(page)}</script>
+<script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(data)}</script>
+<script${nonceAttr} type="module">
+import { bootVisits } from '@c9up/aurora/visits'
+bootVisits()
+</script>`;
 }
 
 /**
@@ -444,6 +532,11 @@ function mergeProps<P>(shared: SharedProps, props: P): P | SharedProps {
 	if (Object.keys(shared).length === 0) return props;
 	if (isPlainRecord(props)) return { ...shared, ...props };
 	return { ...shared, page: props };
+}
+
+/** An object whose own keys become the page object's props (a model's `toJSON()` applies). */
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

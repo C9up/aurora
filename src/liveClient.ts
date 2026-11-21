@@ -23,6 +23,7 @@
 import { hydrate } from "./hydrate.js";
 import { withIdScope } from "./id.js";
 import type { SlotPatch } from "./liveSession.js";
+import { onPageLeave } from "./pageLifecycle.js";
 import { batch, isSignal } from "./reactive.js";
 import type { TemplateResult } from "./types.js";
 
@@ -86,11 +87,19 @@ export function liveClient(opts: LiveClientOptions): () => void {
 	};
 	opts.container.addEventListener("click", onClick);
 
-	return () => {
+	let ended = false;
+	const end = (): void => {
+		if (ended) return;
+		ended = true;
+		forget();
 		off();
 		opts.container.removeEventListener("click", onClick);
 		disposeHydrate();
 	};
+	// A visit that leaves the page ends it too: the document stays, so
+	// nothing else would.
+	const forget = onPageLeave(end);
+	return end;
 }
 
 /** The relay client slice the transport needs (`@c9up/aurora/relay` satisfies it). */

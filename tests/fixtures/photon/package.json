@@ -1,0 +1,8 @@
+{
+  "name": "@c9up/photon",
+  "version": "0.1.25",
+  "exports": {
+    ".": "./build/index.js",
+    "./client": "./build/client/hydrate.js"
+  }
+}

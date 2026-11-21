@@ -166,6 +166,14 @@ export class Pages {
 		assertSafeName(name);
 		return `${this.urlPrefix}/${name}${this.extension}`;
 	}
+
+	/**
+	 * Where any page's module is, `{name}` standing for the page: what the
+	 * client builds a visited page's URL from.
+	 */
+	urlPattern(): string {
+		return `${this.urlPrefix}/{name}${this.extension}`;
+	}
 }
 
 /**

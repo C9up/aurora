@@ -145,6 +145,8 @@ export {
 	type WireLiveEventsOptions,
 	wireLiveEvents,
 } from "./liveServer.js";
+/** With `visits` on: run code when a visit leaves the page (the document stays). */
+export { onPageLeave } from "./pageLifecycle.js";
 export {
 	batch,
 	effect,

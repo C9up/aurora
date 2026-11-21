@@ -35,18 +35,23 @@ interface AuroraMiddlewareContext extends RenderHttpContext {
 }
 
 /** Structural check that a resolved value is render-capable (an AuroraManager). */
-function isManager(value: unknown): value is AuroraManager {
+/** What the middleware uses of the manager: `aroundVisit` only when visits exist. */
+type ManagerSlice = Pick<AuroraManager, "render"> &
+	Partial<Pick<AuroraManager, "aroundVisit">>;
+
+function isManager(value: unknown): value is ManagerSlice {
 	return (
 		typeof value === "object" &&
 		value !== null &&
 		"render" in value &&
-		typeof value.render === "function"
+		typeof value.render === "function" &&
+		(!("aroundVisit" in value) || typeof value.aroundVisit === "function")
 	);
 }
 
 async function resolveManager(
 	resolver: { make(token: unknown): Promise<unknown> } | undefined,
-): Promise<AuroraManager | undefined> {
+): Promise<ManagerSlice | undefined> {
 	try {
 		const resolved = await resolver?.make("aurora");
 		return isManager(resolved) ? resolved : undefined;
@@ -69,6 +74,8 @@ export async function auroraContext(
 			render: (name, props, options) =>
 				manager.render(ctx, name, props, options),
 		};
+		// Visits on: the protocol's Vary, 409 and 303 around the request.
+		if (manager.aroundVisit) return manager.aroundVisit(ctx, next);
 	}
 	return next();
 }
