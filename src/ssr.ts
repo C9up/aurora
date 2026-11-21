@@ -351,7 +351,11 @@ function stringifyTemplate(result: TemplateResult): string {
 			if (closer !== undefined) {
 				// The slot IS the value, so it decides whether the attribute exists
 				// at all — the rule the client applies (`applyAttrSlot`).
-				const resolved = resolveOnce(value);
+				// `motion` and `scroll-y` are client bindings (motion values), not
+				// attributes: nothing of them goes in the markup.
+				const binding =
+					scanner.attribute === "motion" || scanner.attribute === "scroll-y";
+				const resolved = binding ? null : resolveOnce(value);
 				const spelled =
 					resolved === null || resolved === undefined || resolved === false
 						? attributeSpelling(segment, scanner.attribute)

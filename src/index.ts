@@ -145,6 +145,20 @@ export {
 	type WireLiveEventsOptions,
 	wireLiveEvents,
 } from "./liveServer.js";
+/** Motion values: animated numbers bound with `motion=${…}` and `scroll-y=${…}`, on every host. */
+export {
+	type MotionDriver,
+	MotionModel,
+	MotionNode,
+	type MotionStyle,
+	type MotionTrack,
+	MotionValue,
+	motionDriver,
+	readMotionStyle,
+	type SpringOptions,
+	setMotionDriver,
+	type TimingOptions,
+} from "./motion.js";
 /** With `visits` on: run code when a visit leaves the page (the document stays). */
 export { onPageLeave } from "./pageLifecycle.js";
 export {

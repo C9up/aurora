@@ -24,6 +24,7 @@ import {
 	type LazyView,
 	sameWindow,
 } from "./lazy.js";
+import { bindMotionDom, bindScrollDom } from "./motionDom.js";
 import {
 	isChildNode,
 	isCommentNode,
@@ -1253,12 +1254,35 @@ export function propertyWriter(
 	};
 }
 
+/**
+ * `motion=${…}` and `scroll-y=${value}` are bindings, not attributes: they
+ * drive the element's style from motion values (see motionDom.ts).
+ */
+export function bindsMotion(
+	slot: AttrSlot,
+	el: Element,
+	value: unknown,
+	cleanups: Disposer[],
+): boolean {
+	if (slot.staticParts !== undefined) return false;
+	if (slot.name === "motion") {
+		bindMotionDom(el, value, cleanups);
+		return true;
+	}
+	if (slot.name === "scroll-y") {
+		bindScrollDom(el, value, cleanups);
+		return true;
+	}
+	return false;
+}
+
 function applyAttrSlot(
 	slot: AttrSlot,
 	el: Element,
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
+	if (bindsMotion(slot, el, value, cleanups)) return;
 	const write = (v: unknown): boolean => writeAttribute(el, slot.name, v);
 	if (isSignal(value) || typeof value === "function") {
 		bindElementEffect(

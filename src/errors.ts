@@ -71,6 +71,8 @@ export type AuroraErrorCode =
 	| "E_AURORA_VISITS_NEED_PHOTON"
 	/** With `visits` on, a page's props (shared ones merged in) were not a plain object, as the protocol requires. */
 	| "E_AURORA_VISIT_PROPS"
+	/** `motion=${…}` was not an object of motion values, or named a property motion cannot drive (rotation, colour). */
+	| "E_AURORA_INVALID_MOTION"
 	/** Effects kept re-running each other: one writes what another (or itself) reads, forever. */
 	| "E_AURORA_REACTIVE_CYCLE"
 	/** An invariant inside aurora broke — always a bug in aurora itself. */

@@ -42,6 +42,7 @@ import {
 import {
 	bindEach,
 	bindElementEffect,
+	bindsMotion,
 	type Disposer,
 	type EachRow,
 	eachNodes,
@@ -1157,6 +1158,8 @@ function hydrateAttrSlot(
 	value: unknown,
 	cleanups: Disposer[],
 ): void {
+	// The server wrote nothing for these: they bind now, on the client.
+	if (bindsMotion(slot, el, value, cleanups)) return;
 	// Written only when it differs from what the element holds, so the first
 	// run leaves the attribute the server wrote alone.
 	if (isSignal(value) || typeof value === "function") {

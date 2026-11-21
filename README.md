@@ -87,7 +87,7 @@ Editing a page or any component it imports now hot-reloads the SSR with no resta
 
 ## Entry points
 
-- `@c9up/aurora` — main API: reactive primitives (`signal`/`effect`/`html`/`component`/`hydrate`) plus the client toolkit — `WebStorage`/`persistedSignal`, reactive browser signals (`prefersDark`/`online`/`windowSize`/…), SPA navigation (`navigate`/`queryParam`), `cookie`/`clipboard`/`share`, the `HttpClient` fetch wrapper, `createRpcClient()` (JSON-RPC 2.0), `command()` (async action + reactive loading/data/error), `form()` (reactive form controller; optional rune validation + rosetta i18n), `urlFor()` (isomorphic named-route URLs, paired with Ream's `router.namedManifest()`), and `cn()` (zero-dependency Tailwind v4 class merge — `clsx` + `tailwind-merge` reimplemented)
+- `@c9up/aurora` — main API: reactive primitives (`signal`/`effect`/`html`/`component`/`hydrate`) plus the client toolkit — `WebStorage`/`persistedSignal`, reactive browser signals (`prefersDark`/`online`/`windowSize`/…), SPA navigation (`navigate`/`queryParam`), `cookie`/`clipboard`/`share`, the `HttpClient` fetch wrapper, `createRpcClient()` (JSON-RPC 2.0), `command()` (async action + reactive loading/data/error), `form()` (reactive form controller; optional rune validation + rosetta i18n), `urlFor()` (isomorphic named-route URLs, paired with Ream's `router.namedManifest()`), `cn()` (zero-dependency Tailwind v4 class merge — `clsx` + `tailwind-merge` reimplemented), and motion values (`MotionValue`, bound with `motion=${…}` / `scroll-y=${…}`: Web Animations on the compositor in the browser, the UI thread on a phone through orbit)
 - `@c9up/aurora/provider` — Ream IoC provider
 - `@c9up/aurora/services/main` — container service accessor
 - `@c9up/aurora/relay` — realtime adapter

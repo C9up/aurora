@@ -43,6 +43,20 @@ export type {
 export { form } from "./form.js";
 export { html, isTemplateResult } from "./html.js";
 export { uid, withIdScope } from "./id.js";
+/** Motion values: animated numbers bound with `motion=${…}` and `scroll-y=${…}`, on every host. */
+export {
+	type MotionDriver,
+	MotionModel,
+	MotionNode,
+	type MotionStyle,
+	type MotionTrack,
+	MotionValue,
+	motionDriver,
+	readMotionStyle,
+	type SpringOptions,
+	setMotionDriver,
+	type TimingOptions,
+} from "./motion.js";
 export {
 	batch,
 	effect,
