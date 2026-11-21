@@ -8,8 +8,10 @@
  * - the template scanner, so a slot position refused on the web is refused on
  *   every host (`TemplateScanner`, `assertBindable`, `assertBindableProperty`);
  * - the component lifecycle a `component()` stitches onto its result
- *   (`readComponentLifecycle`), and the context a slot's functions run under
- *   (`bindTemplateContext`);
+ *   (`readComponentLifecycle`), the context a slot's functions run under
+ *   (`bindTemplateContext`), and the providers in reach now, put back for work
+ *   done later (`captureContext`: a screen pushed long after the navigator
+ *   was written sees what was provided around it);
  * - the reactive owner, so effects created while building a subtree are
  *   disposed with it (`setOwner`);
  * - keyed lists (`readEach`, `readEachItems`), and a lazy list's window
@@ -23,6 +25,7 @@
 export {
 	bindTemplateContext,
 	type ComponentLifecycle,
+	captureContext,
 	readComponentLifecycle,
 } from "./component.js";
 export { type EachList, readEach, readEachItems } from "./each.js";

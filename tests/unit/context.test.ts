@@ -20,6 +20,7 @@ import {
 	renderToString,
 	signal,
 } from "../../src/index.js";
+import { captureContext } from "../../src/renderer.js";
 
 interface MenuState {
 	readonly open: () => boolean;
@@ -235,5 +236,27 @@ describe("context > server and hydration", () => {
 		host.innerHTML = renderToString(Root());
 		hydrate(host, Root);
 		expect(host.textContent).toContain("live");
+	});
+
+	it("puts the providers back for work a renderer does later", () => {
+		// A native navigator builds a pushed screen long after its setup
+		// returned: the screen must still see what was provided around it.
+		const Ctx = createContext<string>("Later");
+		const Screen = component(() => html`<i>${inject(Ctx)}</i>`);
+		let later: <T>(fn: () => T) => T = (fn) => fn();
+		const Root = component(() => {
+			provide(Ctx, "kept");
+			later = captureContext();
+			return html`<div></div>`;
+		});
+		render(Root(), document.createElement("div"));
+
+		expect(() => Screen()).toThrowError(AuroraError);
+		const host = document.createElement("div");
+		render(
+			later(() => Screen()),
+			host,
+		);
+		expect(host.textContent).toBe("kept");
 	});
 });
