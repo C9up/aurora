@@ -12,10 +12,10 @@
  * subscribe calls fan out to its uid. The connection re-opens after
  * the browser auto-reconnect; subscriptions are re-applied.
  *
- * This module is browser-only. It's shipped via aurora's pre-built
- * `dist/` and imported through the same importmap that maps
- * `@c9up/aurora`. Node-side code that pulls it will trip on
- * `EventSource` being undefined.
+ * In a browser it uses the page's `EventSource` and `fetch`. Elsewhere — an
+ * app on a phone, which has neither an `EventSource` nor the page's origin —
+ * `configureRelay({ stream, fetch })` hands it the platform's (orbit's server
+ * connection gives both).
  */
 
 import { AuroraError } from "./errors.js";
@@ -42,8 +42,28 @@ export interface RelayClient {
 	close(): void;
 }
 
+/** What relay reads from a stream event: its data, when the event carries some. */
+export interface RelayStreamEvent {
+	readonly data?: unknown;
+}
+
+/**
+ * The server-sent event stream relay listens to: the browser's
+ * `EventSource`, or one a platform provides with the same two methods.
+ */
+export interface RelayStream {
+	addEventListener(
+		type: string,
+		listener: (event: RelayStreamEvent) => void,
+	): void;
+	close(): void;
+}
+
+/** A request, as `fetch` makes it. */
+export type RelayFetch = (url: string, init: RequestInit) => Promise<Response>;
+
 interface RelayState {
-	sse: EventSource | null;
+	sse: RelayStream | null;
 	uid: string | null;
 	channels: Map<string, Set<(event: unknown) => void>>;
 	/** Channels we've already wired an SSE listener for on the current sse. */
@@ -118,6 +138,14 @@ export interface RelayOptions {
 	onReconnectAttempt?: (attempt: number) => void;
 	/** Fired once when `maxReconnectAttempts` is exhausted and we give up. */
 	onReconnectFailed?: () => void;
+	/**
+	 * Opens the event stream at a URL. Default: the browser's `EventSource`.
+	 * A platform without one (React Native) passes its own — orbit's
+	 * `connectServer(…).stream`.
+	 */
+	stream?: (url: string) => RelayStream;
+	/** Makes the handshake POSTs. Default: the global `fetch`. */
+	fetch?: RelayFetch;
 }
 
 interface RelayConfigResolved {
@@ -128,6 +156,8 @@ interface RelayConfigResolved {
 	maxReconnectAttempts: number;
 	onReconnectAttempt?: (attempt: number) => void;
 	onReconnectFailed?: () => void;
+	stream: (url: string) => RelayStream;
+	fetch: RelayFetch;
 }
 
 let CONFIG: RelayConfigResolved = {
@@ -136,6 +166,9 @@ let CONFIG: RelayConfigResolved = {
 	unsubscribeUrl: "/__relay/unsubscribe",
 	bearer: "",
 	maxReconnectAttempts: 5,
+	// Read at call time: a page may install or stub them after this module loads.
+	stream: (url) => new EventSource(url),
+	fetch: (url, init) => fetch(url, init),
 };
 
 /**
@@ -153,6 +186,8 @@ export function configureRelay(options: RelayOptions): void {
 			options.maxReconnectAttempts ?? CONFIG.maxReconnectAttempts,
 		onReconnectAttempt: options.onReconnectAttempt ?? CONFIG.onReconnectAttempt,
 		onReconnectFailed: options.onReconnectFailed ?? CONFIG.onReconnectFailed,
+		stream: options.stream ?? CONFIG.stream,
+		fetch: options.fetch ?? CONFIG.fetch,
 	};
 }
 
@@ -245,7 +280,7 @@ const CLIENT: RelayClient = {
 };
 
 function open(): void {
-	const sse = new EventSource(CONFIG.sseUrl);
+	const sse = CONFIG.stream(CONFIG.sseUrl);
 	STATE.sse = sse;
 	STATE.attached = new Set();
 	STATE.uid = null;
@@ -364,7 +399,7 @@ function changeStatus(status: RelayStatus): void {
  * receives the broadcast payload verbatim (the value passed to
  * `relay.broadcast(channel, payload)`).
  */
-function attachChannel(sse: EventSource, channel: string): void {
+function attachChannel(sse: RelayStream, channel: string): void {
 	if (STATE.attached.has(channel)) return;
 	STATE.attached.add(channel);
 	sse.addEventListener(channel, (ev) => {
@@ -393,9 +428,8 @@ function attachChannel(sse: EventSource, channel: string): void {
 }
 
 /** Read an SSE event's string `data` without an unsafe DOM cast. */
-function messageData(ev: Event): string | null {
-	if ("data" in ev && typeof ev.data === "string") return ev.data;
-	return null;
+function messageData(ev: RelayStreamEvent): string | null {
+	return typeof ev.data === "string" ? ev.data : null;
 }
 
 function postSubscribe(channel: string): Promise<void> {
@@ -423,7 +457,7 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 	};
 	if (CONFIG.bearer) headers.authorization = `Bearer ${CONFIG.bearer}`;
 	Object.assign(headers, xsrfHeaderFor(url) ?? {});
-	const res = await fetch(url, {
+	const res = await CONFIG.fetch(url, {
 		method: "POST",
 		headers,
 		body: JSON.stringify({ uid, channel }),
