@@ -150,6 +150,10 @@ describe("aurora > visits > server", () => {
 		expect(doc).toContain(
 			'"@c9up/photon/client":"/__assets/photon/dist/client/hydrate.js"',
 		);
+		// The router without adapters: what a page shared with the phone imports.
+		expect(doc).toContain(
+			'"@c9up/photon/client/core":"/__assets/photon/dist/client/core.js"',
+		);
 		expect(doc).toContain('"@c9up/aurora/visits":"/__assets/aurora/visits.js"');
 		expect(doc).not.toContain('"@c9up/photon":');
 

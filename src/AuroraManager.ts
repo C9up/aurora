@@ -206,11 +206,15 @@ export class AuroraManager {
 					"[aurora] visits are on (config/aurora.ts) but @c9up/photon's built client is not installed: pnpm add @c9up/photon",
 				);
 			}
-			// Served (its dist holds the client), but only `./client` is mapped:
-			// photon's root entry is server code.
+			// Served (its dist holds the client), but only its client entries are
+			// mapped: photon's root entry is server code. `./client/core` is the
+			// router without the bundled adapters — what a page shared with the
+			// phone imports (a phone's bundler follows every import).
+			const core = subpathEntry(photon, "./client/core");
 			this.browserPackages = [...this.browserPackages, photon];
 			this.visitImports = {
 				"@c9up/photon/client": client,
+				...(core === null ? {} : { "@c9up/photon/client/core": core }),
 				"@c9up/aurora/visits": `${this.auroraAssetPath}/visits.js`,
 			};
 		}
