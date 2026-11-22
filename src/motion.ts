@@ -263,11 +263,19 @@ function ended(track: MotionTrack): boolean {
 	return now() - track.start >= track.samples.length * MOTION_FRAME_MS;
 }
 
+/** A millionth of a frame, in frames: see {@link sampleAt}. */
+const FRAME_EPSILON = 1e-6;
+
 function sampleAt(track: MotionTrack, at: number): number {
 	if (track.kind === "static") return track.value;
 	const { samples, start, loop } = track;
 	if (samples.length === 0) return 0;
-	let index = Math.floor((at - start) / MOTION_FRAME_MS);
+	// `start + i * MOTION_FRAME_MS - start` comes back a hair under `i` for
+	// many `i` (1000.3 as a start misses 65 of the first 181 frames), and a
+	// plain floor then reads the frame before: the keyframes built from these
+	// reads repeat a sample and end one short of the target. A millionth of a
+	// frame absorbs the rounding and moves no real frame boundary.
+	let index = Math.floor((at - start) / MOTION_FRAME_MS + FRAME_EPSILON);
 	if (index < 0) index = 0;
 	if (index >= samples.length) {
 		index = loop ? index % samples.length : samples.length - 1;

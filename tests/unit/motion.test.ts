@@ -100,6 +100,24 @@ describe("the motion model", () => {
 		expect(m.track(x.tag).kind).toBe("samples");
 	});
 
+	it("reads sample i at start + i frames, whatever the start", () => {
+		for (const offset of [0, 1000.3, 54_321.123]) {
+			vi.advanceTimersByTime(offset);
+			const x = new MotionValue(0);
+			x.timing(300, { duration: 3000 });
+			const m = model();
+			const track = m.track(x.tag);
+			expect(track.kind).toBe("samples");
+			if (track.kind !== "samples") return;
+			const read = track.samples.map((_, i) =>
+				m.read(x.tag, track.start + i * MOTION_FRAME_MS),
+			);
+			expect(read, `start ${track.start}`).toEqual(track.samples);
+			expect(read.at(-1)).toBe(300);
+			x.dispose();
+		}
+	});
+
 	it("settles a spring on its target, as the native host's does", () => {
 		const samples = springSamples(0, 1, 260, 7, 1);
 		expect(samples.at(-1)).toBe(1);
