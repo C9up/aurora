@@ -90,13 +90,13 @@
     "@c9up/photon": "^0.1.25",
     "@c9up/ream": "^0.2.0",
     "@types/node": "^22.20.1",
-    "@vitest/browser": "4.1.11",
-    "@vitest/browser-playwright": "4.1.11",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/browser": "4.1.12",
+    "@vitest/browser-playwright": "4.1.12",
+    "@vitest/coverage-v8": "4.1.12",
     "jsdom": "^30.0.1",
     "playwright": "^1.63.0",
     "typescript": "^6.0.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "files": [
     "LICENSE",
