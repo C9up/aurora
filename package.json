@@ -85,7 +85,7 @@
     }
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "^2.6.8",
     "@c9up/comet": "^0.1.0",
     "@c9up/photon": "^0.1.25",
     "@c9up/ream": "^0.2.0",
