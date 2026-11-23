@@ -21,7 +21,7 @@
  * components made while it runs are disposed when it runs again or ends.
  */
 
-import { AuroraError } from "./errors.js";
+import { E_AURORA_INTERNAL, E_AURORA_REACTIVE_CYCLE } from "./errors.js";
 import { probe } from "./rerenders.js";
 import type { EffectCallback } from "./types.js";
 
@@ -214,10 +214,7 @@ function flush(): void {
 				if (++runs > MAX_RUNS_PER_FLUSH) {
 					for (const left of [...round, ...queue]) left.state = CLEAN;
 					queue = [];
-					throw new AuroraError(
-						"E_AURORA_REACTIVE_CYCLE",
-						`[aurora] effects re-ran more than ${MAX_RUNS_PER_FLUSH} times in one update — an effect writes a signal that it, or an effect it triggers, reads`,
-					);
+					throw new E_AURORA_REACTIVE_CYCLE([MAX_RUNS_PER_FLUSH]);
 				}
 				try {
 					update(c);
@@ -485,10 +482,7 @@ export function memo<T>(
 		if (c.state !== CLEAN) update(c);
 		track(node);
 		if (box === undefined) {
-			throw new AuroraError(
-				"E_AURORA_INTERNAL",
-				"[aurora] memo: the first computation did not run",
-			);
+			throw new E_AURORA_INTERNAL(["memo: the first computation did not run"]);
 		}
 		return box.value;
 	};

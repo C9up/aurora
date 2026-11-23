@@ -19,7 +19,7 @@
  */
 
 import { captureContext } from "./component.js";
-import { AuroraError } from "./errors.js";
+import { E_AURORA_INVALID_LAZY } from "./errors.js";
 import { html } from "./html.js";
 import { firstWindow, type LazyList } from "./lazy.js";
 import { type ReadSignal, type Signal, signal } from "./reactive.js";
@@ -80,16 +80,18 @@ function lazyList(options: EachOptions | undefined): LazyList | undefined {
 	const estimate = settings.estimate ?? 48;
 	const overscan = settings.overscan ?? 600;
 	if (!(Number.isFinite(estimate) && estimate > 0)) {
-		throw new AuroraError(
-			"E_AURORA_INVALID_LAZY",
-			`[aurora] each(): lazy.estimate must be a positive length, got ${String(estimate)}`,
-		);
+		throw new E_AURORA_INVALID_LAZY([
+			"estimate",
+			"a positive length",
+			String(estimate),
+		]);
 	}
 	if (!(Number.isFinite(overscan) && overscan >= 0)) {
-		throw new AuroraError(
-			"E_AURORA_INVALID_LAZY",
-			`[aurora] each(): lazy.overscan must be zero or a positive length, got ${String(overscan)}`,
-		);
+		throw new E_AURORA_INVALID_LAZY([
+			"overscan",
+			"zero or a positive length",
+			String(overscan),
+		]);
 	}
 	return { estimate, overscan, from: settings.from ?? "start" };
 }

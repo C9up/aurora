@@ -12,7 +12,7 @@
  * client barrel.
  */
 
-import { AuroraError } from "./errors.js";
+import { E_AURORA_UNSAFE_URL } from "./errors.js";
 import { effect, onDispose, type Signal, signal, untrack } from "./reactive.js";
 import { hasUnsafeScheme } from "./urlGuard.js";
 
@@ -391,10 +391,7 @@ function safeNavigationUrl(url: string): string {
 	// is deliberate: this is a call the application made on purpose, so a bad URL
 	// is a bug to surface, not data to render inert.
 	if (hasUnsafeScheme(url)) {
-		throw new AuroraError(
-			"E_AURORA_UNSAFE_URL",
-			`[aurora] blocked unsafe navigation URL: ${url}`,
-		);
+		throw new E_AURORA_UNSAFE_URL([url]);
 	}
 	return url;
 }

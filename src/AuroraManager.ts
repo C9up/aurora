@@ -22,7 +22,7 @@ import {
 	subpathEntry,
 } from "./browserPackage.js";
 import { runsInDevelopment } from "./devMode.js";
-import { AuroraError } from "./errors.js";
+import { E_AURORA_VISITS_NEED_PHOTON } from "./errors.js";
 import { Pages, type PagesConfig } from "./Pages.js";
 import {
 	type ClientRoutesFilter,
@@ -201,10 +201,9 @@ export class AuroraManager {
 			);
 			const client = photon === null ? null : subpathEntry(photon, "./client");
 			if (photon === null || client === null) {
-				throw new AuroraError(
-					"E_AURORA_VISITS_NEED_PHOTON",
-					"[aurora] visits are on (config/aurora.ts) but @c9up/photon's built client is not installed: pnpm add @c9up/photon",
-				);
+				throw new E_AURORA_VISITS_NEED_PHOTON([
+					"visits are on (config/aurora.ts) but @c9up/photon's built client is not installed: pnpm add @c9up/photon",
+				]);
 			}
 			// Served (its dist holds the client), but only its client entries are
 			// mapped: photon's root entry is server code. `./client/core` is the

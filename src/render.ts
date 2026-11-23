@@ -16,7 +16,7 @@
 import { getTemplate } from "./compile.js";
 import { bindTemplateContext, readComponentLifecycle } from "./component.js";
 import { type EachList, readEach, readEachItems } from "./each.js";
-import { AuroraError } from "./errors.js";
+import { E_AURORA_DUPLICATE_KEY, E_AURORA_INTERNAL } from "./errors.js";
 import {
 	firstWindow,
 	LazyLayout,
@@ -203,10 +203,9 @@ export function mount(
 	const tpl = getTemplate(result.strings);
 	const fragment = tpl.element.content.cloneNode(true);
 	if (!isFragmentNode(fragment)) {
-		throw new AuroraError(
-			"E_AURORA_INTERNAL",
-			"[aurora] render: cloning a template's content did not give a fragment",
-		);
+		throw new E_AURORA_INTERNAL([
+			"render: cloning a template's content did not give a fragment",
+		]);
 	}
 	// Before any slot puts its content in.
 	const owned = Array.from(fragment.childNodes);
@@ -597,10 +596,7 @@ export function bindEach(
 		const keys = items.map((item, index) => list.key(item, index));
 		if (new Set(keys).size !== keys.length) {
 			const duplicate = keys.find((key, i) => keys.indexOf(key) !== i);
-			throw new AuroraError(
-				"E_AURORA_DUPLICATE_KEY",
-				`[aurora] each(): two elements share the key ${String(duplicate)} — a key names one row`,
-			);
+			throw new E_AURORA_DUPLICATE_KEY([String(duplicate)]);
 		}
 		if (adopting && adopt !== undefined) {
 			adopting = false;
@@ -824,10 +820,7 @@ function bindLazy(
 			);
 			if (new Set(all).size !== all.length) {
 				const duplicate = all.find((key, i) => all.indexOf(key) !== i);
-				throw new AuroraError(
-					"E_AURORA_DUPLICATE_KEY",
-					`[aurora] each(): two elements share the key ${String(duplicate)} — a key names one row`,
-				);
+				throw new E_AURORA_DUPLICATE_KEY([String(duplicate)]);
 			}
 			return all;
 		});

@@ -15,7 +15,7 @@
  * instead.
  */
 
-import { AuroraError } from "./errors.js";
+import { E_AURORA_INTERNAL } from "./errors.js";
 import { isCommentNode, isElementNode } from "./nodes.js";
 import {
 	assertBindable,
@@ -228,10 +228,9 @@ function collectSlots(
 				const cls = classification[slotIndex];
 				if (cls === undefined) return;
 				if (cls.region !== "text") {
-					throw new AuroraError(
-						"E_AURORA_INTERNAL",
-						`[aurora] internal classification mismatch at slot ${slotIndex}`,
-					);
+					throw new E_AURORA_INTERNAL([
+						`internal classification mismatch at slot ${slotIndex}`,
+					]);
 				}
 				const slot: TextSlot = { kind: "text", path: [...path] };
 				slots.push(slot);

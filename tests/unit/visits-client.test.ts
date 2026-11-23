@@ -8,9 +8,9 @@ import { renderToString } from "../../src/ssr.js";
 import { bootVisits } from "../../src/visits.js";
 import Home, { ended } from "../fixtures/visit-pages/Home.js";
 
-function bootDocument(): void {
+function bootDocument(component = "Home"): void {
 	const page = {
-		component: "Home",
+		component,
 		props: { title: "Welcome" },
 		url: "/",
 		framework: "aurora",
@@ -114,6 +114,24 @@ describe("aurora > visits > client", () => {
 			);
 			expect(modified.defaultPrevented).toBe(false);
 			expect(fetchMock).not.toHaveBeenCalled();
+		},
+		SLOW,
+	);
+
+	it("refuses to boot a page that carries no aurora-page-data", async () => {
+		document.body.innerHTML = '<div id="aurora-root"></div>';
+		await expect(bootVisits()).rejects.toMatchObject({
+			code: "E_AURORA_VISIT_NO_PAGE_DATA",
+		});
+	});
+
+	it(
+		"refuses a page name that would climb out of the pages' URL prefix",
+		async () => {
+			bootDocument("../outside");
+			await expect(bootVisits()).rejects.toMatchObject({
+				code: "E_AURORA_ILLEGAL_PAGE_NAME",
+			});
 		},
 		SLOW,
 	);

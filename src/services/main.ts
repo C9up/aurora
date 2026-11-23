@@ -11,7 +11,7 @@
  */
 
 import type { AuroraManager } from "../AuroraManager.js";
-import { AuroraError } from "../errors.js";
+import { E_AURORA_NOT_BOOTED } from "../errors.js";
 
 let instance: AuroraManager | undefined;
 
@@ -51,11 +51,7 @@ const aurora: AuroraManager = new Proxy({} as AuroraManager, {
 			return undefined;
 		}
 		if (!instance) {
-			throw new AuroraError(
-				"E_AURORA_NOT_BOOTED",
-				"[aurora] AuroraManager singleton accessed before AuroraProvider.boot() ran " +
-					"or `setAurora(myManager)` was called. Wire one of them first.",
-			);
+			throw new E_AURORA_NOT_BOOTED();
 		}
 		const value = Reflect.get(instance, prop, instance);
 		return typeof value === "function" ? value.bind(instance) : value;

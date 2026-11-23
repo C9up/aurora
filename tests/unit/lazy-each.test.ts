@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AuroraError, each, html, renderToString } from "../../src/index.js";
+import { each, errors, html, renderToString } from "../../src/index.js";
 import { firstWindow, LazyLayout } from "../../src/lazy.js";
 
 const settings = { estimate: 50, overscan: 100, from: "start" as const };
@@ -154,7 +154,9 @@ describe("each({ lazy }) on the server", () => {
 			try {
 				run();
 			} catch (error) {
-				return error instanceof AuroraError ? error.code : String(error);
+				return error instanceof errors.E_AURORA_INVALID_LAZY
+					? error.code
+					: String(error);
 			}
 			return undefined;
 		};

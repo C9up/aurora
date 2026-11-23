@@ -16,7 +16,7 @@ export {
 	type AuroraManagerConfig,
 	defineConfig,
 } from "./AuroraManager.js";
-export { AuroraError, type AuroraErrorCode } from "./errors.js";
+export * as errors from "./errors.js";
 export {
 	type AuroraRequestRenderer,
 	auroraContext,

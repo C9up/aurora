@@ -71,7 +71,7 @@ export {
 	isEach,
 	type LazyOptions,
 } from "./each.js";
-export { AuroraError, type AuroraErrorCode } from "./errors.js";
+export * as errors from "./errors.js";
 export type {
 	FieldErrors,
 	Form,
@@ -89,7 +89,6 @@ export type {
 } from "./http.js";
 export {
 	HttpClient,
-	HttpError,
 	http,
 	isAbortError,
 	isHttpError,

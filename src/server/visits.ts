@@ -14,7 +14,7 @@
  * no bundler resolves ahead of time; it is read structurally.
  */
 
-import { AuroraError } from "../errors.js";
+import { E_AURORA_VISITS_NEED_PHOTON } from "../errors.js";
 
 /** What a request says about the visit (photon's `PhotonRequestInfo`). */
 export interface VisitRequestInfo {
@@ -91,17 +91,17 @@ export async function loadVisitProtocol(): Promise<VisitProtocol> {
 	try {
 		mod = await import(PHOTON);
 	} catch (cause) {
-		throw new AuroraError(
-			"E_AURORA_VISITS_NEED_PHOTON",
-			"[aurora] visits are on (config/aurora.ts) but @c9up/photon is not installed: pnpm add @c9up/photon",
+		throw new E_AURORA_VISITS_NEED_PHOTON(
+			[
+				"visits are on (config/aurora.ts) but @c9up/photon is not installed: pnpm add @c9up/photon",
+			],
 			{ cause },
 		);
 	}
 	if (!isVisitProtocol(mod)) {
-		throw new AuroraError(
-			"E_AURORA_VISITS_NEED_PHOTON",
-			"[aurora] visits need @c9up/photon 0.1.25 or later (buildPageObject, finishVisit)",
-		);
+		throw new E_AURORA_VISITS_NEED_PHOTON([
+			"visits need @c9up/photon 0.1.25 or later (buildPageObject, finishVisit)",
+		]);
 	}
 	return mod;
 }

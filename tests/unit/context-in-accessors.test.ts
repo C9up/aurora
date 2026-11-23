@@ -15,9 +15,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	AuroraError,
 	component,
 	createContext,
+	errors,
 	html,
 	hydrate,
 	inject,
@@ -100,7 +100,7 @@ describe("context > parts built inside an accessor", () => {
 			}}</div>`;
 		});
 		expect(() => render(Root(), document.createElement("div"))).toThrowError(
-			AuroraError,
+			errors.E_AURORA_OUTSIDE_COMPONENT,
 		);
 	});
 

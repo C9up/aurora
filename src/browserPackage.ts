@@ -29,6 +29,11 @@ import {
 	resolve as resolvePath,
 	sep,
 } from "node:path";
+import {
+	E_AURORA_BROWSER_ENTRY_AT_ROOT,
+	E_AURORA_BROWSER_ENTRY_OUTSIDE_DIST,
+	E_AURORA_BROWSER_PACKAGE_CLASH,
+} from "./errors.js";
 import { packageAssetDir } from "./server/serveAssets.js";
 
 /** A package resolved for browser delivery. */
@@ -160,11 +165,7 @@ function entryUrl(
 ): string {
 	const inDist = relative(distRoot, file);
 	if (inDist === "" || inDist.startsWith("..") || isAbsolute(inDist)) {
-		throw new Error(
-			`[aurora] "${specifier}" declares its browser entry at "${file}", outside ` +
-				`the directory aurora serves for it ("${distRoot}"). Map it yourself ` +
-				`with \`importmap\` in config/aurora.ts, or ship the entry under dist/.`,
-		);
+		throw new E_AURORA_BROWSER_ENTRY_OUTSIDE_DIST([specifier, file, distRoot]);
 	}
 	return `${assetPath}/dist/${inDist.split(sep).join("/")}`;
 }
@@ -194,12 +195,7 @@ export function resolveBrowserPackage(
 		// whole package: its manifest, CLI code, `.node` binaries and, for a
 		// workspace-linked package, whatever local files sit beside them. Its
 		// `wasm/` probe would also have looked in node_modules itself.
-		throw new Error(
-			`[aurora] "${specifier}" has its entry at the package root ("${found.root}"), ` +
-				"so serving it would publish the whole package. Leave it out of " +
-				"browserPackages and map it with `importmap` in config/aurora.ts, " +
-				"onto a mount of just the files the browser needs.",
-		);
+		throw new E_AURORA_BROWSER_ENTRY_AT_ROOT([specifier, found.root]);
 	}
 	const wasmCandidate = resolvePath(distRoot, "..", "wasm");
 	// Read out of the package's `exports`, never assumed: `dist/index.js` is
@@ -278,10 +274,11 @@ export function resolveBrowserPackages(
 		if (!pkg) continue;
 		const clash = seen.get(pkg.slug);
 		if (clash !== undefined && clash !== specifier) {
-			throw new Error(
-				`[aurora] browser packages "${clash}" and "${specifier}" both mount on ` +
-					`"${pkg.assetPath}" — one would be unreachable. Rename one, or serve it yourself.`,
-			);
+			throw new E_AURORA_BROWSER_PACKAGE_CLASH([
+				clash,
+				specifier,
+				pkg.assetPath,
+			]);
 		}
 		seen.set(pkg.slug, specifier);
 		resolved.push(pkg);

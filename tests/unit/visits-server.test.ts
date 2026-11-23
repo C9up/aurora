@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { defer } from "@c9up/photon";
 import { describe, expect, it } from "vitest";
 import { AuroraManager } from "../../src/AuroraManager.js";
-import { AuroraError } from "../../src/errors.js";
+import { E_AURORA_VISITS_NEED_PHOTON } from "../../src/errors.js";
 import { loadVisitProtocol } from "../../src/server/visits.js";
 import type { RenderHttpContext, RenderResponse } from "../../src/server.js";
 import { Pages, renderPage } from "../../src/server.js";
@@ -180,6 +180,6 @@ describe("aurora > visits > server", () => {
 					visits: true,
 					photonDistRoot: resolve(HERE, "../fixtures/nowhere"),
 				}),
-		).toThrowError(AuroraError);
+		).toThrowError(E_AURORA_VISITS_NEED_PHOTON);
 	});
 });

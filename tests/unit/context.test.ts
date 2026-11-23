@@ -9,9 +9,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	AuroraError,
 	component,
 	createContext,
+	errors,
 	html,
 	hydrate,
 	inject,
@@ -141,8 +141,8 @@ describe("context", () => {
 			Orphan();
 			expect.unreachable("inject should have thrown");
 		} catch (error) {
-			expect(error).toBeInstanceOf(AuroraError);
-			expect((error as AuroraError).code).toBe("E_AURORA_MISSING_CONTEXT");
+			expect(error).toBeInstanceOf(errors.E_AURORA_MISSING_CONTEXT);
+			expect(error).toMatchObject({ code: "E_AURORA_MISSING_CONTEXT" });
 		}
 	});
 
@@ -191,7 +191,9 @@ describe("context", () => {
 
 	it("refuses `provide` outside a component setup", () => {
 		const Ctx = createContext<string>("Loose");
-		expect(() => provide(Ctx, "x")).toThrowError(AuroraError);
+		expect(() => provide(Ctx, "x")).toThrowError(
+			errors.E_AURORA_OUTSIDE_COMPONENT,
+		);
 	});
 
 	it("returns the provided value, so the provider keeps it in one statement", () => {
@@ -251,7 +253,7 @@ describe("context > server and hydration", () => {
 		});
 		render(Root(), document.createElement("div"));
 
-		expect(() => Screen()).toThrowError(AuroraError);
+		expect(() => Screen()).toThrowError(errors.E_AURORA_MISSING_CONTEXT);
 		const host = document.createElement("div");
 		render(
 			later(() => Screen()),

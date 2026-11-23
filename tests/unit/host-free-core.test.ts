@@ -34,6 +34,13 @@ const HOST_MODULES = new Set([
 	"xsrf.ts",
 ]);
 
+/**
+ * Packages these entries may import: `@c9up/flare`, the errors' base class,
+ * which is one module with no import and no host API (`Error.captureStackTrace`
+ * is read only where the engine has it).
+ */
+const HOST_FREE_PACKAGES = new Set(["@c9up/flare"]);
+
 /** Value imports and re-exports; `import type` / `export type` are erased. */
 const VALUE_IMPORT =
 	/^\s*(?:import|export)\s+(?!type\b)(?:[^"';]*?\sfrom\s+)?["']([^"']+)["']/gm;
@@ -80,7 +87,8 @@ describe.each(["core.ts", "renderer.ts"])("the import graph of %s", (entry) => {
 	it("imports no package and no Node module", () => {
 		const externals = [...graph.keys()]
 			.filter((key) => key.startsWith("external:"))
-			.map((key) => key.slice("external:".length));
+			.map((key) => key.slice("external:".length))
+			.filter((specifier) => !HOST_FREE_PACKAGES.has(specifier));
 		expect(externals).toEqual([]);
 	});
 

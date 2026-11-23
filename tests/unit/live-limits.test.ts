@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createLiveRegistry,
 	createLiveRouter,
+	errors,
 	html,
 	type LiveRegistryOptions,
 	type RelayBroadcaster,
@@ -182,7 +183,12 @@ describe("aurora > live > caps", () => {
 			{ claimTimeoutMs: Number.NaN },
 			{ idleTimeoutMs: 0 },
 		]) {
-			expect(() => createLiveRegistry(options)).toThrow(RangeError);
+			expect(() => createLiveRegistry(options)).toThrow(
+				errors.E_AURORA_INVALID_LIVE_LIMIT,
+			);
+			expect(() => createLiveRegistry(options)).toThrow(
+				expect.objectContaining({ code: "E_AURORA_INVALID_LIVE_LIMIT" }),
+			);
 		}
 	});
 });

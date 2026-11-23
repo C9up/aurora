@@ -10,10 +10,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	AuroraError,
 	component,
 	createContext,
 	each,
+	errors,
 	html,
 	hydrate,
 	inject,
@@ -166,7 +166,7 @@ describe("each > keeps rows by key", () => {
 				list(() => rows),
 				host,
 			),
-		).toThrowError(AuroraError);
+		).toThrowError(errors.E_AURORA_DUPLICATE_KEY);
 		expect(() =>
 			render(
 				list(() => rows),

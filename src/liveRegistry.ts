@@ -11,7 +11,11 @@
  * and node-free (only `mountLiveSession` + `crypto.randomUUID`, both isomorphic).
  */
 
-import { AuroraError } from "./errors.js";
+import {
+	E_AURORA_INVALID_LIVE_LIMIT,
+	E_AURORA_LIVE_SESSION_LIMIT,
+	E_AURORA_UNKNOWN_LIVE_COMPONENT,
+} from "./errors.js";
 
 import {
 	type LiveComponentDefinition,
@@ -102,9 +106,7 @@ interface Entry extends LiveSessionHandle {
 function limit(name: string, value: number | undefined, fallback: number) {
 	const resolved = value ?? fallback;
 	if (!(resolved > 0)) {
-		throw new RangeError(
-			`[aurora:live] ${name} must be a positive number, got ${String(value)}.`,
-		);
+		throw new E_AURORA_INVALID_LIVE_LIMIT([name, String(value)]);
 	}
 	return resolved;
 }
@@ -185,10 +187,7 @@ export function createLiveRegistry(
 		mount(name, ownerId) {
 			const factory = defs.get(name);
 			if (!factory) {
-				throw new AuroraError(
-					"E_AURORA_UNKNOWN_LIVE_COMPONENT",
-					`[aurora:live] unknown live component "${name}" — register it with registry.define("${name}", …) before mounting.`,
-				);
+				throw new E_AURORA_UNKNOWN_LIVE_COMPONENT([name, name]);
 			}
 			// Room is made before anything is built: an owner at its cap gives up
 			// its oldest session, and a full registry refuses rather than evicting
@@ -201,10 +200,7 @@ export function createLiveRegistry(
 				}
 			}
 			if (sessions.size >= maxSessions) {
-				throw new AuroraError(
-					"E_AURORA_LIVE_SESSION_LIMIT",
-					`[aurora:live] the registry holds ${sessions.size} sessions, its maxSessions — refusing to mount "${name}". Answer 503 and let the client retry.`,
-				);
+				throw new E_AURORA_LIVE_SESSION_LIMIT([sessions.size, name]);
 			}
 			const id = crypto.randomUUID();
 			// The session id namespaces this component's ids, here and on the

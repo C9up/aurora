@@ -15,6 +15,13 @@
  * `target`, a `download`, a modified click) leaves one to the browser.
  */
 
+import {
+	E_AURORA_ILLEGAL_PAGE_NAME,
+	E_AURORA_PAGE_INVALID_EXPORT,
+	E_AURORA_VISIT_ASYNC_FIRST_PAGE,
+	E_AURORA_VISIT_NO_PAGE_DATA,
+	E_AURORA_VISITS_NEED_PHOTON,
+} from "./errors.js";
 import { hydrate } from "./hydrate.js";
 import { withIdScope } from "./id.js";
 import { leavePage } from "./pageLifecycle.js";
@@ -79,9 +86,7 @@ function readData(): VisitData {
 		typeof data.modules !== "string" ||
 		!data.modules.includes("{name}")
 	) {
-		throw new Error(
-			"[aurora] visits: the page carries no aurora-page-data to boot from",
-		);
+		throw new E_AURORA_VISIT_NO_PAGE_DATA();
 	}
 	const routes: Record<string, string> = {};
 	if (isRecord(data.routes)) {
@@ -103,16 +108,12 @@ async function importPage(
 	name: string,
 ): Promise<{ default: PageFactory }> {
 	if (!PAGE_NAME.test(name) || name.split("/").includes("..")) {
-		throw new Error(
-			`[aurora] visits: illegal page name ${JSON.stringify(name)}`,
-		);
+		throw new E_AURORA_ILLEGAL_PAGE_NAME([name]);
 	}
 	const mod: unknown = await import(modules.replace("{name}", name));
 	const factory = isRecord(mod) ? mod.default : undefined;
 	if (!isPageFactory(factory)) {
-		throw new Error(
-			`[aurora] visits: page "${name}" does not default-export a function`,
-		);
+		throw new E_AURORA_PAGE_INVALID_EXPORT([`visits: page "${name}"`]);
 	}
 	return { default: factory };
 }
@@ -129,9 +130,7 @@ function pageAdapter(
 	let dispose = hydrate(target, () => {
 		const tree = first(props);
 		if (tree instanceof Promise) {
-			throw new Error(
-				"[aurora] visits: the first page's factory is async; a hydrated page has to render synchronously",
-			);
+			throw new E_AURORA_VISIT_ASYNC_FIRST_PAGE();
 		}
 		return tree;
 	});
@@ -216,18 +215,18 @@ export async function bootVisits(): Promise<void> {
 	setRouteManifest(data.routes);
 	const mod: unknown = await import(PHOTON_CLIENT);
 	if (!isPhotonClient(mod)) {
-		throw new Error(
-			"[aurora] visits need @c9up/photon 0.1.25 or later (bootPage)",
-		);
+		throw new E_AURORA_VISITS_NEED_PHOTON([
+			"visits need @c9up/photon 0.1.25 or later (bootPage)",
+		]);
 	}
 	await mod.bootPage({
 		target: `#${CSS.escape(data.rootId)}`,
 		resolveComponent: (name) => importPage(data.modules, name),
 		mount: async (target, Component, page) => {
 			if (!isPageFactory(Component)) {
-				throw new Error(
-					"[aurora] visits: the first page module exports no page function",
-				);
+				throw new E_AURORA_PAGE_INVALID_EXPORT([
+					"visits: the first page module",
+				]);
 			}
 			return pageAdapter(target, Component, page.props, data.rootId);
 		},

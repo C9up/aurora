@@ -90,7 +90,7 @@ export interface Form<T> {
 	validate(): boolean;
 	/** Validate then submit (no-op if invalid). Calls `event.preventDefault()`. */
 	handleSubmit(event?: { preventDefault(): void }): Promise<void>;
-	/** Merge in errors (e.g. server-side field errors from `HttpError.data`). */
+	/** Merge in errors (e.g. server-side field errors, the `data` of `errors.E_AURORA_HTTP_REQUEST_FAILED`). */
 	setErrors(errors: FieldErrors<T>): void;
 	/** Reset values to `initial` and clear errors / touched / submit state. */
 	reset(): void;

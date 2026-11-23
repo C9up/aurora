@@ -17,7 +17,10 @@
  * side. Node-free — part of aurora's client runtime.
  */
 
-import { AuroraError } from "./errors.js";
+import {
+	E_AURORA_MISSING_ROUTE_PARAMS,
+	E_AURORA_UNKNOWN_ROUTE,
+} from "./errors.js";
 
 let manifest: Record<string, string> = {};
 
@@ -84,14 +87,12 @@ export function urlFor(
 	const pattern = Object.hasOwn(routes, name) ? routes[name] : undefined;
 	if (typeof pattern !== "string") {
 		const known = Object.keys(routes);
-		throw new AuroraError(
-			"E_AURORA_UNKNOWN_ROUTE",
-			`[aurora] urlFor: unknown route '${name}'. ${
-				known.length > 0
-					? `Known: ${known.join(", ")}`
-					: "No routes registered — was the manifest passed to render() / setRouteManifest() called?"
-			}`,
-		);
+		throw new E_AURORA_UNKNOWN_ROUTE([
+			name,
+			known.length > 0
+				? `Known: ${known.join(", ")}`
+				: "No routes registered — was the manifest passed to render() / setRouteManifest() called?",
+		]);
 	}
 
 	routeUseRecorder?.()?.add(name);
@@ -113,10 +114,7 @@ export function urlFor(
 
 	const missing = url.match(/:[A-Za-z_][\w]*/g);
 	if (missing && missing.length > 0) {
-		throw new AuroraError(
-			"E_AURORA_MISSING_ROUTE_PARAMS",
-			`[aurora] urlFor: route '${name}' is missing params ${missing.join(", ")}`,
-		);
+		throw new E_AURORA_MISSING_ROUTE_PARAMS([name, missing.join(", ")]);
 	}
 
 	if (query) {

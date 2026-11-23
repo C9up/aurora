@@ -18,7 +18,7 @@
  * connection gives both).
  */
 
-import { AuroraError } from "./errors.js";
+import { E_AURORA_RELAY_REQUEST_FAILED } from "./errors.js";
 import { xsrfHeaderFor } from "./xsrf.js";
 
 /**
@@ -483,10 +483,10 @@ async function postHandshake(url: string, channel: string): Promise<void> {
 			return;
 		}
 	}
-	throw new AuroraError(
-		"E_AURORA_RELAY_REQUEST_FAILED",
-		`[aurora:relay] HTTP ${res.status}${code === undefined ? "" : ` ${code}`}`,
-	);
+	throw new E_AURORA_RELAY_REQUEST_FAILED([
+		res.status,
+		code === undefined ? "" : ` ${code}`,
+	]);
 }
 
 /** Close the stream and open a new one, keeping the channels. */

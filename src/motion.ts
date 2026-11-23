@@ -20,7 +20,7 @@
  * either host.
  */
 
-import { AuroraError } from "./errors.js";
+import { E_AURORA_INVALID_MOTION } from "./errors.js";
 
 /** What holds and animates motion values for a host. */
 export interface MotionDriver {
@@ -425,28 +425,25 @@ export type MotionKey = (typeof MOTION_KEYS)[number];
 /** Read a `motion=${…}` value; anything but motion values is refused. */
 export function readMotionStyle(value: unknown): MotionStyle {
 	if (typeof value !== "object" || value === null) {
-		throw new AuroraError(
-			"E_AURORA_INVALID_MOTION",
-			"[aurora] motion expects an object of motion values",
-		);
+		throw new E_AURORA_INVALID_MOTION([
+			"motion expects an object of motion values",
+		]);
 	}
 	const out: MotionStyle = {};
 	for (const key of MOTION_KEYS) {
 		const node: unknown = Reflect.get(value, key);
 		if (node instanceof MotionNode) out[key] = node;
 		else if (node !== undefined) {
-			throw new AuroraError(
-				"E_AURORA_INVALID_MOTION",
-				`[aurora] motion.${key} must be a motion value`,
-			);
+			throw new E_AURORA_INVALID_MOTION([
+				`motion.${key} must be a motion value`,
+			]);
 		}
 	}
 	for (const key of Object.keys(value)) {
 		if (!MOTION_KEYS.some((known) => known === key)) {
-			throw new AuroraError(
-				"E_AURORA_INVALID_MOTION",
-				`[aurora] motion.${key} is not supported (opacity, translateX, translateY, scale, visible; rotation and colour are not)`,
-			);
+			throw new E_AURORA_INVALID_MOTION([
+				`motion.${key} is not supported (opacity, translateX, translateY, scale, visible; rotation and colour are not)`,
+			]);
 		}
 	}
 	return out;

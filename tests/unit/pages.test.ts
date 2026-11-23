@@ -31,7 +31,7 @@ describe("aurora > Pages > resolve", () => {
 	it("throws when the page module lacks a default export function", async () => {
 		const pages = new Pages({ root: FIXTURES });
 		await expect(pages.resolve("no-default")).rejects.toThrow(
-			/must default-export a factory function/,
+			/must default-export a page function/,
 		);
 	});
 

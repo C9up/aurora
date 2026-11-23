@@ -19,7 +19,13 @@ import { resolve as resolvePath, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runsInDevelopment } from "./devMode.js";
 import { newestMtime, registerDevPageHooks } from "./devPageReload.js";
-import { AuroraError } from "./errors.js";
+import {
+	E_AURORA_ILLEGAL_PAGE_NAME,
+	E_AURORA_PAGE_IMPORT_FAILED,
+	E_AURORA_PAGE_INVALID_EXPORT,
+	E_AURORA_PAGE_NOT_FOUND,
+	E_AURORA_PAGE_OUTSIDE_ROOT,
+} from "./errors.js";
 import type { TemplateResult } from "./types.js";
 
 /** A page module's default export. Receives props, returns a template. */
@@ -106,10 +112,7 @@ export class Pages {
 
 		const absolute = resolvePath(this.root, `${name}${this.extension}`);
 		if (!absolute.startsWith(this.root + sep) && absolute !== this.root) {
-			throw new AuroraError(
-				"E_AURORA_PAGE_OUTSIDE_ROOT",
-				`[aurora] page path "${name}" resolves outside the pages root`,
-			);
+			throw new E_AURORA_PAGE_OUTSIDE_ROOT([name]);
 		}
 
 		// `pathToFileURL` so Windows + ESM stay happy. Node's ESM
@@ -148,10 +151,7 @@ export class Pages {
 			throw pageImportError(name, absolute, err, isDev);
 		}
 		if (typeof mod.default !== "function") {
-			throw new AuroraError(
-				"E_AURORA_PAGE_INVALID_EXPORT",
-				`[aurora] page "${name}" must default-export a factory function`,
-			);
+			throw new E_AURORA_PAGE_INVALID_EXPORT([`page "${name}"`]);
 		}
 		// NAMED CAST: the module boundary. Checked to be a function above; what it
 		// takes and returns is the page author's contract.
@@ -210,11 +210,7 @@ export function pageImportError(
 	const error = cause instanceof Error ? cause : new Error(String(cause));
 
 	if (!existsSync(absolute)) {
-		return new AuroraError(
-			"E_AURORA_PAGE_NOT_FOUND",
-			`[aurora] page "${name}" not found at ${absolute}`,
-			{ cause: error },
-		);
+		return new E_AURORA_PAGE_NOT_FOUND([name, absolute], { cause: error });
 	}
 
 	// A missing export is raised at link time as a SyntaxError, and it names the
@@ -231,9 +227,8 @@ export function pageImportError(
 				"\n  dependents (hot-hook)."
 			: "";
 
-	return new AuroraError(
-		"E_AURORA_PAGE_IMPORT_FAILED",
-		`[aurora] page "${name}" loaded from ${absolute} but its module graph failed: ${error.message}${stale}`,
+	return new E_AURORA_PAGE_IMPORT_FAILED(
+		[name, absolute, error.message, stale],
 		{ cause: error },
 	);
 }
@@ -246,9 +241,6 @@ function assertSafeName(name: string): void {
 		name.includes("..") ||
 		name.includes("\0")
 	) {
-		throw new AuroraError(
-			"E_AURORA_ILLEGAL_PAGE_NAME",
-			`[aurora] illegal page name: ${JSON.stringify(name)}`,
-		);
+		throw new E_AURORA_ILLEGAL_PAGE_NAME([name]);
 	}
 }

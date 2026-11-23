@@ -134,7 +134,12 @@ describe("aurora > browser packages", () => {
 		writeManifest("@c9up/atom", { ".": { browser: "./browser/index.js" } });
 		expect(() =>
 			resolveBrowserPackage("@c9up/atom", "/__assets", join(pkgRoot, "dist")),
-		).toThrow(/outside the directory aurora serves/);
+		).toThrow(
+			expect.objectContaining({
+				code: "E_AURORA_BROWSER_ENTRY_OUTSIDE_DIST",
+				message: expect.stringMatching(/outside the directory aurora serves/),
+			}),
+		);
 	});
 
 	it("finds a wasm sibling when there is one, and reports none when there is not", () => {
@@ -161,7 +166,12 @@ describe("aurora > browser packages", () => {
 		writeManifest("@c9up/atom", { ".": { import: "./index.mjs" } });
 		expect(() =>
 			resolveBrowserPackage("@c9up/atom", "/__assets", pkgRoot),
-		).toThrow(/package root/);
+		).toThrow(
+			expect.objectContaining({
+				code: "E_AURORA_BROWSER_ENTRY_AT_ROOT",
+				message: expect.stringMatching(/package root/),
+			}),
+		);
 	});
 
 	it("refuses a real installed package with a root-level entry", () => {
@@ -213,7 +223,12 @@ describe("aurora > browser packages", () => {
 				"@scope-a/atom": join(pkgRoot, "dist"),
 				"@scope-b/atom": join(pkgRoot, "dist"),
 			}),
-		).toThrow(/both mount on/);
+		).toThrow(
+			expect.objectContaining({
+				code: "E_AURORA_BROWSER_PACKAGE_CLASH",
+				message: expect.stringMatching(/both mount on/),
+			}),
+		);
 	});
 
 	it("serves a .wasm as application/wasm, which instantiateStreaming requires", async () => {

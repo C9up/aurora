@@ -28,7 +28,19 @@
  * forward resolves them. Linear in the markup either way.
  */
 
-import { AuroraError } from "./errors.js";
+import {
+	E_AURORA_FILE_INPUT_VALUE,
+	E_AURORA_SLOT_IN_ATTRIBUTE_NAME,
+	E_AURORA_SLOT_IN_BASE_URL,
+	E_AURORA_SLOT_IN_COMMENT,
+	E_AURORA_SLOT_IN_EVENT_ATTRIBUTE,
+	E_AURORA_SLOT_IN_HTML_PROPERTY,
+	E_AURORA_SLOT_IN_RAW_TEXT,
+	E_AURORA_SLOT_IN_SCRIPT_SOURCE,
+	E_AURORA_SLOT_IN_SRCDOC,
+	E_AURORA_SLOT_IN_TAG_NAME,
+	E_AURORA_TEMPLATE_IN_ATTRIBUTE,
+} from "./errors.js";
 import { isTemplateResult } from "./types.js";
 import { SOURCE_ELEMENTS } from "./urlGuard.js";
 
@@ -893,51 +905,35 @@ export class TemplateScanner {
 export function assertBindable(scanner: TemplateScanner): BindablePosition {
 	const position = scanner.position;
 	if (position === "tag-name") {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_TAG_NAME",
-			`[aurora] a ${INTERPOLATION} cannot be a tag name — write the tag out, or pick between two templates.`,
-		);
+		throw new E_AURORA_SLOT_IN_TAG_NAME();
 	}
 	if (position === "attribute-name") {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_ATTRIBUTE_NAME",
-			`[aurora] a ${INTERPOLATION} cannot be an attribute name — write the attribute out, or bind its value.`,
-		);
+		throw new E_AURORA_SLOT_IN_ATTRIBUTE_NAME();
 	}
 	if (position === "raw-text") {
-		throw new AuroraError("E_AURORA_SLOT_IN_RAW_TEXT", rawTextMessage(scanner));
+		throw new E_AURORA_SLOT_IN_RAW_TEXT([rawTextMessage(scanner)]);
 	}
 	if (position === "comment") {
 		// Not merely useless: both paths anchor a text slot with a comment, and its
 		// `-->` ends the one it sits in. The browser then reads the rest of the
 		// author's comment as markup — a `<script>` in it included — while the
 		// scanner, still inside the comment, calls every slot there text.
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_COMMENT",
-			`[aurora] a ${INTERPOLATION} cannot go inside an HTML comment, a <!…> or <?…> declaration or a CDATA section — it binds nothing there, and the marker aurora writes for it would end the comment early. Move it out of the comment.`,
-		);
+		throw new E_AURORA_SLOT_IN_COMMENT();
 	}
 	const attribute = scanner.attribute;
 	if (attribute.startsWith("on")) {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_EVENT_ATTRIBUTE",
-			`[aurora] a ${INTERPOLATION} cannot go in "${attribute}" — that value is JavaScript, and escaping it as HTML does not stop it running. Use @${attribute.slice(2)}=\${handler}, which binds a function instead of writing source.`,
-		);
+		throw new E_AURORA_SLOT_IN_EVENT_ATTRIBUTE([attribute, attribute.slice(2)]);
 	}
 	if (attribute === "srcdoc") {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_SRCDOC",
-			`[aurora] a ${INTERPOLATION} cannot go in "srcdoc" — the iframe decodes that value and parses it as a whole HTML document, so escaping it protects nothing. Point the iframe at a URL you serve.`,
-		);
+		throw new E_AURORA_SLOT_IN_SRCDOC();
 	}
 	if (scanner.element === "base" && attribute === "href") {
-		throw new AuroraError("E_AURORA_SLOT_IN_BASE_URL", baseUrlMessage());
+		throw new E_AURORA_SLOT_IN_BASE_URL();
 	}
 	if (scanner.element === "script" && SCRIPT_SOURCE_ATTRIBUTES.has(attribute)) {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_SCRIPT_SOURCE",
-			scriptSourceMessage(`a ${INTERPOLATION} cannot go in "${attribute}"`),
-		);
+		throw new E_AURORA_SLOT_IN_SCRIPT_SOURCE([
+			`a ${INTERPOLATION} cannot go in "${attribute}"`,
+		]);
 	}
 	return position;
 }
@@ -957,19 +953,6 @@ const SCRIPT_SOURCE_ATTRIBUTES: ReadonlySet<string> = new Set([
 	"href",
 	"xlink:href",
 ]);
-
-/**
- * `<base href>` decides where every relative URL on the page goes — links,
- * forms, and the scripts and modules the page loads after it. No scheme check
- * covers that: an `https://` base on another origin is the attack.
- */
-function baseUrlMessage(): string {
-	return `[aurora] a ${INTERPOLATION} cannot go in <base href> — it rebases every relative URL on the page, the scripts it loads included, so any value but the one you meant hands the page to whoever chose it. Write the base URL into the template.`;
-}
-
-function scriptSourceMessage(what: string): string {
-	return `[aurora] ${what} on <script> — whatever URL it holds is loaded and run with the page's authority, and no check on the value can tell the script you meant from one the value picked. Write the URL into the template; a script chosen at runtime is a decision for code that creates the element itself.`;
-}
 
 /**
  * The properties that parse what they are given as HTML — lowercased, since the
@@ -997,28 +980,21 @@ export function assertBindableProperty(
 ): void {
 	const name = property.toLowerCase();
 	if (HTML_PARSING_PROPERTIES.has(name)) {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_HTML_PROPERTY",
-			`[aurora] cannot bind .${property} — it parses its value as HTML, so the value runs as markup, handlers and all. Put the content in the template as a text slot, or pass a nested html\`…\` template.`,
-		);
+		throw new E_AURORA_SLOT_IN_HTML_PROPERTY([property]);
 	}
 	if (element.toLowerCase() === "base" && name === "href") {
-		throw new AuroraError("E_AURORA_SLOT_IN_BASE_URL", baseUrlMessage());
+		throw new E_AURORA_SLOT_IN_BASE_URL();
 	}
 	if (element.toLowerCase() === "script" && name === "src") {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_SCRIPT_SOURCE",
-			scriptSourceMessage(`cannot bind .${property}`),
-		);
+		throw new E_AURORA_SLOT_IN_SCRIPT_SOURCE([`cannot bind .${property}`]);
 	}
 	if (
 		FOREIGN_CODE_ELEMENTS.has(element.toLowerCase()) &&
 		CONTENT_PROPERTIES.has(name)
 	) {
-		throw new AuroraError(
-			"E_AURORA_SLOT_IN_RAW_TEXT",
+		throw new E_AURORA_SLOT_IN_RAW_TEXT([
 			`[aurora] cannot bind .${property} on <${element}> — that writes the ${element}'s source, and the browser runs it once the element is in the document. It is the property spelling of a slot inside <${element}>, refused for the same reason.`,
-		);
+		]);
 	}
 }
 
@@ -1056,10 +1032,7 @@ export function assertPropertyValue(
  */
 export function assertNotMarkup(value: unknown): void {
 	if (!holdsTemplate(value)) return;
-	throw new AuroraError(
-		"E_AURORA_TEMPLATE_IN_ATTRIBUTE",
-		"[aurora] a nested html`…` template cannot be an attribute value or a .value — markup has no meaning there. Pass a string; for a prop typed string | template, bind the string form to the attribute.",
-	);
+	throw new E_AURORA_TEMPLATE_IN_ATTRIBUTE();
 }
 
 function holdsTemplate(value: unknown): boolean {
@@ -1082,10 +1055,7 @@ export function assertInputValue(
 		value !== undefined &&
 		String(value) !== ""
 	) {
-		throw new AuroraError(
-			"E_AURORA_FILE_INPUT_VALUE",
-			`[aurora] cannot set .value on <input type="file"> to "${String(value)}" — a file input's value is whatever the user picked, and a script may only clear it. Bind "" to reset the field, or drop the .value binding.`,
-		);
+		throw new E_AURORA_FILE_INPUT_VALUE([String(value)]);
 	}
 }
 

@@ -20,7 +20,10 @@
  */
 
 import { readEach } from "./each.js";
-import { AuroraError } from "./errors.js";
+import {
+	E_AURORA_MISSING_CONTEXT,
+	E_AURORA_OUTSIDE_COMPONENT,
+} from "./errors.js";
 import { isSignal, setOwner, untrack } from "./reactive.js";
 import { probe } from "./rerenders.js";
 import type { Disposer, EffectCallback, TemplateResult } from "./types.js";
@@ -187,10 +190,7 @@ function activeContext(): ComponentContext {
 			? contextStack[contextStack.length - 1]
 			: undefined;
 	if (!ctx) {
-		throw new AuroraError(
-			"E_AURORA_OUTSIDE_COMPONENT",
-			"[aurora] onMount / onUnmount called outside component() — only valid inside a component setup function.",
-		);
+		throw new E_AURORA_OUTSIDE_COMPONENT();
 	}
 	return ctx;
 }
@@ -322,10 +322,7 @@ export function inject<T>(context: Context<T>): T {
 	// Naming both halves, because the fix is almost always one of two things:
 	// the component is used outside its parent, or its parent read its
 	// children outside setup and the thunk rule was missed.
-	throw new AuroraError(
-		"E_AURORA_MISSING_CONTEXT",
-		`No value provided for context "${context.name}". Either this component is used outside the one that provides it, or that one built its children outside its own setup — a provider must read its children itself, inside setup, or they are created before it exists.`,
-	);
+	throw new E_AURORA_MISSING_CONTEXT([context.name]);
 }
 
 /**

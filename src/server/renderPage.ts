@@ -26,7 +26,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setCookieStoreReader } from "../browser.js";
 import { runsInDevelopment } from "../devMode.js";
-import { AuroraError } from "../errors.js";
+import { E_AURORA_ILLEGAL_ROOT_TAG, E_AURORA_VISIT_PROPS } from "../errors.js";
 import { createIdCounter, setIdCounterReader } from "../id.js";
 import type { Pages } from "../Pages.js";
 import { renderToString } from "../ssr.js";
@@ -367,10 +367,10 @@ async function renderPageInScope<P>(
 		// through JSON — and the server renders from those very props.
 		const record = merged === undefined ? {} : merged;
 		if (!isObjectRecord(record)) {
-			throw new AuroraError(
-				"E_AURORA_VISIT_PROPS",
-				`[aurora] page "${name}": with visits on, props must be an object (the protocol's page.props), got ${Array.isArray(record) ? "an array" : typeof record}`,
-			);
+			throw new E_AURORA_VISIT_PROPS([
+				name,
+				Array.isArray(record) ? "an array" : typeof record,
+			]);
 		}
 		const info = visits.readRequestInfo(ctx);
 		const version = options.assetsVersion ?? "";
@@ -550,10 +550,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeRootTag(tag: string): string {
 	if (/^[a-z][a-z0-9-]*$/i.test(tag)) return tag.toLowerCase();
-	throw new AuroraError(
-		"E_AURORA_ILLEGAL_ROOT_TAG",
-		`[aurora] illegal root tag: ${JSON.stringify(tag)}`,
-	);
+	throw new E_AURORA_ILLEGAL_ROOT_TAG([tag]);
 }
 
 function rootAttrs(id: string, className: string | undefined): string {

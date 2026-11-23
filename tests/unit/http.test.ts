@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	HttpClient,
-	HttpError,
-	http,
-	isAbortError,
-	isHttpError,
-} from "../../src/http.js";
+import { E_AURORA_HTTP_REQUEST_FAILED } from "../../src/errors.js";
+import { HttpClient, http, isAbortError, isHttpError } from "../../src/http.js";
 
 /** Narrow away null/undefined without a `!` assertion (which lies to the compiler). */
 function defined<T>(value: T | null | undefined): T {
@@ -166,16 +161,17 @@ describe("aurora > http > HttpClient", () => {
 		expect(defined(calls[0]).url).toBe("/search?q=hi&page=2");
 	});
 
-	it("throws HttpError with status and parsed body on non-2xx", async () => {
+	it("throws E_AURORA_HTTP_REQUEST_FAILED with status and parsed body on non-2xx", async () => {
 		stubFetch(() => json({ message: "nope" }, 422));
 		const client = new HttpClient();
 		await expect(client.get("/x")).rejects.toMatchObject({
-			name: "HttpError",
+			name: "E_AURORA_HTTP_REQUEST_FAILED",
+			code: "E_AURORA_HTTP_REQUEST_FAILED",
 			status: 422,
 			data: { message: "nope" },
 		});
 		const err = await client.get("/x").catch((e) => e);
-		expect(err).toBeInstanceOf(HttpError);
+		expect(err).toBeInstanceOf(E_AURORA_HTTP_REQUEST_FAILED);
 	});
 
 	it("returns null for a 204 No Content response", async () => {
@@ -266,13 +262,13 @@ describe("aurora > http > error handling (attempt / isHttpError)", () => {
 		if (r.ok) expect(r.data).toEqual({ id: 1 });
 	});
 
-	it("attempt() resolves ok:false with the HttpError on a non-2xx", async () => {
+	it("attempt() resolves ok:false with the HTTP error on a non-2xx", async () => {
 		stubFetch(() => json({ error: "bad" }, 422));
 		const api = new HttpClient();
 		const r = await api.attempt(api.post("/x", {}));
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
-			expect(r.error).toBeInstanceOf(HttpError);
+			expect(r.error).toBeInstanceOf(E_AURORA_HTTP_REQUEST_FAILED);
 			expect(r.error.status).toBe(422);
 			expect(r.error.data).toEqual({ error: "bad" });
 		}
@@ -288,7 +284,10 @@ describe("aurora > http > error handling (attempt / isHttpError)", () => {
 	});
 
 	it("isHttpError narrows", () => {
-		const err = new HttpError(new Response(null, { status: 500 }), null);
+		const err = new E_AURORA_HTTP_REQUEST_FAILED(
+			new Response(null, { status: 500 }),
+			null,
+		);
 		expect(isHttpError(err)).toBe(true);
 		expect(isHttpError(new Error("x"))).toBe(false);
 		expect(isHttpError(null)).toBe(false);

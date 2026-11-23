@@ -14,13 +14,14 @@
  *   untouched.
  * - Bearer auth: a `token` (string or getter, read fresh per request) is sent
  *   as `Authorization: Bearer …` unless the caller set the header themselves.
- * - Errors: a non-2xx response rejects with an {@link HttpError} carrying the
+ * - Errors: a non-2xx response rejects with an `errors.E_AURORA_HTTP_REQUEST_FAILED` carrying the
  *   status, the `Response`, and the parsed body.
  *
  * Node-free and isomorphic — uses the global `fetch` (browsers, Node 18+,
  * Workers, Bun, Deno). Part of the client barrel.
  */
 
+import { E_AURORA_HTTP_REQUEST_FAILED } from "./errors.js";
 import {
 	carriesOwnAuthority,
 	isCrossOriginRequest,
@@ -88,24 +89,14 @@ export interface HttpRequestOptions<T = unknown> {
 	parse?: (raw: unknown) => T;
 }
 
-/** Thrown on a non-2xx response. Carries the status, the `Response`, and the parsed body. */
-export class HttpError extends Error {
-	readonly status: number;
-	readonly response: Response;
-	readonly data: unknown;
-
-	constructor(response: Response, data: unknown) {
-		super(`HTTP ${response.status} ${response.statusText} for ${response.url}`);
-		this.name = "HttpError";
-		this.status = response.status;
-		this.response = response;
-		this.data = data;
-	}
-}
-
-/** Type guard for {@link HttpError} — clean `catch` narrowing without a cast. */
-export function isHttpError(value: unknown): value is HttpError {
-	return value instanceof HttpError;
+/**
+ * Type guard for `errors.E_AURORA_HTTP_REQUEST_FAILED`, the error a non-2xx
+ * response rejects with — clean `catch` narrowing without a cast.
+ */
+export function isHttpError(
+	value: unknown,
+): value is E_AURORA_HTTP_REQUEST_FAILED {
+	return value instanceof E_AURORA_HTTP_REQUEST_FAILED;
 }
 
 /**
@@ -130,7 +121,7 @@ export function isAbortError(value: unknown): boolean {
  */
 export type HttpResult<T> =
 	| { ok: true; data: T; error: null }
-	| { ok: false; data: null; error: HttpError };
+	| { ok: false; data: null; error: E_AURORA_HTTP_REQUEST_FAILED };
 
 /** Whether `body` should be JSON-encoded (vs. passed to `fetch` untouched). */
 function isBodyInit(body: unknown): body is BodyInit {
@@ -307,14 +298,14 @@ export class HttpClient {
 	 * ```js
 	 * const r = await api.attempt(api.post('/auth/login', creds))
 	 * if (r.ok) user(r.data)
-	 * else fieldErrors(r.error.data)   // HttpError.data = parsed 4xx body
+	 * else fieldErrors(r.error.data)   // error.data = parsed 4xx body
 	 * ```
 	 */
 	async attempt<T>(request: Promise<T>): Promise<HttpResult<T>> {
 		try {
 			return { ok: true, data: await request, error: null };
 		} catch (error) {
-			if (error instanceof HttpError) {
+			if (error instanceof E_AURORA_HTTP_REQUEST_FAILED) {
 				return { ok: false, data: null, error };
 			}
 			throw error;
@@ -475,7 +466,7 @@ export class HttpClient {
 	): Promise<T> {
 		const response = await this.#send(method, url, body, options);
 		const data = await parseBody(response);
-		if (!response.ok) throw new HttpError(response, data);
+		if (!response.ok) throw new E_AURORA_HTTP_REQUEST_FAILED(response, data);
 		// `parse` validates at runtime; without it, `T` is the caller's
 		// unchecked assertion of the response shape (the usual HTTP boundary).
 		// NAMED CAST: the HTTP boundary. Without `parse`, `T` is the caller's
