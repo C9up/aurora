@@ -19,7 +19,9 @@ import { E_AURORA_INTERNAL } from "./errors.js";
 import { isCommentNode, isElementNode } from "./nodes.js";
 import {
 	assertBindable,
+	assertBindableAttribute,
 	assertBindableProperty,
+	prepareTemplate,
 	TemplateScanner,
 } from "./templateScanner.js";
 
@@ -119,7 +121,8 @@ function buildMarkup(
  *
  * The case survives in the template's own text, so that is where it is read
  * from — located by the slot number in the placeholder rather than by counting,
- * so it cannot drift from the walk's order.
+ * so it cannot drift from the walk's order, and read by the same scanner that
+ * finds the server's directives.
  */
 function writtenPropertyName(
 	attr: Attr,
@@ -128,9 +131,8 @@ function writtenPropertyName(
 	const marker = /__aurora_slot_(\d+)__/.exec(attr.value);
 	const index =
 		marker === undefined || marker === null ? -1 : Number(marker[1]);
-	const before = strings[index];
-	if (before === undefined) return undefined;
-	return /\.([A-Za-z_$][\w$-]*)=("|'|)$/.exec(before)?.[1];
+	const directive = prepareTemplate(strings).directives[index];
+	return directive?.name.startsWith(".") ? directive.name.slice(1) : undefined;
 }
 
 function collectSlots(
@@ -184,6 +186,10 @@ function collectSlots(
 			toRemove.push(attr.name);
 			return;
 		}
+		// Asked again with the names the parser gave: a scanner that misread the
+		// tag would have let the slot through, and the browser's reading is the
+		// one that runs.
+		assertBindableAttribute(attr.ownerElement?.localName ?? "", attr.name);
 		// Regular attribute — may host one or more slots inline with static text.
 		// Strip the placeholder version (the renderer re-applies via setAttribute)
 		// so the inert template never carries the `__aurora_slot_0__` artefact.

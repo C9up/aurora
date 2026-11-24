@@ -18,7 +18,7 @@
 import { withIdScope } from "./id.js";
 import { effect, isSignal } from "./reactive.js";
 import { renderRetaining } from "./ssr.js";
-import { trailingDirective } from "./templateScanner.js";
+import { prepareTemplate } from "./templateScanner.js";
 import type { TemplateResult } from "./types.js";
 
 /** A precise per-slot update: slot index (positional in the template) + value. */
@@ -116,7 +116,7 @@ export function mountLiveSession(
 		// mount, before anyone clicked — and one that reads and writes the same
 		// signal subscribed this effect inside its own write and recursed until
 		// the stack gave out. The string renderer drops these slots; so does this.
-		if (trailingDirective(view.strings[slot] ?? "")?.name.startsWith("@")) {
+		if (prepareTemplate(view.strings).directives[slot]?.name.startsWith("@")) {
 			return () => {};
 		}
 		return effect(() => {

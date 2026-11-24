@@ -55,6 +55,12 @@ export interface LiveRouter {
 		callerId: string,
 	): LiveEventOutcome;
 	/**
+	 * Keep a claimed session alive for its client — `liveClient` calls it on an
+	 * interval through the event route. Only for the session's owner, and it
+	 * claims nothing: a session nobody subscribed to or drove still times out.
+	 */
+	keepAlive(id: string, callerId: string): LiveEventOutcome;
+	/**
 	 * May `callerId` subscribe to the session's channel? Only its owner may. The
 	 * relay channel authorizer for `live/:id` — see {@link authorizeLiveChannel}.
 	 */
@@ -95,8 +101,18 @@ export function createLiveRouter(
 			const session = registry.get(id);
 			if (!session) return "unknown-session";
 			if (!owns(id, callerId)) return "forbidden";
+			// Claimed only by an event the component handled: a POST naming no
+			// handler of its (answered 400) used to claim the session as well, and
+			// a claimed session outlived the claim timeout.
+			if (!session.dispatch(event, payload)) return "unknown-event";
 			registry.claim(id);
-			return session.dispatch(event, payload) ? "handled" : "unknown-event";
+			return "handled";
+		},
+		keepAlive(id, callerId) {
+			if (registry.get(id) === undefined) return "unknown-session";
+			if (!owns(id, callerId)) return "forbidden";
+			registry.touch(id);
+			return "handled";
 		},
 		authorizeChannel(id, callerId) {
 			// Subscribing is how a client claims the session it was rendered.

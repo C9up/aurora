@@ -128,7 +128,7 @@ describe("each({ lazy }) on the server", () => {
 			)}</div>`,
 		);
 		expect(out.match(/<p>/g)).toHaveLength(22);
-		expect(out).toContain("<div data-aurora-lazy=before");
+		expect(out).toContain('<div data-aurora-lazy="before"');
 		expect(out).toContain("display:none");
 		expect(out).toContain(`height:${(1000 - 22) * 50}px`);
 		expect(out).toContain("<!--$-->21:21<!--/$-->");

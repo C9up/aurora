@@ -144,11 +144,54 @@ function isSpace(char: string): boolean {
 }
 
 /**
- * Which part of a tag the cursor is reading. One enum rather than a pair of
- * booleans, because the three parts are genuinely exclusive and the pair let a
- * tag name's own characters be mistaken for an attribute name.
+ * Which part of a tag the cursor is reading: the WHATWG tokenizer's states
+ * between `<x` and `>`, one for one.
+ *
+ * Fewer states than the tokenizer was the source of every disagreement inside
+ * a tag. With one "attribute name" state standing for three, whitespace before
+ * an `=` started a new, nameless attribute, so `href ="${v}"` was a value of
+ * nothing and every guard keyed on the name stood down. With the tag name read
+ * up to the first whitespace, `<script/x>` was an element called `scriptx`. The
+ * tokenizer has a state for each of these, and so does this.
+ *
+ * A quoted value is `"value"` with a quote open — see `TemplateScanner#quote`.
  */
-type TagPart = "tag-name" | "attribute-name" | "value";
+type TagPart =
+	| "tag-name"
+	| "before-attribute-name"
+	| "attribute-name"
+	| "after-attribute-name"
+	| "before-attribute-value"
+	/** An attribute value: unquoted, or quoted while the quote is open. */
+	| "value"
+	| "after-attribute-value"
+	/** After a `/` outside a value: only a `>` straight after it self-closes. */
+	| "self-closing";
+
+/**
+ * The tokenizer states inside a `<script>`, named after the WHATWG ones.
+ *
+ * A script is the one raw-text element whose end is not simply its first end
+ * tag. After `<!--` then `<script`, its content is "double escaped" and a
+ * `</script>` there only takes it back to "escaped": the script goes on. A
+ * scanner that left at the first `</script>` called the rest text, and the
+ * browser ran it.
+ */
+type ScriptState =
+	| "data"
+	| "less-than"
+	| "escape-start"
+	| "escape-start-dash"
+	| "escaped"
+	| "escaped-dash"
+	| "escaped-dash-dash"
+	| "escaped-less-than"
+	| "double-escape-start"
+	| "double-escaped"
+	| "double-escaped-dash"
+	| "double-escaped-dash-dash"
+	| "double-escaped-less-than"
+	| "double-escape-end";
 
 /**
  * Elements whose content the HTML parser does not read as markup.
@@ -374,6 +417,10 @@ export class TemplateScanner {
 	#closing = false;
 	/** The raw-text element the cursor is inside, or empty. */
 	#rawText = "";
+	/** Where a `<script>`'s content stands; only read while inside one. */
+	#script: ScriptState = "data";
+	/** The tag name a double-escape start or end inside a script is reading. */
+	#scriptBuffer = "";
 	/**
 	 * The open foreign-content elements and HTML integration points, innermost
 	 * last. Undefined until the first one, which is most templates.
@@ -390,12 +437,12 @@ export class TemplateScanner {
 	 * end of a tag.
 	 */
 	#foreign = false;
-	/** Was the last significant character in this tag a `/`, as in `<desc/>`? */
+	/** Did the tag end on `/>`, as in `<desc/>`? Read by `#closeTag` only. */
 	#solidus = false;
 	/** The attribute name being read, or the one whose value is being read. */
 	#attribute = "";
-	/** Has anything been written into the value being read yet? */
-	#valueStarted = false;
+	/** How many attribute names have started — see {@link attributeCount}. */
+	#attributeCount = 0;
 	/**
 	 * Characters of the value being read that have been consumed.
 	 *
@@ -427,7 +474,10 @@ export class TemplateScanner {
 			if (this.#rawText !== "") {
 				// Only this element's own end tag gets out. Everything else,
 				// including a stray `<`, is content.
-				const consumed = this.#tryCloseRawText(chunk, i);
+				const consumed =
+					this.#rawText === "script"
+						? this.#consumeScript(chunk, i)
+						: this.#tryCloseRawText(chunk, i);
 				if (consumed > 0) i += consumed - 1;
 				continue;
 			}
@@ -438,11 +488,10 @@ export class TemplateScanner {
 			if (this.#quote !== "") {
 				if (char === this.#quote) {
 					this.#quote = "";
-					this.#beginAttribute();
+					this.#part = "after-attribute-value";
+					this.#endAttribute();
 				} else {
-					this.#valueStarted = true;
-					this.#valueLength += 1;
-					if (this.#readingType) this.#type += char;
+					this.#appendValue(char);
 				}
 				continue;
 			}
@@ -568,73 +617,240 @@ export class TemplateScanner {
 		this.#consumeInTag(first);
 	}
 
+	/**
+	 * One character inside a tag, outside a quoted value: the tokenizer's tag
+	 * states, each `case` named after the state it stands for. "Reconsume" in the
+	 * spec is a recursive call here, into a state that always consumes.
+	 */
 	#consumeInTag(char: string): void {
-		if (char === ">") {
-			this.#closeTag();
-			return;
-		}
-		if (isSpace(char)) {
-			// Whitespace ends the tag name, a bare attribute, or an unquoted
-			// value — in every case the next thing is another attribute name.
-			this.#beginAttribute();
-			// And it cancels a `/` before it: the tokenizer only self-closes on a
-			// `/` IMMEDIATELY followed by `>`. `<svg><script/ >` opens a script.
-			this.#solidus = false;
-			return;
-		}
-		if (char === "/") {
-			// Outside a value it self-closes the tag, so `<desc/>` opens nothing to
-			// close later. Inside a value it is an ordinary character — a static
-			// `src=/a/b.png` must keep it. The `/` of an end tag never gets here:
-			// `</` is read before the tag opens.
-			if (this.#part !== "value") {
-				this.#solidus = true;
+		switch (this.#part) {
+			case "tag-name":
+				// The name ends at whitespace AND at `/`: `<script/x>` is a script
+				// with an attribute `x`, not an element called `scriptx`.
+				if (isSpace(char)) this.#part = "before-attribute-name";
+				else if (char === "/") this.#part = "self-closing";
+				else if (char === ">") this.#closeTag();
+				else this.#appendTagName(char);
 				return;
-			}
-		}
-		this.#solidus = false;
-		if (this.#part === "tag-name") {
-			if (!this.#tagMayBeRaw) return;
-			// Lowercased only when it has to be: a template's tag names are almost
-			// always written lowercase, and `toLowerCase` allocates.
-			const next =
-				this.#tag + (char >= "A" && char <= "Z" ? char.toLowerCase() : char);
-			if (
-				TRACKED_PREFIXES.has(next) ||
-				(this.#foreign && FOREIGN_BREAKOUT_PREFIXES.has(next))
-			) {
-				this.#tag = next;
-			} else {
-				this.#tagMayBeRaw = false;
-			}
-			return;
-		}
-		if (this.#part === "attribute-name") {
-			if (char === "=") {
-				// Lowercased once, at the boundary, not per character as it is read.
-				this.#attribute = this.#attribute.toLowerCase();
-				this.#part = "value";
-				this.#valueStarted = false;
-				this.#valueLength = 0;
-				// Only the first: the parser drops a repeated attribute.
-				if (this.#attribute === "type" && this.#type === undefined) {
-					this.#type = "";
-					this.#readingType = true;
+			case "self-closing":
+				if (char === ">") {
+					this.#solidus = true;
+					this.#closeTag();
+					return;
 				}
-			} else {
-				this.#attribute += char;
-			}
-			return;
+				// Only `/>` self-closes. Anything else after the `/` is an attribute
+				// name — `<svg><script/ >` opens a script.
+				this.#part = "before-attribute-name";
+				this.#consumeInTag(char);
+				return;
+			case "before-attribute-name":
+				if (isSpace(char)) return;
+				if (char === "/") this.#part = "self-closing";
+				else if (char === ">") this.#closeTag();
+				// A `=` here STARTS a name, like every other character:
+				// `<img ='…'>` is an attribute named `='…'`, not a value.
+				else this.#beginAttribute(char);
+				return;
+			case "attribute-name":
+				if (isSpace(char)) {
+					this.#endAttributeName();
+					this.#part = "after-attribute-name";
+				} else if (char === "/") {
+					this.#endAttributeName();
+					this.#part = "self-closing";
+				} else if (char === "=") {
+					this.#endAttributeName();
+					this.#beginValue();
+				} else if (char === ">") {
+					this.#endAttributeName();
+					this.#closeTag();
+				} else {
+					this.#attribute += char;
+				}
+				return;
+			case "after-attribute-name":
+				// The name just read is kept across whitespace: `href ="x"` is the
+				// value of `href`, and a guard keyed on the name must see it.
+				if (isSpace(char)) return;
+				if (char === "=") this.#beginValue();
+				else if (char === "/") this.#part = "self-closing";
+				else if (char === ">") this.#closeTag();
+				else this.#beginAttribute(char);
+				return;
+			case "before-attribute-value":
+				// Whitespace after the `=` is skipped too: `href= "x"` is `href`'s.
+				if (isSpace(char)) return;
+				if (char === '"' || char === "'") {
+					this.#quote = char;
+					this.#part = "value";
+				} else if (char === ">") {
+					this.#closeTag();
+				} else {
+					this.#part = "value";
+					this.#appendValue(char);
+				}
+				return;
+			case "value":
+				// Unquoted: a quote inside it is an ordinary character (`src=a"b`).
+				if (isSpace(char)) {
+					this.#part = "before-attribute-name";
+					this.#endAttribute();
+				} else if (char === ">") {
+					this.#closeTag();
+				} else {
+					this.#appendValue(char);
+				}
+				return;
+			case "after-attribute-value":
+				if (isSpace(char)) this.#part = "before-attribute-name";
+				else if (char === "/") this.#part = "self-closing";
+				else if (char === ">") this.#closeTag();
+				// `a="1"b` — the tokenizer starts the next name with no whitespace.
+				else this.#beginAttribute(char);
+				return;
 		}
-		// Reading a value with no quotes around it. An opening quote only counts
-		// as one while the value is still empty — `src=a"b` keeps the `"`.
-		if (!this.#valueStarted && (char === '"' || char === "'")) {
-			this.#quote = char;
-			return;
+	}
+
+	#appendTagName(char: string): void {
+		if (!this.#tagMayBeRaw) return;
+		// Lowercased only when it has to be: a template's tag names are almost
+		// always written lowercase, and `toLowerCase` allocates.
+		const next =
+			this.#tag + (char >= "A" && char <= "Z" ? char.toLowerCase() : char);
+		if (
+			TRACKED_PREFIXES.has(next) ||
+			(this.#foreign && FOREIGN_BREAKOUT_PREFIXES.has(next))
+		) {
+			this.#tag = next;
+		} else {
+			this.#tagMayBeRaw = false;
 		}
-		this.#valueStarted = true;
+	}
+
+	#appendValue(char: string): void {
 		this.#valueLength += 1;
 		if (this.#readingType) this.#type += char;
+	}
+
+	/** Lowercased once, at the boundary, not per character as it is read. */
+	#endAttributeName(): void {
+		this.#attribute = this.#attribute.toLowerCase();
+	}
+
+	#beginValue(): void {
+		this.#part = "before-attribute-value";
+		this.#valueLength = 0;
+		// Only the first: the parser drops a repeated attribute.
+		if (this.#attribute === "type" && this.#type === undefined) {
+			this.#type = "";
+			this.#readingType = true;
+		}
+	}
+
+	/**
+	 * One character of a `<script>`'s content: the tokenizer's script data
+	 * states. Returns how many characters were consumed — more than one only
+	 * when the script's end tag was read whole.
+	 */
+	#consumeScript(chunk: string, i: number): number {
+		const char = chunk.charAt(i);
+		switch (this.#script) {
+			case "data":
+				if (char === "<") {
+					const closed = this.#tryCloseRawText(chunk, i);
+					if (closed > 0) return closed;
+					this.#script = "less-than";
+				}
+				return 1;
+			case "less-than":
+				if (char === "!") {
+					this.#script = "escape-start";
+					return 1;
+				}
+				this.#script = "data";
+				return this.#consumeScript(chunk, i);
+			case "escape-start":
+			case "escape-start-dash":
+				if (char === "-") {
+					this.#script =
+						this.#script === "escape-start"
+							? "escape-start-dash"
+							: "escaped-dash-dash";
+					return 1;
+				}
+				this.#script = "data";
+				return this.#consumeScript(chunk, i);
+			case "escaped":
+			case "escaped-dash":
+			case "escaped-dash-dash":
+				if (char === "<") {
+					// An escaped script still ends at its own end tag.
+					const closed = this.#tryCloseRawText(chunk, i);
+					if (closed > 0) return closed;
+					this.#script = "escaped-less-than";
+				} else if (char === "-") {
+					this.#script =
+						this.#script === "escaped" ? "escaped-dash" : "escaped-dash-dash";
+				} else if (char === ">" && this.#script === "escaped-dash-dash") {
+					this.#script = "data";
+				} else {
+					this.#script = "escaped";
+				}
+				return 1;
+			case "escaped-less-than":
+				if (isAsciiLetter(char)) {
+					this.#scriptBuffer = "";
+					this.#script = "double-escape-start";
+				} else {
+					this.#script = "escaped";
+				}
+				return this.#consumeScript(chunk, i);
+			case "double-escape-start":
+			case "double-escape-end": {
+				const starting = this.#script === "double-escape-start";
+				if (isSpace(char) || char === "/" || char === ">") {
+					// `script` toggles between the two escaped states; any other name
+					// leaves the script where it was.
+					const toggles = this.#scriptBuffer === "script";
+					this.#script = starting === toggles ? "double-escaped" : "escaped";
+					return 1;
+				}
+				if (isAsciiLetter(char)) {
+					this.#scriptBuffer += char.toLowerCase();
+					return 1;
+				}
+				this.#script = starting ? "escaped" : "double-escaped";
+				return this.#consumeScript(chunk, i);
+			}
+			case "double-escaped":
+			case "double-escaped-dash":
+			case "double-escaped-dash-dash":
+				// No end tag gets out of here: `</script>` only leads back to escaped.
+				if (char === "<") {
+					this.#script = "double-escaped-less-than";
+				} else if (char === "-") {
+					this.#script =
+						this.#script === "double-escaped"
+							? "double-escaped-dash"
+							: "double-escaped-dash-dash";
+				} else if (
+					char === ">" &&
+					this.#script === "double-escaped-dash-dash"
+				) {
+					this.#script = "data";
+				} else {
+					this.#script = "double-escaped";
+				}
+				return 1;
+			case "double-escaped-less-than":
+				if (char === "/") {
+					this.#scriptBuffer = "";
+					this.#script = "double-escape-end";
+					return 1;
+				}
+				this.#script = "double-escaped";
+				return this.#consumeScript(chunk, i);
+		}
 	}
 
 	/**
@@ -731,6 +947,7 @@ export class TemplateScanner {
 			// A start tag for one of these puts the parser in a state where `<` is
 			// not markup. A CLOSING tag never does — `</script>` is how we got out.
 			this.#rawText = RAW_TEXT_ELEMENTS.has(name) ? name : "";
+			this.#script = "data";
 		}
 		this.#beginTagName();
 		this.#attribute = "";
@@ -778,8 +995,16 @@ export class TemplateScanner {
 		this.#readingType = false;
 	}
 
-	#beginAttribute(): void {
+	/** Start a new attribute whose name begins with `first`. */
+	#beginAttribute(first: string): void {
 		this.#part = "attribute-name";
+		this.#attribute = first;
+		this.#attributeCount += 1;
+		this.#readingType = false;
+	}
+
+	/** The value just read is over; no attribute is open until the next name. */
+	#endAttribute(): void {
 		this.#attribute = "";
 		this.#readingType = false;
 	}
@@ -792,7 +1017,8 @@ export class TemplateScanner {
 	discardAttribute(): void {
 		if (this.#readingType) this.#type = undefined;
 		this.#quote = "";
-		this.#beginAttribute();
+		this.#part = "before-attribute-name";
+		this.#endAttribute();
 	}
 
 	/** The kind of position the cursor is in right now. */
@@ -804,8 +1030,37 @@ export class TemplateScanner {
 		if (this.#markup !== "") return "comment";
 		if (!this.#inTag) return "text";
 		if (this.#quote !== "") return "quoted-value";
-		if (this.#part === "tag-name") return "tag-name";
-		return this.#part === "value" ? "unquoted-value" : "attribute-name";
+		switch (this.#part) {
+			case "tag-name":
+				return "tag-name";
+			case "before-attribute-value":
+			case "value":
+				// Right after the `=`, whitespace or not, a slot IS the value: the
+				// tokenizer skips the whitespace and starts the value with it.
+				return "unquoted-value";
+			default:
+				// Before, in or after a name, after a value's closing quote, after a
+				// `/`: whatever comes next starts an attribute name.
+				return "attribute-name";
+		}
+	}
+
+	/**
+	 * How many attribute names the scanner has started reading, ever. A caller
+	 * that feeds one character at a time compares it before and after to learn
+	 * where a name began — which is how a directive's spelling is found without
+	 * a second, looser reading of the markup.
+	 */
+	get attributeCount(): number {
+		return this.#attributeCount;
+	}
+
+	/**
+	 * Is the cursor inside an unquoted value that has begun? Not right after the
+	 * `=`, where the value has not started yet.
+	 */
+	get inUnquotedValue(): boolean {
+		return this.#inTag && this.#quote === "" && this.#part === "value";
 	}
 
 	/**
@@ -920,22 +1175,40 @@ export function assertBindable(scanner: TemplateScanner): BindablePosition {
 		// scanner, still inside the comment, calls every slot there text.
 		throw new E_AURORA_SLOT_IN_COMMENT();
 	}
-	const attribute = scanner.attribute;
-	if (attribute.startsWith("on")) {
-		throw new E_AURORA_SLOT_IN_EVENT_ATTRIBUTE([attribute, attribute.slice(2)]);
+	assertBindableAttribute(scanner.element, scanner.attribute);
+	return position;
+}
+
+/**
+ * Refuse a slot in the value of an attribute that cannot be escaped or that
+ * loads code: `on*`, `srcdoc`, `<base href>`, `<script src>`.
+ *
+ * Apart from {@link assertBindable} so the DOM path can ask it again with the
+ * names the PARSER gave the element and the attribute. The scanner is written
+ * to agree with the tokenizer, and each time it did not, the name it read was
+ * not the browser's and the refusal stood down. Asked twice, the two readings
+ * have to be wrong the same way for a slot to get through.
+ */
+export function assertBindableAttribute(
+	element: string,
+	attribute: string,
+): void {
+	const name = attribute.toLowerCase();
+	if (name.startsWith("on")) {
+		throw new E_AURORA_SLOT_IN_EVENT_ATTRIBUTE([name, name.slice(2)]);
 	}
-	if (attribute === "srcdoc") {
+	if (name === "srcdoc") {
 		throw new E_AURORA_SLOT_IN_SRCDOC();
 	}
-	if (scanner.element === "base" && attribute === "href") {
+	const tag = element.toLowerCase();
+	if (tag === "base" && name === "href") {
 		throw new E_AURORA_SLOT_IN_BASE_URL();
 	}
-	if (scanner.element === "script" && SCRIPT_SOURCE_ATTRIBUTES.has(attribute)) {
+	if (tag === "script" && SCRIPT_SOURCE_ATTRIBUTES.has(name)) {
 		throw new E_AURORA_SLOT_IN_SCRIPT_SOURCE([
-			`a ${INTERPOLATION} cannot go in "${attribute}"`,
+			`a ${INTERPOLATION} cannot go in "${name}"`,
 		]);
 	}
-	return position;
 }
 
 /**
@@ -1084,7 +1357,7 @@ function rawTextMessage(scanner: TemplateScanner): string {
 	return `[aurora] a ${INTERPOLATION} cannot go inside <${name}> — its content is not markup, so escaping it as HTML neither protects it nor keeps it valid. Build the value outside the template and pass it in another way.`;
 }
 
-/** A directive a template segment ends on, as `trailingDirective` reads it. */
+/** A directive a slot is the value of, as {@link prepareTemplate} reads it. */
 export interface TrailingDirective {
 	/** The directive as written: `@click`, `?disabled`, `.value`. */
 	readonly name: string;
@@ -1094,21 +1367,149 @@ export interface TrailingDirective {
 	readonly spelling: string;
 }
 
+/** A template's strings as the server renders them, and what each slot binds. */
+export interface PreparedTemplate {
+	/**
+	 * The strings, with every unquoted attribute value that holds a slot written
+	 * between double quotes — `title=${v}` reads `title="${v}"`.
+	 */
+	readonly strings: readonly string[];
+	/** Per slot: the directive it is the value of, or undefined. */
+	readonly directives: readonly (TrailingDirective | undefined)[];
+}
+
+const PREPARED = new WeakMap<readonly string[], PreparedTemplate>();
+
 /**
- * The directive whose value the slot after `segment` is — ` @click="`,
- * ` ?disabled=`, ` .value='` — or undefined when the slot is anything else.
+ * Read a template once, with the scanner, for what every path asks of its
+ * strings: which slots are directives, and how the server writes an unquoted
+ * value. Cached per strings array, like the DOM path's compiled template.
  *
- * One reading for every server path that has to tell a listener from a value:
- * the string renderer drops a listener, and a live session must not take one
- * for a reactive accessor and call it. Both quote styles and none: matching
- * only `="` left `@click='${handler}'` unrecognised, and the handler ran.
+ * Directives used to be found by a regular expression on the end of each
+ * segment, a second reading of the markup that the scanner did not share:
+ * `@click ="${h}"` or `x="1"@click="${h}"` were directives to the browser and
+ * plain attributes to the server, which then CALLED the listener to stringify
+ * it. One reader, the tokenizer's, now answers both questions.
  */
-export function trailingDirective(
+export function prepareTemplate(strings: readonly string[]): PreparedTemplate {
+	const cached = PREPARED.get(strings);
+	if (cached !== undefined) return cached;
+	const quoted = quoteSlotValues(strings);
+	const prepared = { strings: quoted, directives: readDirectives(quoted) };
+	PREPARED.set(strings, prepared);
+	return prepared;
+}
+
+/**
+ * Write every unquoted attribute value that holds a slot between double quotes.
+ *
+ * An unquoted value cannot be empty: the tokenizer skips whitespace after an
+ * `=`, so `<div title= data-note="…">` gives `title` the text that follows, and
+ * the next attribute's value — escaped for a QUOTED value, spaces left alone —
+ * is read unquoted and split into attributes at each space. A slot decides at
+ * render time whether its value is empty, so the template cannot be trusted to
+ * stay unquoted. Written quoted, as lit's server renderer writes every attribute
+ * part (`name="value"`), an empty value is `title=""` and nothing moves.
+ *
+ * A `"` the author left inside such a value is ordinary in an unquoted value;
+ * between quotes it would end it, so it is written `&quot;`, which the browser
+ * reads back to the same character.
+ */
+function quoteSlotValues(strings: readonly string[]): readonly string[] {
+	const scanner = new TemplateScanner();
+	const out: string[] = [];
+	// Inside an unquoted value that holds a slot, now written quoted.
+	let quoting = false;
+	for (const [i, segment] of strings.entries()) {
+		let built = "";
+		// Where, in `built`, the unquoted value now open began.
+		let valueAt = 0;
+		for (let k = 0; k < segment.length; k++) {
+			const char = segment.charAt(k);
+			const wasInValue = scanner.inUnquotedValue;
+			scanner.consume(char);
+			const inValue = scanner.inUnquotedValue;
+			if (wasInValue && !inValue && quoting) {
+				// Whitespace or `>` ended it: the closing quote goes before.
+				built += '"';
+				quoting = false;
+			}
+			if (!wasInValue && inValue) valueAt = built.length;
+			built += quoting && char === '"' ? "&quot;" : char;
+		}
+		if (
+			i < strings.length - 1 &&
+			!quoting &&
+			scanner.position === "unquoted-value"
+		) {
+			if (scanner.inUnquotedValue) {
+				// Begun in this segment's own text (`src=/img/${name}`): quoted from
+				// its first character. It cannot have begun in an earlier segment —
+				// the slot ending that one would have been inside it already.
+				const value = built.slice(valueAt).replaceAll('"', "&quot;");
+				built = `${built.slice(0, valueAt)}"${value}`;
+			} else {
+				// Right after the `=`: the slot starts the value. The scanner is told
+				// a value is there, since it never reads the slot's own text.
+				built += '"';
+				scanner.consume("x");
+			}
+			quoting = true;
+		}
+		out.push(built);
+	}
+	if (quoting && out.length > 0) out[out.length - 1] += '"';
+	return out;
+}
+
+function readDirectives(
+	strings: readonly string[],
+): (TrailingDirective | undefined)[] {
+	const scanner = new TemplateScanner();
+	const found: (TrailingDirective | undefined)[] = [];
+	for (let i = 0; i < strings.length - 1; i++) {
+		const segment = strings[i] ?? "";
+		// Where the last attribute name of this segment began, if one did.
+		let nameAt = -1;
+		for (let k = 0; k < segment.length; k++) {
+			const before = scanner.attributeCount;
+			scanner.consume(segment.charAt(k));
+			if (scanner.attributeCount !== before) nameAt = k;
+		}
+		found.push(directiveAt(scanner, segment, nameAt));
+	}
+	return found;
+}
+
+/** The directive whose value the slot after `segment` is, if it is one. */
+function directiveAt(
+	scanner: TemplateScanner,
 	segment: string,
+	nameAt: number,
 ): TrailingDirective | undefined {
-	const match = /\s([@?.][\w-]+)=("|'|)$/.exec(segment);
-	if (match === null) return undefined;
-	const [spelling, name = "", written] = match;
-	const quote = written === '"' ? '"' : written === "'" ? "'" : "";
-	return { name, quote, spelling };
+	const position = scanner.position;
+	if (position !== "quoted-value" && position !== "unquoted-value") {
+		return undefined;
+	}
+	// The slot must open the value, of an attribute named in this segment.
+	if (nameAt < 0 || scanner.valueLength !== 0) return undefined;
+	const sigil = segment.charAt(nameAt);
+	if (sigil !== "@" && sigil !== "?" && sigil !== ".") return undefined;
+	let end = nameAt + 1;
+	while (end < segment.length && !endsAttributeName(segment.charAt(end))) {
+		end += 1;
+	}
+	let from = nameAt;
+	while (from > 0 && isSpace(segment.charAt(from - 1))) from -= 1;
+	const last = segment.charAt(segment.length - 1);
+	const quote = position !== "quoted-value" ? "" : last === "'" ? "'" : '"';
+	return {
+		name: segment.slice(nameAt, end),
+		quote,
+		spelling: segment.slice(from),
+	};
+}
+
+function endsAttributeName(char: string): boolean {
+	return isSpace(char) || char === "/" || char === "=" || char === ">";
 }

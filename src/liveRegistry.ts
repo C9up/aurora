@@ -46,10 +46,15 @@ export interface LiveRegistryOptions {
 	 */
 	claimTimeoutMs?: number;
 	/**
-	 * How long a claimed session may go without an event or a new subscription
-	 * before it is disposed. Off by default: a client that only watches sends
-	 * nothing, so idling cannot be told from leaving. Set it when relay's
-	 * disconnect is not wired to {@link LiveRegistry.disposeOwner}.
+	 * How long a claimed session may go without an event, a subscription or a
+	 * keep-alive before it is disposed. Default ten minutes; `liveClient` sends a
+	 * keep-alive every two, so a client that only watches stays. Keep it above
+	 * the client's `keepAliveMs`.
+	 *
+	 * It used to be off by default, which kept every session a client had
+	 * claimed once until the process ended: with the global cap, a few thousand
+	 * visitors — or one attacker with two requests per slot — locked every later
+	 * mount out until a restart.
 	 */
 	idleTimeoutMs?: number;
 	/**
@@ -58,9 +63,11 @@ export interface LiveRegistryOptions {
 	 */
 	maxPerOwner?: number;
 	/**
-	 * Sessions the registry holds in all. Mounting past it throws
-	 * `E_AURORA_LIVE_SESSION_LIMIT` (answer 503) rather than evicting someone
-	 * else's session. Default 10 000.
+	 * Sessions the registry holds in all. Default 10 000. Mounting past it makes
+	 * room first: the oldest session nobody claimed goes, else the least recently
+	 * used one that has been silent for half the idle timeout. Only when every
+	 * session is in use does `mount` throw `E_AURORA_LIVE_SESSION_LIMIT` (answer
+	 * 503).
 	 */
 	maxSessions?: number;
 }
@@ -82,6 +89,11 @@ export interface LiveRegistry {
 	 * timeout and restarts its idle clock. Returns false for an unknown id.
 	 */
 	claim(id: string): boolean;
+	/**
+	 * Restart a claimed session's idle clock — what a keep-alive does. Claims
+	 * nothing: returns false for an unknown or unclaimed id.
+	 */
+	touch(id: string): boolean;
 	/** Look up a live session by instance id. */
 	get(id: string): LiveSession | undefined;
 	/** The owner a session was mounted for, or undefined for an unknown id. */
@@ -99,9 +111,12 @@ export interface LiveRegistry {
 /** A session and what the sweep needs to know about it. */
 interface Entry extends LiveSessionHandle {
 	claimed: boolean;
-	/** When it was mounted, claimed or last sent an event. */
+	/** When it was mounted, claimed, last sent an event or a keep-alive. */
 	seenAt: number;
 }
+
+/** Ten minutes: five of `liveClient`'s keep-alives. */
+const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 
 function limit(name: string, value: number | undefined, fallback: number) {
 	const resolved = value ?? fallback;
@@ -123,8 +138,12 @@ export function createLiveRegistry(
 	const idleTimeoutMs = limit(
 		"idleTimeoutMs",
 		options.idleTimeoutMs,
-		Number.POSITIVE_INFINITY,
+		DEFAULT_IDLE_TIMEOUT_MS,
 	);
+	// A claimed session seen this recently is in use, and a full registry does
+	// not evict it to make room. Half the idle timeout: a client that keeps its
+	// session alive is always inside it.
+	const inUseMs = idleTimeoutMs / 2;
 	const maxPerOwner = limit("maxPerOwner", options.maxPerOwner, 32);
 	const maxSessions = limit("maxSessions", options.maxSessions, 10_000);
 	// A quarter of the shortest timeout, so a session outlives its limit by at
@@ -136,7 +155,11 @@ export function createLiveRegistry(
 	const sweeps = Number.isFinite(Math.min(claimTimeoutMs, idleTimeoutMs));
 
 	const defs = new Map<string, () => LiveComponentDefinition>();
+	// In the order they were last seen: the first entry is the least recently
+	// used. A Map keeps insertion order, so being seen is a delete and a set.
 	const sessions = new Map<string, Entry>();
+	// The sessions nobody claimed yet, oldest first.
+	const unclaimed = new Set<string>();
 	// A Set keeps insertion order, so an owner's first id is its oldest session.
 	const byOwner = new Map<string, Set<string>>();
 	let sweeper: ReturnType<typeof setInterval> | undefined;
@@ -152,6 +175,7 @@ export function createLiveRegistry(
 		if (!handle) return;
 		handle.session.dispose();
 		sessions.delete(id);
+		unclaimed.delete(id);
 		const owned = byOwner.get(handle.ownerId);
 		if (owned) {
 			owned.delete(id);
@@ -166,6 +190,36 @@ export function createLiveRegistry(
 			const timeout = entry.claimed ? idleTimeoutMs : claimTimeoutMs;
 			if (now - entry.seenAt >= timeout) dispose(id);
 		}
+	};
+
+	/** The entry was just seen: it moves to the most recently used end. */
+	const seen = (entry: Entry): void => {
+		entry.seenAt = Date.now();
+		sessions.delete(entry.id);
+		sessions.set(entry.id, entry);
+	};
+
+	/**
+	 * Free one slot in a full registry, or say there is none to free: the
+	 * expired sessions go first, then the oldest unclaimed one, then the least
+	 * recently used one that is no longer in use. Never a session in use — that
+	 * would hand anyone who can mount a way to end somebody else's.
+	 */
+	const makeRoom = (): boolean => {
+		sweep();
+		if (sessions.size < maxSessions) return true;
+		for (const oldest of unclaimed) {
+			dispose(oldest);
+			return true;
+		}
+		const now = Date.now();
+		for (const [id, entry] of sessions) {
+			// The least recently used: if it is in use, every session is.
+			if (now - entry.seenAt < inUseMs) return false;
+			dispose(id);
+			return true;
+		}
+		return false;
 	};
 
 	const startSweeping = (): void => {
@@ -199,7 +253,7 @@ export function createLiveRegistry(
 					if (owned.size < maxPerOwner) break;
 				}
 			}
-			if (sessions.size >= maxSessions) {
+			if (sessions.size >= maxSessions && !makeRoom()) {
 				throw new E_AURORA_LIVE_SESSION_LIMIT([sessions.size, name]);
 			}
 			const id = crypto.randomUUID();
@@ -213,6 +267,7 @@ export function createLiveRegistry(
 				seenAt: Date.now(),
 			};
 			sessions.set(id, entry);
+			unclaimed.add(id);
 			const ids = byOwner.get(ownerId) ?? new Set<string>();
 			ids.add(id);
 			byOwner.set(ownerId, ids);
@@ -223,7 +278,14 @@ export function createLiveRegistry(
 			const entry = sessions.get(id);
 			if (entry === undefined) return false;
 			entry.claimed = true;
-			entry.seenAt = Date.now();
+			unclaimed.delete(id);
+			seen(entry);
+			return true;
+		},
+		touch(id) {
+			const entry = sessions.get(id);
+			if (entry === undefined || !entry.claimed) return false;
+			seen(entry);
 			return true;
 		},
 		get(id) {

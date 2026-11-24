@@ -86,9 +86,9 @@ export const E_AURORA_UNKNOWN_LIVE_COMPONENT = createError<[string, string]>(
 	"E_AURORA_UNKNOWN_LIVE_COMPONENT",
 );
 
-/** A live session was refused: the registry holds `maxSessions` already. */
+/** A live session was refused: the registry holds `maxSessions` already, every one in use. */
 export const E_AURORA_LIVE_SESSION_LIMIT = createError<[number, string]>(
-	'[aurora:live] the registry holds %d sessions, its maxSessions — refusing to mount "%s". Answer 503 and let the client retry.',
+	'[aurora:live] the registry holds %d sessions, its maxSessions, all in use — refusing to mount "%s". Answer 503 and let the client retry.',
 	"E_AURORA_LIVE_SESSION_LIMIT",
 	503,
 );
@@ -220,10 +220,16 @@ export const E_AURORA_REACTIVE_CYCLE = createError<[number]>(
 	"E_AURORA_REACTIVE_CYCLE",
 );
 
-/** With `visits` on, the page carries no usable `aurora-page-data` to boot from. */
+/** With `visits` on, the page carries no usable page data script (`script[data-aurora-page]`) to boot from. */
 export const E_AURORA_VISIT_NO_PAGE_DATA = createError(
-	"[aurora] visits: the page carries no aurora-page-data to boot from",
+	"[aurora] visits: the page carries no page data script to boot from",
 	"E_AURORA_VISIT_NO_PAGE_DATA",
+);
+
+/** With `visits` on, a page module's URL is not on the page's own origin. */
+export const E_AURORA_VISIT_CROSS_ORIGIN_MODULE = createError(
+	"[aurora] visits: a page module must be served from the page's own origin",
+	"E_AURORA_VISIT_CROSS_ORIGIN_MODULE",
 );
 
 /** With `visits` on, the first page's factory is async: a hydrated page renders synchronously. */

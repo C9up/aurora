@@ -49,6 +49,18 @@ export interface LiveEventBody {
 	payload?: unknown;
 }
 
+/** A keep-alive from `liveClient`: the session is still on screen. */
+export interface LiveKeepAliveBody {
+	id: string;
+	keepAlive: true;
+}
+
+function isLiveKeepAliveBody(value: unknown): value is LiveKeepAliveBody {
+	if (typeof value !== "object" || value === null) return false;
+	if (!("id" in value) || !("keepAlive" in value)) return false;
+	return typeof value.id === "string" && value.keepAlive === true;
+}
+
 /** Structural guard for the POST body — no casts (`in`-narrowing + typeof). */
 function isLiveEventBody(value: unknown): value is LiveEventBody {
 	if (typeof value !== "object" || value === null) return false;
@@ -79,7 +91,8 @@ export function wireLiveEvents(
 	const path = options.path ?? DEFAULT_LIVE_EVENT_PATH;
 	router.post(path, async (ctx) => {
 		const body = ctx.request.body();
-		if (!isLiveEventBody(body)) {
+		const keepAlive = isLiveKeepAliveBody(body);
+		if (!keepAlive && !isLiveEventBody(body)) {
 			ctx.response.status(400);
 			ctx.response.json({ error: "live event requires { id, event }" });
 			return;
@@ -96,7 +109,9 @@ export function wireLiveEvents(
 			outcome =
 				callerId === undefined || callerId === ""
 					? "forbidden"
-					: live.event(body.id, body.event, body.payload, callerId);
+					: keepAlive
+						? live.keepAlive(body.id, callerId)
+						: live.event(body.id, body.event, body.payload, callerId);
 		} catch {
 			// A handler that throws is the component's bug, not the client's — and
 			// what it threw stays on the server.

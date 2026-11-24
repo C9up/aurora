@@ -19,11 +19,13 @@ import {
 	E_AURORA_ILLEGAL_PAGE_NAME,
 	E_AURORA_PAGE_INVALID_EXPORT,
 	E_AURORA_VISIT_ASYNC_FIRST_PAGE,
+	E_AURORA_VISIT_CROSS_ORIGIN_MODULE,
 	E_AURORA_VISIT_NO_PAGE_DATA,
 	E_AURORA_VISITS_NEED_PHOTON,
 } from "./errors.js";
 import { hydrate } from "./hydrate.js";
 import { withIdScope } from "./id.js";
+import { PAGE_DATA_SELECTOR } from "./pageData.js";
 import { leavePage } from "./pageLifecycle.js";
 import { render } from "./render.js";
 import type { TemplateResult } from "./types.js";
@@ -78,7 +80,8 @@ function isPageFactory(value: unknown): value is PageFactory {
 }
 
 function readData(): VisitData {
-	const text = document.getElementById("aurora-page-data")?.textContent;
+	// A JSON script only: an element of the page cannot stand in for it.
+	const text = document.querySelector(PAGE_DATA_SELECTOR)?.textContent;
 	const data: unknown = text ? JSON.parse(text) : null;
 	if (
 		!isRecord(data) ||
@@ -110,12 +113,38 @@ async function importPage(
 	if (!PAGE_NAME.test(name) || name.split("/").includes("..")) {
 		throw new E_AURORA_ILLEGAL_PAGE_NAME([name]);
 	}
-	const mod: unknown = await import(modules.replace("{name}", name));
+	const mod: unknown = await import(sameOriginModule(modules, name));
 	const factory = isRecord(mod) ? mod.default : undefined;
 	if (!isPageFactory(factory)) {
 		throw new E_AURORA_PAGE_INVALID_EXPORT([`visits: page "${name}"`]);
 	}
 	return { default: factory };
+}
+
+/**
+ * The URL a page module is imported from, refused unless it is on the page's
+ * own origin and scheme.
+ *
+ * The pattern comes from the page data, and an import runs what it loads with
+ * the page's authority. `https://other.example/{name}.js`, `//other.example/…`
+ * and `data:text/javascript,…` all import code the server never served; a
+ * `blob:` URL carries the page's origin but holds whatever was put in it.
+ *
+ * What is imported is the resolved PATH, not the URL: a specifier that starts
+ * with ONE `/` cannot name another origin, whatever base it is resolved against.
+ * A path that starts with two (`https://this.origin//other.example/x`) would be
+ * read back as protocol-relative, so it is refused too.
+ */
+function sameOriginModule(modules: string, name: string): string {
+	const url = new URL(modules.replace("{name}", name), location.href);
+	if (
+		url.origin !== location.origin ||
+		url.protocol !== location.protocol ||
+		url.pathname.startsWith("//")
+	) {
+		throw new E_AURORA_VISIT_CROSS_ORIGIN_MODULE();
+	}
+	return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /** The adapter photon's router updates: one aurora page at a time in the root. */

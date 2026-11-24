@@ -116,6 +116,7 @@ export {
 } from "./liveBroadcast.js";
 export {
 	buildLiveTransport,
+	DEFAULT_LIVE_KEEP_ALIVE_MS,
 	type LiveClientOptions,
 	type LiveClientTransport,
 	type LiveHttpPoster,
@@ -141,6 +142,7 @@ export {
 	type LiveEventBody,
 	type LiveHttpContext,
 	type LiveHttpRouter,
+	type LiveKeepAliveBody,
 	type WireLiveEventsOptions,
 	wireLiveEvents,
 } from "./liveServer.js";

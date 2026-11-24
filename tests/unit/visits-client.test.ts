@@ -16,14 +16,14 @@ function bootDocument(component = "Home"): void {
 		framework: "aurora",
 		version: "v1",
 	};
-	document.body.innerHTML = `<div id="aurora-root">${renderToString(Home({ title: "Welcome" }))}</div>
-<script id="photon-data" type="application/json">${JSON.stringify(page)}</script>
-<script id="aurora-page-data" type="application/json">${JSON.stringify({
+	document.body.innerHTML = `<script id="photon-data" type="application/json">${JSON.stringify(page)}</script>
+<script type="application/json" data-aurora-page>${JSON.stringify({
 		name: "Home",
 		rootId: "aurora-root",
 		routes: { home: "/" },
 		modules: "/tests/fixtures/visit-pages/{name}.ts",
-	})}</script>`;
+	})}</script>
+<div id="aurora-root">${renderToString(Home({ title: "Welcome" }))}</div>`;
 	delete document.documentElement.dataset.photonRouterInstalled;
 	history.replaceState(null, "", "/");
 }
@@ -118,7 +118,7 @@ describe("aurora > visits > client", () => {
 		SLOW,
 	);
 
-	it("refuses to boot a page that carries no aurora-page-data", async () => {
+	it("refuses to boot a page that carries no page data script", async () => {
 		document.body.innerHTML = '<div id="aurora-root"></div>';
 		await expect(bootVisits()).rejects.toMatchObject({
 			code: "E_AURORA_VISIT_NO_PAGE_DATA",

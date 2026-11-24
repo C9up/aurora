@@ -313,7 +313,7 @@ describe("slot refusals > what must keep working", () => {
 		expect(renderToString(html`<div title="${"a > b"}">x</div>`)).toContain(
 			"a &gt; b",
 		);
-		expect(renderToString(html`<input value=${"v"}>`)).toContain("value=v");
+		expect(renderToString(html`<input value=${"v"}>`)).toContain('value="v"');
 	});
 
 	it("renders a script or a style with no slot in it, untouched", () => {

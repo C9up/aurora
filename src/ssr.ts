@@ -20,8 +20,8 @@ import {
 	assertInputValue,
 	assertNotMarkup,
 	type BindablePosition,
+	prepareTemplate,
 	TemplateScanner,
-	trailingDirective,
 } from "./templateScanner.js";
 import { isTemplateResult, type TemplateResult } from "./types.js";
 import {
@@ -139,7 +139,10 @@ function stringifyTemplateResult(result: TemplateResult): string {
 }
 
 function stringifyTemplate(result: TemplateResult): string {
-	const { strings, values } = result;
+	const { values } = result;
+	// Unquoted values holding a slot come back quoted, and each slot's directive
+	// is read by the scanner — see `prepareTemplate`.
+	const { strings, directives } = prepareTemplate(result.strings);
 	let out = "";
 	let held: HeldValue | undefined;
 	/**
@@ -202,11 +205,11 @@ function stringifyTemplate(result: TemplateResult): string {
 			// Step to the `>` so the content lands right after it. Character by
 			// character rather than looking for the `>`, because one inside a
 			// later quoted attribute value is not the end of the tag — and asking
-			// the scanner is how that stays a single rule.
+			// the scanner is how that stays a single rule. Each character still
+			// goes through `writeMarkup`: a URL attribute written after `.value` in
+			// the same tag is held and judged like any other.
 			for (let k = 0; k < text.length; k++) {
-				const char = text.charAt(k);
-				scanner.consume(char);
-				out += char;
+				writeMarkup(text.charAt(k));
 				if (!scanner.inTag) {
 					if (pendingInputValue !== undefined) {
 						// The tag is whole: its `type` is the one the browser will read.
@@ -223,6 +226,12 @@ function stringifyTemplate(result: TemplateResult): string {
 			}
 			return;
 		}
+		writeMarkup(text);
+	};
+
+	/** Append markup outside the `.value` path: hold a URL value, or write it out. */
+	const writeMarkup = (text: string): void => {
+		if (text === "") return;
 		if (held !== undefined) {
 			const end = scanner.valueEndIn(text);
 			if (end === -1) {
@@ -244,7 +253,9 @@ function stringifyTemplate(result: TemplateResult): string {
 		scanner.consume(text);
 		const position = scanner.position;
 		if (
-			(position === "quoted-value" || position === "unquoted-value") &&
+			// A value that has opened: right after `=` it has not, and its end
+			// cannot be told yet. The slots that follow an `=` are written quoted.
+			(position === "quoted-value" || scanner.inUnquotedValue) &&
 			isUrlAttribute(scanner.element, scanner.attribute)
 		) {
 			// The value opened inside this chunk, so its characters are the chunk's
@@ -256,7 +267,8 @@ function stringifyTemplate(result: TemplateResult): string {
 				fromSlot: false,
 				element: scanner.element,
 				attribute: scanner.attribute,
-				context: position,
+				context:
+					position === "quoted-value" ? "quoted-value" : "unquoted-value",
 			};
 			return;
 		}
@@ -284,7 +296,7 @@ function stringifyTemplate(result: TemplateResult): string {
 		// unrecognised, so the handler fell through to `stringifyValue`, which
 		// CALLED it — a client event handler running on the server, its return
 		// value written into the HTML, and any exception swallowed.
-		const directiveMatch = trailingDirective(segment);
+		const directiveMatch = i < values.length ? directives[i] : undefined;
 		const skipValue = directiveMatch !== undefined;
 		// Set when the skipped directive is a boolean attribute, which — unlike
 		// the other two — still has markup to emit. See below.

@@ -66,9 +66,7 @@ describe("aurora > renderPage", () => {
 		expect(out).toContain('<script type="importmap">');
 		expect(out).toContain('"@c9up/aurora":"/__assets/aurora/index.js"');
 		// Bootstrap blob carries the props for the client.
-		expect(out).toContain(
-			'<script id="aurora-page-data" type="application/json">',
-		);
+		expect(out).toContain('<script type="application/json" data-aurora-page>');
 		expect(out).toContain('"name":"Hello"');
 		expect(out).toContain('"props":{"name":"World"}');
 		// Hydration script imports aurora + the page and calls hydrate.
@@ -296,7 +294,7 @@ describe("aurora > renderPage", () => {
 		// The bootstrap JSON must NOT close the script prematurely.
 		const dataBlock =
 			out.match(
-				/<script id="aurora-page-data"[^>]*>([\s\S]*?)<\/script>/,
+				/<script type="application\/json" data-aurora-page>([\s\S]*?)<\/script>/,
 			)?.[1] ?? "";
 		expect(dataBlock).not.toContain("</script>");
 		// And it must still be JSON the client can read: escaping the marker
@@ -494,7 +492,9 @@ describe("aurora > renderPage > CSP nonce", () => {
 
 		expect(out).toContain('<script nonce="r4nd0m" type="importmap">');
 		expect(out).toContain('<script nonce="r4nd0m" type="module">');
-		expect(out).toContain('<script nonce="r4nd0m" id="aurora-page-data"');
+		expect(out).toContain(
+			'<script nonce="r4nd0m" type="application/json" data-aurora-page>',
+		);
 		// No inline script may be left without one.
 		expect(out).not.toMatch(/<script(?![^>]*\bnonce=)[^>]*>[^<]/);
 	});
@@ -571,9 +571,11 @@ describe("aurora > renderPage > CSP nonce", () => {
 		);
 		// The markup only: the page data repeats rootId as JSON, where the quote
 		// is `\"` inside a script that is not HTML.
-		const dataStart = out.indexOf('<script id="aurora-page-data"');
-		expect(dataStart).toBeGreaterThan(0);
-		const markup = out.slice(0, dataStart);
+		const markup = out.replace(
+			/<script type="application\/json" data-aurora-page>[^<]*<\/script>/,
+			"",
+		);
+		expect(markup.length).toBeLessThan(out.length);
 		for (const handler of ["onload=", "onclick=", "onmouseover="]) {
 			expect(markup).not.toContain(`" ${handler}`);
 		}

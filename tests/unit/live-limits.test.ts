@@ -125,12 +125,47 @@ describe("aurora > live > idle sessions", () => {
 		expect(registry.size()).toBe(0);
 	});
 
-	it("keeps a claimed session by default: a watching client sends nothing", () => {
-		const { registry, live } = setup({ claimTimeoutMs: 1_000 });
+	it("disposes a claimed session after ten silent minutes by default", () => {
+		const { registry, live } = setup();
 		const mount = live.mount("Counter", "alice");
 		live.authorizeChannel(mount.id, "alice");
-		vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+		vi.advanceTimersByTime(9 * 60_000);
 		expect(registry.size()).toBe(1);
+		vi.advanceTimersByTime(4 * 60_000);
+		expect(registry.size()).toBe(0);
+	});
+
+	it("keeps a watching client's session while its keep-alives come", () => {
+		const { registry, live } = setup();
+		const mount = live.mount("Counter", "alice");
+		live.authorizeChannel(mount.id, "alice");
+		for (let minute = 0; minute < 60; minute += 2) {
+			vi.advanceTimersByTime(2 * 60_000);
+			expect(live.keepAlive(mount.id, "alice")).toBe("handled");
+		}
+		expect(registry.size()).toBe(1);
+	});
+
+	it("takes a keep-alive from the owner only, and claims nothing with it", () => {
+		const { registry, live } = setup({ claimTimeoutMs: 10_000 });
+		const mount = live.mount("Counter", "alice");
+		expect(live.keepAlive(mount.id, "mallory")).toBe("forbidden");
+		expect(live.keepAlive("no-such-id", "alice")).toBe("unknown-session");
+		// Unclaimed: the keep-alive answers, and the claim timeout still runs.
+		expect(live.keepAlive(mount.id, "alice")).toBe("handled");
+		expect(registry.touch(mount.id)).toBe(false);
+		vi.advanceTimersByTime(20_000);
+		expect(registry.size()).toBe(0);
+	});
+
+	it("is not claimed by an event the component does not handle", () => {
+		const { registry, live } = setup({ claimTimeoutMs: 10_000 });
+		const mount = live.mount("Counter", "alice");
+		expect(live.event(mount.id, "no-such-event", undefined, "alice")).toBe(
+			"unknown-event",
+		);
+		vi.advanceTimersByTime(20_000);
+		expect(registry.size()).toBe(0);
 	});
 });
 
@@ -154,16 +189,54 @@ describe("aurora > live > caps", () => {
 		expect(registry.size()).toBe(5);
 	});
 
-	it("refuses a mount past maxSessions, without building the component", () => {
+	it("refuses a mount past maxSessions when every session is in use, without building the component", () => {
 		const { registry, live, built } = setup({ maxSessions: 2 });
-		live.mount("Counter", "a");
-		live.mount("Counter", "b");
+		const a = live.mount("Counter", "a");
+		const b = live.mount("Counter", "b");
+		live.event(a.id, "inc", undefined, "a");
+		live.event(b.id, "inc", undefined, "b");
 		expect(built()).toBe(2);
 		expect(codeOf(() => live.mount("Counter", "c"))).toBe(
 			"E_AURORA_LIVE_SESSION_LIMIT",
 		);
 		expect(built()).toBe(2);
 		expect(registry.size()).toBe(2);
+	});
+
+	it("makes room in a full registry with the oldest session nobody claimed", () => {
+		const { registry, live } = setup({ maxSessions: 3 });
+		const claimed = live.mount("Counter", "a");
+		live.event(claimed.id, "inc", undefined, "a");
+		const oldest = live.mount("Counter", "b");
+		const newer = live.mount("Counter", "c");
+		const next = live.mount("Counter", "d");
+		expect(registry.size()).toBe(3);
+		expect(registry.get(oldest.id)).toBeUndefined();
+		expect(registry.get(newer.id)).toBeDefined();
+		expect(registry.get(claimed.id)).toBeDefined();
+		expect(registry.get(next.id)).toBeDefined();
+	});
+
+	it("then with the least recently used session silent for half the idle timeout", () => {
+		const { registry, live } = setup({
+			maxSessions: 2,
+			idleTimeoutMs: 10 * 60_000,
+		});
+		const a = live.mount("Counter", "a");
+		const b = live.mount("Counter", "b");
+		live.event(a.id, "inc", undefined, "a");
+		live.event(b.id, "inc", undefined, "b");
+		vi.advanceTimersByTime(4 * 60_000);
+		// `a` acts again: `b` is now the least recently used.
+		live.event(a.id, "inc", undefined, "a");
+		expect(codeOf(() => live.mount("Counter", "c"))).toBe(
+			"E_AURORA_LIVE_SESSION_LIMIT",
+		);
+		vi.advanceTimersByTime(60_000);
+		const c = live.mount("Counter", "c");
+		expect(registry.get(b.id)).toBeUndefined();
+		expect(registry.get(a.id)).toBeDefined();
+		expect(registry.get(c.id)).toBeDefined();
 	});
 
 	it("lets an owner at its own cap replace a session when the registry is full", () => {

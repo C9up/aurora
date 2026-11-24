@@ -115,7 +115,7 @@ describe("a nested template in an attribute position", () => {
 			html`<p title="${'say "hi"'}" class=${"a b"}>${html`<b>${"<x>"}</b>`}</p>`,
 		);
 		expect(out).toContain('title="say &quot;hi&quot;"');
-		expect(out).toContain("class=a&#32;b");
+		expect(out).toContain('class="a b"');
 		expect(out).toContain("<b><!--$-->&lt;x&gt;<!--/$--></b>");
 	});
 });

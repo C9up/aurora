@@ -33,7 +33,16 @@ export interface LiveClientTransport {
 	subscribe(channel: string, handler: (patch: SlotPatch[]) => void): () => void;
 	/** Send a client event to the server (HTTP POST up). */
 	post(id: string, event: string, payload?: unknown): void;
+	/**
+	 * Tell the server the session is still on screen, so its idle timeout does
+	 * not end it while the user only watches. Without it, a component that gets
+	 * no clicks stops updating once the registry's `idleTimeoutMs` has passed.
+	 */
+	keepAlive?(id: string): void;
 }
+
+/** Two minutes: five keep-alives fit in the registry's default idle timeout. */
+export const DEFAULT_LIVE_KEEP_ALIVE_MS = 2 * 60_000;
 
 export interface LiveClientOptions {
 	/** The element holding the server-rendered HTML to adopt. */
@@ -43,6 +52,11 @@ export interface LiveClientOptions {
 	/** Ids from the server's mount response. */
 	mount: { id: string; channel: string };
 	transport: LiveClientTransport;
+	/**
+	 * How often to send a keep-alive, when the transport can. Default two
+	 * minutes; keep it well under the server registry's `idleTimeoutMs`.
+	 */
+	keepAliveMs?: number;
 }
 
 /**
@@ -87,11 +101,21 @@ export function liveClient(opts: LiveClientOptions): () => void {
 	};
 	opts.container.addEventListener("click", onClick);
 
+	const { keepAlive } = opts.transport;
+	const keeping =
+		keepAlive === undefined
+			? undefined
+			: setInterval(
+					() => keepAlive(opts.mount.id),
+					opts.keepAliveMs ?? DEFAULT_LIVE_KEEP_ALIVE_MS,
+				);
+
 	let ended = false;
 	const end = (): void => {
 		if (ended) return;
 		ended = true;
 		forget();
+		if (keeping !== undefined) clearInterval(keeping);
 		off();
 		opts.container.removeEventListener("click", onClick);
 		disposeHydrate();
@@ -145,6 +169,13 @@ export function buildLiveTransport(
 						err,
 					);
 				},
+			);
+		},
+		keepAlive: (id) => {
+			// A lost keep-alive is not an error to show: the next one follows,
+			// and the idle timeout leaves room for several to fail.
+			void (async () => http.post(path, { id, keepAlive: true }))().catch(
+				() => undefined,
 			);
 		},
 	};

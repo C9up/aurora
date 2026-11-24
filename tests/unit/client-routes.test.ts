@@ -44,8 +44,9 @@ function makeCtx(): { ctx: RenderHttpContext; body: () => string } {
 
 /** The `routes` a rendered page carries in its public page data. */
 function clientRoutes(markup: string): unknown {
-	const match =
-		/<script[^>]*id="aurora-page-data"[^>]*>([\s\S]*?)<\/script>/.exec(markup);
+	const match = /<script[^>]*data-aurora-page[^>]*>([\s\S]*?)<\/script>/.exec(
+		markup,
+	);
 	const data: unknown = JSON.parse(match?.[1] ?? "{}");
 	return Reflect.get(Object(data), "routes");
 }

@@ -50,11 +50,10 @@ function makeCtx(headers: Record<string, string> = {}, method = "GET") {
 }
 
 /** The JSON a `<script id=…>` carries. */
-function scriptJson(doc: string, id: string): unknown {
-	const match = new RegExp(
-		`<script id="${id}" type="application/json">([^<]*)</script>`,
-	).exec(doc);
-	if (!match?.[1]) throw new Error(`no ${id}`);
+/** The JSON of the script whose attributes, before `>`, are `attributes`. */
+function scriptJson(doc: string, attributes: string): unknown {
+	const match = new RegExp(`<script ${attributes}>([^<]*)</script>`).exec(doc);
+	if (!match?.[1]) throw new Error(`no ${attributes}`);
 	return JSON.parse(match[1]);
 }
 
@@ -73,16 +72,20 @@ describe("aurora > visits > server", () => {
 		// `<` escaped: no tag, and no way out of <title>.
 		expect(doc).toContain("<title>Hi &lt;there></title>");
 		expect(doc).toContain('data-name="World"');
-		expect(scriptJson(doc, "photon-data")).toEqual({
-			component: "Hello",
-			props: { name: "World" },
-			url: "/hello?x=1",
-			framework: "aurora",
-			version: "v3",
-			deferredProps: { default: ["later"] },
-			meta: { title: "Hi <there>" },
-		});
-		expect(scriptJson(doc, "aurora-page-data")).toMatchObject({
+		expect(scriptJson(doc, 'id="photon-data" type="application/json"')).toEqual(
+			{
+				component: "Hello",
+				props: { name: "World" },
+				url: "/hello?x=1",
+				framework: "aurora",
+				version: "v3",
+				deferredProps: { default: ["later"] },
+				meta: { title: "Hi <there>" },
+			},
+		);
+		expect(
+			scriptJson(doc, 'type="application/json" data-aurora-page'),
+		).toMatchObject({
 			name: "Hello",
 			rootId: "aurora-root",
 			modules: "/__assets/pages/{name}.js",

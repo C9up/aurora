@@ -106,11 +106,11 @@ describe("slot position > an attribute name", () => {
 
 describe("slot position > an unquoted attribute value", () => {
 	it("cannot escape the attribute it is in", () => {
-		// `escapeAttr` protects a QUOTED value; with no quotes the tokenizer ends
-		// the value at the first space, so this used to come out of the server as
-		// `<img src=x onerror=alert(1)>` — two attributes, the second a handler.
+		// With no quotes the tokenizer ends the value at the first space, so this
+		// once came out of the server as `<img src=x onerror=alert(1)>` — two
+		// attributes, the second a handler. The server now writes it quoted.
 		const markup = renderToString(html`<img src=${"x onerror=alert(1)"}>`);
-		expect(markup).not.toContain(" onerror");
+		expect(markup).toBe('<img src="x onerror=alert(1)">');
 		expect(domValue(markup, "onerror")).toBeNull();
 	});
 

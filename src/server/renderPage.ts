@@ -12,15 +12,18 @@
  *     </script>
  *   </head>
  *   <body>
+ *     <script type="application/json" data-aurora-page>{…}</script>
  *     <div id="aurora-root">…SSR markup…</div>
- *     <script id="aurora-page-data" type="application/json">{…}</script>
  *     <script type="module">
  *       import { hydrate } from '@c9up/aurora'
  *       import Page from '/__assets/pages/ProjectPage.js'
- *       const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
- *       hydrate(document.getElementById('aurora-root'), () => Page(data.props))
+ *       const data = JSON.parse(document.querySelector('script[data-aurora-page][type="application/json"]').textContent)
+ *       hydrate(document.getElementById(data.rootId), () => Page(data.props))
  *     </script>
  *   </body>
+ *
+ * The data comes first in the body, before anything the page renders, and is
+ * read by a selector only a JSON script matches — see `pageData.ts`.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -29,6 +32,7 @@ import { runsInDevelopment } from "../devMode.js";
 import { E_AURORA_ILLEGAL_ROOT_TAG, E_AURORA_VISIT_PROPS } from "../errors.js";
 import { createIdCounter, setIdCounterReader } from "../id.js";
 import type { Pages } from "../Pages.js";
+import { PAGE_DATA_ATTRIBUTE, PAGE_DATA_SELECTOR } from "../pageData.js";
 import { renderToString } from "../ssr.js";
 import { setRouteManifestReader, setRouteUseRecorder } from "../url.js";
 import {
@@ -438,8 +442,9 @@ async function renderPageInScope<P>(
 ${options.title === undefined ? "" : `<title>${escapeAttr(options.title)}</title>\n`}${options.jsonLd === undefined ? "" : `<script${nonceAttr} type="application/ld+json">${escapeJsonForScript(options.jsonLd)}</script>\n`}${options.headExtra ?? ""}
 </head>
 <body>
+${page === undefined ? pageDataScript(nonceAttr, { name, props: wireProps, url: pageUrl, rootId, routes, version: options.assetsVersion ?? null }) : visitData(nonceAttr, page, { name, url: pageUrl, rootId, routes, modules: pages.urlPattern() })}
 <${rootTag}${rootAttrs(rootId, rootClass)}>${body}</${rootTag}>
-${page === undefined ? hydrateBootstrap(nonceAttr, { name, props: wireProps, url: pageUrl, rootId, routes, version: options.assetsVersion ?? null }) : visitBootstrap(nonceAttr, page, { name, url: pageUrl, rootId, routes, modules: pages.urlPattern() })}
+${page === undefined ? hydrateBootstrap(nonceAttr, pageUrl) : visitBootstrap(nonceAttr)}
 </body>
 </html>`;
 
@@ -451,35 +456,33 @@ ${page === undefined ? hydrateBootstrap(nonceAttr, { name, props: wireProps, url
 	ctx.response.send(doc);
 }
 
-/** The page data and the bootstrap that hydrates the page, then leaves it be. */
-function hydrateBootstrap(
-	nonceAttr: string,
-	data: {
-		name: string;
-		props: unknown;
-		url: string;
-		rootId: string;
-		routes: Record<string, string>;
-		version: string | null;
-	},
-): string {
-	return `<script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(data)}</script>
-<script${nonceAttr} type="module">
+/** The page data, written before the root: nothing the page renders precedes it. */
+function pageDataScript(nonceAttr: string, data: unknown): string {
+	return `<script${nonceAttr} type="application/json" ${PAGE_DATA_ATTRIBUTE}>${escapeJsonForScript(data)}</script>`;
+}
+
+/**
+ * The bootstrap that hydrates the page, then leaves it be. The root is found by
+ * its id, which only the page data names; it is the first element with it, since
+ * it holds the whole rendered body.
+ */
+function hydrateBootstrap(nonceAttr: string, url: string): string {
+	return `<script${nonceAttr} type="module">
 import { hydrate, setRouteManifest } from '@c9up/aurora'
-import Page from ${JSON.stringify(data.url)}
-const data = JSON.parse(document.getElementById('aurora-page-data').textContent)
+import Page from ${JSON.stringify(url)}
+const data = JSON.parse(document.querySelector(${JSON.stringify(PAGE_DATA_SELECTOR)}).textContent)
 setRouteManifest(data.routes ?? {})
 hydrate(document.getElementById(data.rootId), () => Page(data.props))
 </script>`;
 }
 
 /**
- * With visits on: photon's page object (what its client router boots from),
+ * With visits on: photon's page object (what its client router boots from) and
  * aurora's own data beside it — the root, the client routes, where a page's
- * module is (`{name}` stands for the page) — and the bootstrap that hydrates
- * this page and hands the next ones to photon's router.
+ * module is (`{name}` stands for the page). Both before the root, so no element
+ * the page renders comes first in the document.
  */
-function visitBootstrap(
+function visitData(
 	nonceAttr: string,
 	page: VisitPage,
 	data: {
@@ -491,8 +494,12 @@ function visitBootstrap(
 	},
 ): string {
 	return `<script${nonceAttr} id="photon-data" type="application/json">${escapeJsonForScript(page)}</script>
-<script${nonceAttr} id="aurora-page-data" type="application/json">${escapeJsonForScript(data)}</script>
-<script${nonceAttr} type="module">
+${pageDataScript(nonceAttr, data)}`;
+}
+
+/** The bootstrap that hydrates this page and hands the next ones to photon's router. */
+function visitBootstrap(nonceAttr: string): string {
+	return `<script${nonceAttr} type="module">
 import { bootVisits } from '@c9up/aurora/visits'
 bootVisits()
 </script>`;
