@@ -1415,6 +1415,30 @@ export function prepareTemplate(strings: readonly string[]): PreparedTemplate {
  * between quotes it would end it, so it is written `&quot;`, which the browser
  * reads back to the same character.
  */
+/**
+ * Feed the scanner the next step of `segment` from `k`, and return what was fed.
+ *
+ * One character, so a caller can watch the state change at each one — except at
+ * the start of an end tag inside raw text: the scanner only recognises
+ * `</iframe>`, `</textarea>` or `</script>` when the tag arrives whole, so fed a
+ * character at a time it never left the element, and everything after it was
+ * read as the element's text (no value quoted, no directive found, no URL
+ * guarded). There the tag's `</name` and the character after it go in one chunk.
+ */
+function feedStep(
+	scanner: TemplateScanner,
+	segment: string,
+	k: number,
+): string {
+	const raw = scanner.rawText;
+	const fed =
+		raw !== undefined && segment.startsWith("</", k)
+			? segment.slice(k, k + 3 + raw.name.length)
+			: segment.charAt(k);
+	scanner.consume(fed);
+	return fed;
+}
+
 function quoteSlotValues(strings: readonly string[]): readonly string[] {
 	const scanner = new TemplateScanner();
 	const out: string[] = [];
@@ -1424,10 +1448,9 @@ function quoteSlotValues(strings: readonly string[]): readonly string[] {
 		let built = "";
 		// Where, in `built`, the unquoted value now open began.
 		let valueAt = 0;
-		for (let k = 0; k < segment.length; k++) {
-			const char = segment.charAt(k);
+		for (let k = 0; k < segment.length; ) {
 			const wasInValue = scanner.inUnquotedValue;
-			scanner.consume(char);
+			const fed = feedStep(scanner, segment, k);
 			const inValue = scanner.inUnquotedValue;
 			if (wasInValue && !inValue && quoting) {
 				// Whitespace or `>` ended it: the closing quote goes before.
@@ -1435,7 +1458,9 @@ function quoteSlotValues(strings: readonly string[]): readonly string[] {
 				quoting = false;
 			}
 			if (!wasInValue && inValue) valueAt = built.length;
-			built += quoting && char === '"' ? "&quot;" : char;
+			// More than one character only for a raw-text end tag, never in a value.
+			built += quoting && fed === '"' ? "&quot;" : fed;
+			k += fed.length;
 		}
 		if (
 			i < strings.length - 1 &&
@@ -1471,10 +1496,11 @@ function readDirectives(
 		const segment = strings[i] ?? "";
 		// Where the last attribute name of this segment began, if one did.
 		let nameAt = -1;
-		for (let k = 0; k < segment.length; k++) {
+		for (let k = 0; k < segment.length; ) {
 			const before = scanner.attributeCount;
-			scanner.consume(segment.charAt(k));
+			const fed = feedStep(scanner, segment, k);
 			if (scanner.attributeCount !== before) nameAt = k;
+			k += fed.length;
 		}
 		found.push(directiveAt(scanner, segment, nameAt));
 	}
